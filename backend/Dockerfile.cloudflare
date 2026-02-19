@@ -1,0 +1,28 @@
+FROM node:24-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends postgresql postgresql-contrib \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/usr/lib/postgresql/15/bin:${PATH}" \
+    PGDATA=/var/lib/postgresql/data \
+    PORT=4000 \
+    NODE_ENV=production \
+    DATABASE_URL=postgres://postgres@127.0.0.1:5432/pingy
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY src ./src
+COPY db ./db
+COPY docker-entrypoint.cloudflare.sh /usr/local/bin/start-pingy
+
+RUN chmod +x /usr/local/bin/start-pingy \
+  && mkdir -p /var/lib/postgresql/data \
+  && chown -R postgres:postgres /var/lib/postgresql
+
+EXPOSE 4000
+
+CMD ["/usr/local/bin/start-pingy"]

@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pingy-live",
+  "main": "src/index.js",
+  "compatibility_date": "2026-02-16",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS"
+  },
+
+  "vars": {
+    "NODE_ENV": "production",
+    "BACKEND_PORT": "4000",
+    "DATABASE_URL": "postgres://postgres@127.0.0.1:5432/pingy",
+    "ACCESS_TOKEN_TTL": "15m",
+    "REFRESH_TOKEN_DAYS": "14",
+    "CORS_ORIGIN": "*",
+    "API_RATE_LIMIT_WINDOW_MS": "60000",
+    "API_RATE_LIMIT_MAX": "200",
+    "AUTH_RATE_LIMIT_MAX": "40",
+    "MAX_FILE_SIZE_MB": "25"
+  },
+
+  "containers": [
+    {
+      "class_name": "PingyBackend",
+      "image": "../backend/Dockerfile.cloudflare",
+      "max_instances": 1
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PINGY_BACKEND",
+        "class_name": "PingyBackend"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PingyBackend"]
+    }
+  ]
+}

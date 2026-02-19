@@ -1,0 +1,9 @@
+node_modules
+.embedded-postgres
+uploads
+scripts
+.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

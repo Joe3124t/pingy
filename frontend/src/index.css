@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --pingy-bg: #f1f5f9;
+  --pingy-text: #0f172a;
+  --pingy-panel: rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --pingy-bg: #020617;
+  --pingy-text: #e2e8f0;
+  --pingy-panel: rgba(15, 23, 42, 0.78);
+}
+
+@layer base {
+  * {
+    @apply border-slate-200;
+  }
+
+  body {
+    @apply m-0 font-body antialiased;
+    background: var(--pingy-bg);
+    color: var(--pingy-text);
+    overscroll-behavior: none;
+  }
+
+  button,
+  input,
+  textarea {
+    @apply font-body;
+    touch-action: manipulation;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply border border-slate-200/70 bg-white/80 shadow-panel backdrop-blur-md;
+  }
+
+  .pingy-app-shell {
+    height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 640px) {
+    .pingy-app-shell {
+      height: calc(100vh - 2rem);
+      height: calc(100dvh - 2rem);
+    }
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.35);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -1,0 +1,9 @@
+{
+  "appId": "com.pingy.messenger",
+  "appName": "Pingy Messenger",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

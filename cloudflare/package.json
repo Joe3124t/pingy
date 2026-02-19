@@ -1,0 +1,21 @@
+{
+  "name": "pingy-cloudflare-deploy",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "predeploy": "cd ..\\\\frontend && npm.cmd run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.65.0"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.1.0"
+  }
+}
