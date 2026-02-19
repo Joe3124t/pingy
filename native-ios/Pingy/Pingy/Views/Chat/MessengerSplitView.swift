@@ -398,12 +398,12 @@ struct ConversationRowView: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
                     isSelected
-                        ? LinearGradient(
+                        ? AnyShapeStyle(LinearGradient(
                             colors: [PingyTheme.sentBubbleStart, PingyTheme.sentBubbleEnd],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
-                        )
-                        : PingyTheme.surface
+                        ))
+                        : AnyShapeStyle(PingyTheme.surface)
                 )
         )
         .overlay(
