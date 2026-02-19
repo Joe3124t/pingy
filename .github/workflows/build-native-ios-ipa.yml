@@ -123,4 +123,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Pingy-native-signed-ipa
-          path: native-ios/Pingy/build/export/*.ipa
+          path: "native-ios/Pingy/build/export/*.ipa"
