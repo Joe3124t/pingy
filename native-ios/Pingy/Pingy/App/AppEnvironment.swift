@@ -1,0 +1,53 @@
+import Foundation
+
+@MainActor
+final class AppEnvironment: ObservableObject {
+    let configuration = AppConfiguration()
+    let sessionStore = SessionStore()
+    let apiClient: APIClient
+    let authService: AuthService
+    let cryptoService = E2EECryptoService()
+    let conversationService: ConversationService
+    let messageService: MessageService
+    let settingsService: SettingsService
+    let socketManager: SocketIOWebSocketManager
+    let pushManager: PushNotificationManager
+    let authViewModel: AuthViewModel
+    let messengerViewModel: MessengerViewModel
+
+    init() {
+        apiClient = APIClient(baseURL: configuration.apiBaseURL)
+        authService = AuthService(apiClient: apiClient, sessionStore: sessionStore)
+        conversationService = ConversationService(apiClient: apiClient, authService: authService)
+        messageService = MessageService(apiClient: apiClient, authService: authService)
+        settingsService = SettingsService(apiClient: apiClient, authService: authService)
+        socketManager = SocketIOWebSocketManager(
+            webSocketURL: configuration.webSocketURL,
+            authService: authService
+        )
+        pushManager = PushNotificationManager(settingsService: settingsService)
+        authViewModel = AuthViewModel(
+            authService: authService,
+            cryptoService: cryptoService,
+            settingsService: settingsService
+        )
+        messengerViewModel = MessengerViewModel(
+            authService: authService,
+            conversationService: conversationService,
+            messageService: messageService,
+            settingsService: settingsService,
+            socketManager: socketManager,
+            cryptoService: cryptoService
+        )
+    }
+
+    func bootstrap() async {
+        await authService.restoreSession()
+
+        if sessionStore.isAuthenticated {
+            messengerViewModel.bindSocket()
+            await messengerViewModel.reloadAll()
+            await pushManager.configure()
+        }
+    }
+}

@@ -12,3 +12,6 @@ Thumbs.db
 frontend/.wrangler/
 backend/.embedded-postgres/
 frontend/ios-build/
+native-ios/Pingy/Pingy.xcodeproj/
+native-ios/Pingy/build/
+native-ios/Pingy/artifacts/
