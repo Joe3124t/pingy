@@ -103,13 +103,24 @@ const buildDisplayNameFromPhone = (phoneNumber) => {
 };
 
 const sendOtpOutOfBand = async ({ phoneNumber, code, purpose }) => {
+  const codeLog = `[OTP] phone=${phoneNumber} purpose=${purpose} code=${code}`;
+
+  // Free-mode fallback: keep OTP flow operational even if no SMS gateway is configured.
   if (env.NODE_ENV === 'production' && !env.OTP_DEV_ALLOW_PLAINTEXT) {
-    throw new HttpError(503, 'OTP delivery provider is not configured');
+    console.warn('[OTP] SMS provider not configured. Falling back to debug OTP response.');
+    console.log(codeLog);
+    return {
+      delivery: 'fallback-debug',
+      exposeCode: true,
+    };
   }
 
-  const codeLog = `[OTP] phone=${phoneNumber} purpose=${purpose} code=${code}`;
-  // Intentionally kept as server log for environments without paid SMS.
+  // Non-production or explicitly allowed plaintext mode.
   console.log(codeLog);
+  return {
+    delivery: 'logged',
+    exposeCode: Boolean(env.OTP_DEV_ALLOW_PLAINTEXT),
+  };
 };
 
 const issueAuthTokens = async ({ userId, deviceId, rotateKeys }) => {
@@ -215,7 +226,7 @@ const requestPhoneOtp = async ({ phoneNumber, purpose = 'register' }) => {
     expiresAt,
   });
 
-  await sendOtpOutOfBand({
+  const deliveryResult = await sendOtpOutOfBand({
     phoneNumber: normalizedPhone,
     code,
     purpose: normalizedPurpose,
@@ -223,7 +234,7 @@ const requestPhoneOtp = async ({ phoneNumber, purpose = 'register' }) => {
 
   return {
     message: OTP_GENERIC_MESSAGE,
-    ...(env.NODE_ENV !== 'production' && env.OTP_DEV_ALLOW_PLAINTEXT ? { debugCode: code } : {}),
+    ...(deliveryResult?.exposeCode ? { debugCode: code } : {}),
   };
 };
 

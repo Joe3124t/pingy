@@ -45,12 +45,19 @@ final class AuthService: ObservableObject, AuthorizedRequester {
             let phoneNumber: String
             let purpose: String
         }
-        let endpoint = try Endpoint.json(
-            path: "auth/phone/request-otp",
-            method: .post,
+
+        let candidatePaths = [
+            "auth/phone/request-otp",
+            "auth/request-otp",
+            "auth/phone/request",
+            "phone/request-otp",
+            "phone/request"
+        ]
+
+        return try await requestWithPathFallback(
+            candidatePaths: candidatePaths,
             payload: Payload(phoneNumber: phoneNumber, purpose: purpose)
         )
-        return try await apiClient.request(endpoint)
     }
 
     func verifyOTP(phoneNumber: String, code: String, purpose: String = "register") async throws -> OTPVerifyResponse {
@@ -59,12 +66,19 @@ final class AuthService: ObservableObject, AuthorizedRequester {
             let code: String
             let purpose: String
         }
-        let endpoint = try Endpoint.json(
-            path: "auth/phone/verify-otp",
-            method: .post,
+
+        let candidatePaths = [
+            "auth/phone/verify-otp",
+            "auth/verify-otp",
+            "auth/phone/verify",
+            "phone/verify-otp",
+            "phone/verify"
+        ]
+
+        return try await requestWithPathFallback(
+            candidatePaths: candidatePaths,
             payload: Payload(phoneNumber: phoneNumber, code: code, purpose: purpose)
         )
-        return try await apiClient.request(endpoint)
     }
 
     func login(phoneNumber: String, password: String) async throws -> User {
@@ -221,6 +235,43 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         } catch APIError.unauthorized {
             let token = try await validAccessToken(forceRefresh: true)
             return try await apiClient.requestRawData(endpoint, accessToken: token)
+        }
+    }
+
+    private func requestWithPathFallback<T: Decodable, P: Encodable>(
+        candidatePaths: [String],
+        payload: P
+    ) async throws -> T {
+        var lastError: APIError?
+
+        for (index, path) in candidatePaths.enumerated() {
+            do {
+                let endpoint = try Endpoint.json(path: path, method: .post, payload: payload)
+                return try await apiClient.request(endpoint)
+            } catch let apiError as APIError {
+                if shouldTryNextPath(apiError: apiError, currentIndex: index, totalCount: candidatePaths.count) {
+                    AppLogger.debug("Retrying auth endpoint with fallback path: \(path)")
+                    lastError = apiError
+                    continue
+                }
+                throw apiError
+            }
+        }
+
+        throw lastError ?? APIError.server(statusCode: 404, message: "Route not found")
+    }
+
+    private func shouldTryNextPath(apiError: APIError, currentIndex: Int, totalCount: Int) -> Bool {
+        guard currentIndex < totalCount - 1 else {
+            return false
+        }
+
+        switch apiError {
+        case .server(let statusCode, let message):
+            let normalized = message.lowercased()
+            return statusCode == 404 || normalized.contains("route not found")
+        default:
+            return false
         }
     }
 }

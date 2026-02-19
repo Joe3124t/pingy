@@ -2,11 +2,13 @@ import Foundation
 
 final class APIClient {
     private let baseURL: URL
+    private let baseURLCandidates: [URL]
     private let urlSession: URLSession
     private let decoder: JSONDecoder
 
     init(baseURL: URL, session: URLSession = .shared) {
         self.baseURL = baseURL
+        self.baseURLCandidates = Self.buildBaseURLCandidates(from: baseURL)
         self.urlSession = session
         self.decoder = JSONDecoder()
     }
@@ -47,6 +49,35 @@ final class APIClient {
     private func execute(
         _ endpoint: Endpoint,
         accessToken: String?
+    ) async throws -> (Data, HTTPURLResponse) {
+        var lastError: APIError?
+
+        for (index, candidateBaseURL) in baseURLCandidates.enumerated() {
+            do {
+                return try await executeOnce(
+                    endpoint,
+                    accessToken: accessToken,
+                    baseURL: candidateBaseURL
+                )
+            } catch let apiError as APIError {
+                if shouldRetryWithNextBaseURL(error: apiError, currentIndex: index) {
+                    AppLogger.debug(
+                        "Retrying \(endpoint.path) against fallback base URL after route mismatch: \(candidateBaseURL.absoluteString)"
+                    )
+                    lastError = apiError
+                    continue
+                }
+                throw apiError
+            }
+        }
+
+        throw lastError ?? APIError.invalidResponse
+    }
+
+    private func executeOnce(
+        _ endpoint: Endpoint,
+        accessToken: String?,
+        baseURL: URL
     ) async throws -> (Data, HTTPURLResponse) {
         guard var components = URLComponents(
             url: baseURL.appendingPathComponent(endpoint.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))),
@@ -99,6 +130,54 @@ final class APIClient {
         } catch {
             throw APIError.network(error)
         }
+    }
+
+    private func shouldRetryWithNextBaseURL(error: APIError, currentIndex: Int) -> Bool {
+        guard currentIndex < baseURLCandidates.count - 1 else {
+            return false
+        }
+
+        switch error {
+        case .server(let statusCode, let message):
+            let normalized = message.lowercased()
+            return statusCode == 404 || normalized.contains("route not found")
+        case .invalidURL:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func buildBaseURLCandidates(from baseURL: URL) -> [URL] {
+        var candidates: [URL] = [baseURL]
+
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return candidates
+        }
+
+        let normalizedPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if normalizedPath.hasSuffix("api") {
+            let trimmedPath = String(normalizedPath.dropLast(3)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            components.path = trimmedPath.isEmpty ? "/" : "/\(trimmedPath)"
+
+            if let fallbackURL = components.url {
+                candidates.append(fallbackURL)
+            }
+        } else {
+            let fallback = baseURL.appendingPathComponent("api")
+            candidates.append(fallback)
+        }
+
+        var deduplicated: [URL] = []
+        for candidate in candidates {
+            if deduplicated.contains(where: { $0.absoluteString == candidate.absoluteString }) {
+                continue
+            }
+            deduplicated.append(candidate)
+        }
+
+        return deduplicated
     }
 
     private static func extractServerError(from data: Data) -> String? {

@@ -27,6 +27,11 @@ const router = express.Router();
 
 router.post('/phone/request-otp', validateRequest(requestOtpSchema), requestOtp);
 router.post('/phone/verify-otp', validateRequest(verifyOtpSchema), verifyOtp);
+// Backward-compatible aliases for older native builds and mixed deployments.
+router.post('/request-otp', validateRequest(requestOtpSchema), requestOtp);
+router.post('/verify-otp', validateRequest(verifyOtpSchema), verifyOtp);
+router.post('/phone/request', validateRequest(requestOtpSchema), requestOtp);
+router.post('/phone/verify', validateRequest(verifyOtpSchema), verifyOtp);
 router.post('/register', validateRequest(registerSchema), register);
 router.post('/login', validateRequest(loginSchema), login);
 router.post('/refresh', validateRequest(refreshSchema), refresh);
