@@ -276,9 +276,12 @@ struct ChatDetailView: View {
 
     private func sendPickedPhoto(item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-        let suggestedName = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
-        let mimeType = (item.supportedContentTypes.first == .movie) ? "video/mp4" : "image/jpeg"
-        let type: MessageType = (item.supportedContentTypes.first == .movie) ? .video : .image
+        let contentType = item.supportedContentTypes.first
+        let isVideo = contentType?.conforms(to: .movie) ?? false
+        let suggestedName = contentType?.preferredFilenameExtension ?? (isVideo ? "mp4" : "jpg")
+        let mimeType = contentType?.preferredMIMEType ?? (isVideo ? "video/mp4" : "image/jpeg")
+        let type: MessageType = isVideo ? .video : .image
+
         await viewModel.sendMedia(
             data: data,
             fileName: "media-\(UUID().uuidString).\(suggestedName)",
@@ -290,23 +293,8 @@ struct ChatDetailView: View {
     private func sendPickedFile(url: URL) async {
         guard let data = try? Data(contentsOf: url) else { return }
         let ext = url.pathExtension.lowercased()
-        let type: MessageType
-        let mimeType: String
-
-        switch ext {
-        case "jpg", "jpeg", "png", "webp":
-            type = .image
-            mimeType = "image/jpeg"
-        case "mp4":
-            type = .video
-            mimeType = "video/mp4"
-        case "m4a", "aac":
-            type = .voice
-            mimeType = "audio/mp4"
-        default:
-            type = .file
-            mimeType = "application/octet-stream"
-        }
+        let mimeType = mimeTypeForFileExtension(ext)
+        let type = messageTypeForMimeType(mimeType)
 
         await viewModel.sendMedia(
             data: data,
@@ -314,6 +302,53 @@ struct ChatDetailView: View {
             mimeType: mimeType,
             type: type
         )
+    }
+
+    private func mimeTypeForFileExtension(_ ext: String) -> String {
+        switch ext {
+        case "jpg", "jpeg":
+            return "image/jpeg"
+        case "png":
+            return "image/png"
+        case "webp":
+            return "image/webp"
+        case "heic", "heif":
+            return "image/heic"
+        case "mp4":
+            return "video/mp4"
+        case "m4a":
+            return "audio/mp4"
+        case "aac":
+            return "audio/aac"
+        case "mp3":
+            return "audio/mpeg"
+        case "wav":
+            return "audio/wav"
+        case "ogg":
+            return "audio/ogg"
+        case "pdf":
+            return "application/pdf"
+        case "docx":
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        default:
+            if let mimeType = UTType(filenameExtension: ext)?.preferredMIMEType {
+                return mimeType
+            }
+            return "application/octet-stream"
+        }
+    }
+
+    private func messageTypeForMimeType(_ mimeType: String) -> MessageType {
+        if mimeType.hasPrefix("image/") {
+            return .image
+        }
+        if mimeType == "video/mp4" {
+            return .video
+        }
+        if mimeType.hasPrefix("audio/") {
+            return .voice
+        }
+        return .file
     }
 
     private func toggleVoiceRecord() async {

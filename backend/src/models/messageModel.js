@@ -22,8 +22,8 @@ const MESSAGE_SELECT = `
   m.media_url AS "mediaUrl",
   m.media_name AS "mediaName",
   m.media_mime AS "mediaMime",
-  m.media_size AS "mediaSize",
-  m.voice_duration_ms AS "voiceDurationMs",
+  m.media_size::int AS "mediaSize",
+  m.voice_duration_ms::int AS "voiceDurationMs",
   m.client_id AS "clientId",
   m.created_at AS "createdAt",
   m.delivered_at AS "deliveredAt",
@@ -34,6 +34,12 @@ const normalizeMessageRow = (row) => {
   if (!row) {
     return null;
   }
+
+  const mediaSizeRaw = row.mediaSize;
+  const voiceDurationRaw = row.voiceDurationMs;
+  const mediaSize = mediaSizeRaw === null || mediaSizeRaw === undefined ? null : Number(mediaSizeRaw);
+  const voiceDurationMs =
+    voiceDurationRaw === null || voiceDurationRaw === undefined ? null : Number(voiceDurationRaw);
 
   let reactions = row.reactions;
 
@@ -51,6 +57,8 @@ const normalizeMessageRow = (row) => {
 
   return {
     ...row,
+    mediaSize: Number.isFinite(mediaSize) ? mediaSize : null,
+    voiceDurationMs: Number.isFinite(voiceDurationMs) ? voiceDurationMs : null,
     replyTo: row.replyToMessageId
       ? {
           id: row.replyToMessageId,

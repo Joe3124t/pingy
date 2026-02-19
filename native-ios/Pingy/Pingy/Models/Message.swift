@@ -71,6 +71,57 @@ struct Message: Codable, Identifiable, Equatable {
         case replyTo
         case reactions
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(String.self, forKey: .id)
+        conversationId = try container.decode(String.self, forKey: .conversationId)
+        senderId = try container.decode(String.self, forKey: .senderId)
+        senderUsername = try container.decodeIfPresent(String.self, forKey: .senderUsername)
+        senderAvatarUrl = try container.decodeIfPresent(String.self, forKey: .senderAvatarUrl)
+        recipientId = try container.decode(String.self, forKey: .recipientId)
+        replyToMessageId = try container.decodeIfPresent(String.self, forKey: .replyToMessageId)
+
+        if let decodedType = try? container.decode(MessageType.self, forKey: .type) {
+            type = decodedType
+        } else {
+            let rawType = try container.decode(String.self, forKey: .type)
+            type = MessageType(rawValue: rawType) ?? .text
+        }
+
+        body = try container.decodeIfPresent(JSONValue.self, forKey: .body)
+        isEncrypted = try container.decode(Bool.self, forKey: .isEncrypted)
+        mediaUrl = try container.decodeIfPresent(String.self, forKey: .mediaUrl)
+        mediaName = try container.decodeIfPresent(String.self, forKey: .mediaName)
+        mediaMime = try container.decodeIfPresent(String.self, forKey: .mediaMime)
+        mediaSize = container.decodeLossyIntIfPresent(forKey: .mediaSize)
+        voiceDurationMs = container.decodeLossyIntIfPresent(forKey: .voiceDurationMs)
+        clientId = try container.decodeIfPresent(String.self, forKey: .clientId)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        deliveredAt = try container.decodeIfPresent(String.self, forKey: .deliveredAt)
+        seenAt = try container.decodeIfPresent(String.self, forKey: .seenAt)
+        replyTo = try container.decodeIfPresent(MessageReply.self, forKey: .replyTo)
+        reactions = try container.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossyIntIfPresent(forKey key: Key) -> Int? {
+        if let value = try? decodeIfPresent(Int.self, forKey: key) {
+            return value
+        }
+
+        if let value = try? decodeIfPresent(Double.self, forKey: key) {
+            return Int(value)
+        }
+
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return nil
+    }
 }
 
 struct MessageListResponse: Codable {

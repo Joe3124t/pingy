@@ -1,7 +1,13 @@
 const multer = require('multer');
 const { HttpError } = require('../utils/httpError');
 
-const allowedWallpaperMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const allowedWallpaperMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+]);
 
 const wallpaperUpload = multer({
   storage: multer.memoryStorage(),
