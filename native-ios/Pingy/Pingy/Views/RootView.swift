@@ -4,6 +4,7 @@ struct RootView: View {
     @ObservedObject var authViewModel: AuthViewModel
     @ObservedObject var messengerViewModel: MessengerViewModel
     @ObservedObject var sessionStore: SessionStore
+    @ObservedObject var themeManager: ThemeManager
     @State private var didBindForCurrentSession = false
 
     var body: some View {
@@ -21,7 +22,7 @@ struct RootView: View {
                 AuthView(viewModel: authViewModel)
             }
         }
-        .preferredColorScheme(.light)
+        .preferredColorScheme(themeManager.preferredColorScheme)
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: sessionStore.isAuthenticated)
         .onChange(of: sessionStore.isAuthenticated) { isAuthenticated in
             if isAuthenticated {

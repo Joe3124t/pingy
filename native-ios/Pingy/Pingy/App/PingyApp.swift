@@ -10,9 +10,11 @@ struct PingyApp: App {
             RootView(
                 authViewModel: environment.authViewModel,
                 messengerViewModel: environment.messengerViewModel,
-                sessionStore: environment.sessionStore
+                sessionStore: environment.sessionStore,
+                themeManager: environment.themeManager
             )
             .environmentObject(environment)
+            .environmentObject(environment.themeManager)
             .task {
                 appDelegate.pushManager = environment.pushManager
                 await environment.bootstrap()

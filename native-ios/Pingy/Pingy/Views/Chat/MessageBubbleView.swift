@@ -10,6 +10,7 @@ struct MessageBubbleView: View {
     let isGroupedWithPrevious: Bool
     let onReply: () -> Void
     let onReact: (String) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var decryptedText: String?
     @State private var decryptionFailed = false
@@ -34,7 +35,7 @@ struct MessageBubbleView: View {
                 HStack(spacing: 6) {
                     Text(formatTime(message.createdAt))
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white.opacity(0.82) : PingyTheme.textSecondary)
+                        .foregroundStyle(isOwn ? Color.white.opacity(0.92) : PingyTheme.textSecondary)
 
                     if isOwn {
                         Image(systemName: statusSymbol)
@@ -50,7 +51,8 @@ struct MessageBubbleView: View {
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Color.white.opacity(isOwn ? 0.2 : 0.9))
+                                .background(isOwn ? Color.white.opacity(0.22) : PingyTheme.reactionChipBackground)
+                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
                                 .clipShape(Capsule())
                         }
                     }
@@ -105,17 +107,13 @@ struct MessageBubbleView: View {
 
     private var bubbleBackground: some ShapeStyle {
         if isOwn {
-            return LinearGradient(
-                colors: [PingyTheme.primary, PingyTheme.primaryStrong],
+            return AnyShapeStyle(LinearGradient(
+                colors: [PingyTheme.sentBubbleStart, PingyTheme.sentBubbleEnd],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            )
+            ))
         }
-        return LinearGradient(
-            colors: [Color.white, Color.white.opacity(0.96)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        return AnyShapeStyle(PingyTheme.receivedBubble)
     }
 
     private var statusSymbol: String {
@@ -129,7 +127,7 @@ struct MessageBubbleView: View {
     }
 
     private var statusColor: Color {
-        message.seenAt != nil ? PingyTheme.success : Color.white.opacity(0.82)
+        message.seenAt != nil ? PingyTheme.success : Color.white.opacity(0.92)
     }
 
     private var reactionEmojis: [String] {
@@ -182,7 +180,7 @@ struct MessageBubbleView: View {
                 Link(destination: url) {
                     Label("Open video", systemImage: "video.fill")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white : PingyTheme.primaryStrong)
+                        .foregroundStyle(isOwn ? Color.white : PingyTheme.primary)
                 }
             }
 
@@ -191,7 +189,7 @@ struct MessageBubbleView: View {
                 Link(destination: url) {
                     Label(message.mediaName ?? "Open file", systemImage: "doc.fill")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white : PingyTheme.primaryStrong)
+                        .foregroundStyle(isOwn ? Color.white : PingyTheme.primary)
                 }
             }
 
@@ -207,7 +205,7 @@ struct MessageBubbleView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Reply")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(isOwn ? Color.white.opacity(0.86) : PingyTheme.primaryStrong)
+                .foregroundStyle(isOwn ? Color.white.opacity(0.9) : PingyTheme.primary)
             Text(reply.body?.stringValue ?? reply.mediaName ?? "Message")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .lineLimit(1)
@@ -215,7 +213,11 @@ struct MessageBubbleView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(isOwn ? Color.black.opacity(0.14) : PingyTheme.primarySoft)
+        .background(
+            isOwn
+                ? Color.black.opacity(colorScheme == .dark ? 0.3 : 0.15)
+                : PingyTheme.surfaceElevated
+        )
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
@@ -363,7 +365,7 @@ struct VoiceMessagePlayerView: View {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 30, height: 30)
-                    .background(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.primarySoft)
+                    .background(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.surfaceElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(PingyPressableButtonStyle())
@@ -372,9 +374,9 @@ struct VoiceMessagePlayerView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.border)
+                            .fill(isOwnMessage ? Color.white.opacity(0.24) : PingyTheme.border.opacity(0.6))
                         Capsule()
-                            .fill(isOwnMessage ? Color.white : PingyTheme.primary)
+                            .fill(isOwnMessage ? Color.white : PingyTheme.primaryStrong)
                             .frame(width: geo.size.width * progress)
                     }
                 }
@@ -382,7 +384,7 @@ struct VoiceMessagePlayerView: View {
 
                 Text(durationText)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(isOwnMessage ? Color.white.opacity(0.82) : PingyTheme.textSecondary)
+                    .foregroundStyle(isOwnMessage ? Color.white.opacity(0.9) : PingyTheme.textSecondary)
             }
         }
         .onDisappear {

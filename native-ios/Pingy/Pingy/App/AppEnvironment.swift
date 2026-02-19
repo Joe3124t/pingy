@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class AppEnvironment: ObservableObject {
     let configuration = AppConfiguration()
+    let themeManager = ThemeManager()
     let sessionStore = SessionStore()
     let apiClient: APIClient
     let authService: AuthService

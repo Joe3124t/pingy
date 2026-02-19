@@ -122,7 +122,7 @@ struct ProfileView: View {
                 TextField("Add bio...", text: $bio, axis: .vertical)
                     .lineLimit(3 ... 6)
                     .padding(12)
-                    .background(.white)
+                    .background(PingyTheme.inputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -261,7 +261,7 @@ struct ProfileView: View {
             TextField("", text: text)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .padding(12)
-                .background(.white)
+                .background(PingyTheme.inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)

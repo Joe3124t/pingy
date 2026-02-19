@@ -2,15 +2,12 @@ import SwiftUI
 
 struct AuthView: View {
     @ObservedObject var viewModel: AuthViewModel
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color.white, PingyTheme.primarySoft],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            PingyTheme.wallpaperFallback(for: colorScheme)
+                .ignoresSafeArea()
 
             VStack(spacing: PingySpacing.lg) {
                 header
@@ -188,7 +185,7 @@ struct AuthView: View {
                 .font(.system(size: 17, weight: .medium, design: .rounded))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(Color.white)
+                .background(PingyTheme.surfaceElevated)
                 .foregroundStyle(PingyTheme.textPrimary)
                 .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
                 .overlay(
@@ -217,7 +214,7 @@ struct AuthView: View {
                 .autocorrectionDisabled()
                 .padding(.vertical, 12)
                 .padding(.horizontal, 14)
-                .background(Color.white)
+                .background(PingyTheme.inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
@@ -240,7 +237,7 @@ struct AuthView: View {
                 .autocorrectionDisabled()
                 .padding(.vertical, 12)
                 .padding(.horizontal, 14)
-                .background(Color.white)
+                .background(PingyTheme.inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)

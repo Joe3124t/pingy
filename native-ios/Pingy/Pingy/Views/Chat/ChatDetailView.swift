@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct ChatDetailView: View {
     @ObservedObject var viewModel: MessengerViewModel
     let conversation: Conversation
+    @Environment(\.colorScheme) private var colorScheme
 
     @StateObject private var voiceRecorder = VoiceRecorderService()
     @State private var draft = ""
@@ -18,14 +19,14 @@ struct ChatDetailView: View {
 
             VStack(spacing: 0) {
                 topBar
-                Divider().overlay(PingyTheme.border)
+                Divider().overlay(PingyTheme.border.opacity(0.4))
                 messagesList
             }
         }
         .safeAreaInset(edge: .bottom) {
             composer
                 .background(PingyTheme.surface)
-                .overlay(Rectangle().fill(PingyTheme.border).frame(height: 1), alignment: .top)
+                .overlay(Rectangle().fill(PingyTheme.border.opacity(0.35)).frame(height: 1), alignment: .top)
         }
         .onAppear {
             draft = ""
@@ -77,7 +78,7 @@ struct ChatDetailView: View {
 
             Text("E2EE")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.primaryStrong)
+                .foregroundStyle(PingyTheme.primary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(PingyTheme.primarySoft)
@@ -201,7 +202,7 @@ struct ChatDetailView: View {
                     .lineLimit(1 ... 4)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
-                    .background(Color.white)
+                    .background(PingyTheme.inputBackground)
                     .foregroundStyle(PingyTheme.textPrimary)
                     .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
                     .overlay(
@@ -250,11 +251,7 @@ struct ChatDetailView: View {
 
     private var chatWallpaper: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color(red: 0.94, green: 0.97, blue: 0.99), Color(red: 0.90, green: 0.96, blue: 0.98)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            PingyTheme.wallpaperFallback(for: colorScheme)
 
             if let urlString = conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl,
                let url = URL(string: urlString)
@@ -267,8 +264,10 @@ struct ChatDetailView: View {
                         image
                             .resizable()
                             .scaledToFill()
-                            .blur(radius: CGFloat(conversation.blurIntensity))
-                            .opacity(0.3)
+                            .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
+                            .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
+                            .saturation(colorScheme == .dark ? 0.88 : 1.0)
+                            .opacity(colorScheme == .dark ? 0.86 : 0.95)
                     case .failure:
                         EmptyView()
                     @unknown default:

@@ -9,6 +9,7 @@ struct SettingsView: View {
 
     @State private var defaultWallpaperURL = ""
     @State private var wallpaperItem: PhotosPickerItem?
+    @State private var appearanceMode: ThemeMode = .auto
     @State private var showDeleteAccountConfirmation = false
 
     var body: some View {
@@ -33,6 +34,7 @@ struct SettingsView: View {
         }
         .onAppear {
             defaultWallpaperURL = viewModel.currentUserSettings?.defaultWallpaperUrl ?? ""
+            appearanceMode = appEnvironment.themeManager.appearanceMode
         }
         .onChange(of: wallpaperItem) { newValue in
             guard let newValue else { return }
@@ -69,15 +71,27 @@ struct SettingsView: View {
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
-            Text("Theme is locked to Light mode in v1.1 for consistent readability.")
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(PingyTheme.textSecondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Appearance")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+
+                Picker("Appearance", selection: $appearanceMode) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appearanceMode) { newValue in
+                    appEnvironment.themeManager.appearanceMode = newValue
+                }
+            }
 
             TextField("Default wallpaper URL (optional)", text: $defaultWallpaperURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(12)
-                .background(.white)
+                .background(PingyTheme.inputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -95,7 +109,7 @@ struct SettingsView: View {
                 Task {
                     let normalized = defaultWallpaperURL.trimmingCharacters(in: .whitespacesAndNewlines)
                     await viewModel.saveChat(
-                        themeMode: .light,
+                        themeMode: appearanceMode,
                         defaultWallpaperURL: normalized.isEmpty ? nil : normalized
                     )
                 }

@@ -2,16 +2,68 @@ import SwiftUI
 import UIKit
 
 enum PingyTheme {
-    static let primary = Color(red: 0.04, green: 0.49, blue: 0.55)
-    static let primaryStrong = Color(red: 0.02, green: 0.42, blue: 0.48)
-    static let primarySoft = Color(red: 0.86, green: 0.95, blue: 0.96)
-    static let background = Color(red: 0.96, green: 0.98, blue: 0.99)
-    static let surface = Color.white
-    static let textPrimary = Color(red: 0.09, green: 0.12, blue: 0.17)
-    static let textSecondary = Color(red: 0.35, green: 0.41, blue: 0.48)
-    static let border = Color(red: 0.88, green: 0.91, blue: 0.94)
-    static let success = Color(red: 0.13, green: 0.64, blue: 0.36)
-    static let danger = Color(red: 0.81, green: 0.20, blue: 0.24)
+    static let primary = Color("AccentColor")
+    static let primaryStrong = Color("AccentColorStrong")
+    static let primarySoft = Color("AccentColorSoft")
+
+    static let background = Color(uiColor: .systemGroupedBackground)
+    static let surface = Color(uiColor: .secondarySystemGroupedBackground)
+    static let surfaceElevated = Color(uiColor: .tertiarySystemGroupedBackground)
+    static let inputBackground = Color(uiColor: .systemBackground)
+
+    static let textPrimary = Color(uiColor: .label)
+    static let textSecondary = Color(uiColor: .secondaryLabel)
+    static let border = Color(uiColor: .separator)
+
+    static let success = Color(uiColor: .systemGreen)
+    static let danger = Color(uiColor: .systemRed)
+
+    static let sentBubbleStart = Color("AccentColor")
+    static let sentBubbleEnd = Color("AccentColorStrong")
+
+    static let receivedBubble = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 0.118, green: 0.118, blue: 0.118, alpha: 1.0)
+        }
+        return UIColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1.0)
+    })
+
+    static let reactionChipBackground = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 0.20, green: 0.22, blue: 0.25, alpha: 1.0)
+        }
+        return UIColor.white
+    })
+
+    static func wallpaperFallback(for colorScheme: ColorScheme) -> LinearGradient {
+        if colorScheme == .dark {
+            return LinearGradient(
+                colors: [
+                    Color(uiColor: .black),
+                    Color(uiColor: UIColor(red: 0.03, green: 0.08, blue: 0.12, alpha: 1.0)),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+
+        return LinearGradient(
+            colors: [
+                Color(uiColor: UIColor(red: 0.95, green: 0.98, blue: 1.0, alpha: 1.0)),
+                Color(uiColor: UIColor(red: 0.90, green: 0.96, blue: 0.98, alpha: 1.0)),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    static func wallpaperOverlay(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color.black.opacity(0.42) : Color.white.opacity(0.24)
+    }
+
+    static func shadowColor(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color.black.opacity(0.32) : Color.black.opacity(0.08)
+    }
 }
 
 enum PingySpacing {
@@ -29,6 +81,8 @@ enum PingyRadius {
 }
 
 struct PingyCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
     func body(content: Content) -> some View {
         content
             .padding(PingySpacing.md)
@@ -36,9 +90,13 @@ struct PingyCardModifier: ViewModifier {
             .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous)
-                    .stroke(PingyTheme.border, lineWidth: 1)
+                    .stroke(PingyTheme.border.opacity(colorScheme == .dark ? 0.45 : 0.3), lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.06), radius: 12, y: 6)
+            .shadow(
+                color: PingyTheme.shadowColor(for: colorScheme),
+                radius: colorScheme == .dark ? 7 : 12,
+                y: colorScheme == .dark ? 2 : 6
+            )
     }
 }
 

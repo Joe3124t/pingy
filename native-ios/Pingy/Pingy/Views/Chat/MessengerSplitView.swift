@@ -360,7 +360,7 @@ struct ConversationRowView: View {
                 Circle()
                     .fill(conversation.participantIsOnline ? PingyTheme.success : Color.gray.opacity(0.45))
                     .frame(width: 11, height: 11)
-                    .overlay(Circle().stroke(.white, lineWidth: 2))
+                    .overlay(Circle().stroke(PingyTheme.surface, lineWidth: 2))
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -388,7 +388,7 @@ struct ConversationRowView: View {
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(isSelected ? Color.white.opacity(0.2) : PingyTheme.primary)
+                    .background(isSelected ? Color.white.opacity(0.24) : PingyTheme.primaryStrong)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
             }
@@ -399,20 +399,16 @@ struct ConversationRowView: View {
                 .fill(
                     isSelected
                         ? LinearGradient(
-                            colors: [PingyTheme.primary, PingyTheme.primaryStrong],
+                            colors: [PingyTheme.sentBubbleStart, PingyTheme.sentBubbleEnd],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
-                        : LinearGradient(
-                            colors: [Color.white, Color.white.opacity(0.92)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+                        : PingyTheme.surface
                 )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(PingyTheme.border, lineWidth: isSelected ? 0 : 1)
+                .stroke(PingyTheme.border.opacity(isSelected ? 0 : 0.3), lineWidth: isSelected ? 0 : 1)
         )
     }
 
