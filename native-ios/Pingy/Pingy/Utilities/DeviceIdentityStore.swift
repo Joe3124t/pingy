@@ -8,8 +8,10 @@ final class DeviceIdentityStore {
     private let deviceIDKey = "pingy.device.id.v2"
 
     func currentDeviceID() -> String {
-        if let existing = try? keychain.string(for: deviceIDKey), let existing, !existing.isEmpty {
-            return existing
+        if let existing = try? keychain.string(for: deviceIDKey) {
+            if let value = existing, !value.isEmpty {
+                return value
+            }
         }
 
         let created = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()

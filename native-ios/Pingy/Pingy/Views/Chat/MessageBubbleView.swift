@@ -275,6 +275,7 @@ struct MessageBubbleView: View {
                 await cryptoService.clearMemoryCaches()
 
                 do {
+                    let peerKey = try await resolvePeerKey()
                     let plain = try await cryptoService.decryptText(
                         payload: payload,
                         userID: currentUserID,
