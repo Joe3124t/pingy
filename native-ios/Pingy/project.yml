@@ -18,8 +18,8 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: Pingy
-    resources:
       - path: Resources
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: Pingy
