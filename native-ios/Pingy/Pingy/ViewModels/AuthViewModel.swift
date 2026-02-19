@@ -43,10 +43,12 @@ final class AuthViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
+            let normalizedPhone = normalizedPhoneNumber(phoneNumber)
+
             switch mode {
             case .phoneEntry:
                 let response = try await authService.requestOTP(
-                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: normalizedPhone,
                     purpose: "register"
                 )
                 infoMessage = response.message
@@ -55,7 +57,7 @@ final class AuthViewModel: ObservableObject {
 
             case .otpVerify:
                 let response = try await authService.verifyOTP(
-                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: normalizedPhone,
                     code: otpCode.trimmingCharacters(in: .whitespacesAndNewlines),
                     purpose: "register"
                 )
@@ -85,14 +87,14 @@ final class AuthViewModel: ObservableObject {
 
             case .loginPassword:
                 let user = try await authService.login(
-                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: normalizedPhone,
                     password: password
                 )
                 try await bootstrapCrypto(userID: user.id)
 
             case .forgotPasswordRequest:
                 let message = try await authService.requestPasswordReset(
-                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+                    phoneNumber: normalizedPhone
                 )
                 infoMessage = message
                 mode = .forgotPasswordConfirm
@@ -102,7 +104,7 @@ final class AuthViewModel: ObservableObject {
                     throw APIError.server(statusCode: 400, message: "Passwords do not match")
                 }
                 let message = try await authService.confirmPasswordReset(
-                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: normalizedPhone,
                     code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
                     newPassword: newPassword
                 )
@@ -136,5 +138,33 @@ final class AuthViewModel: ObservableObject {
     private func bootstrapCrypto(userID: String) async throws {
         let publicKey = try await cryptoService.ensureIdentity(for: userID)
         try await settingsService.upsertPublicKey(publicKey)
+    }
+
+    private func normalizedPhoneNumber(_ rawValue: String) -> String {
+        let raw = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty {
+            return raw
+        }
+
+        let compact = raw.replacingOccurrences(
+            of: #"[^\d+]"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        if compact.hasPrefix("+") {
+            return compact
+        }
+
+        if compact.hasPrefix("00") {
+            return "+\(compact.dropFirst(2))"
+        }
+
+        // Local Egypt mobile format (01xxxxxxxxx) -> +20xxxxxxxxxx
+        if compact.count == 11, compact.hasPrefix("01") {
+            return "+20\(compact.dropFirst())"
+        }
+
+        return "+\(compact)"
     }
 }
