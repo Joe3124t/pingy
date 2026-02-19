@@ -106,8 +106,7 @@ actor E2EECryptoService {
 
         let keyName = privateKeyPrefix + userID
         if
-            let storedDataOptional = try? KeychainStore.shared.data(for: keyName),
-            let storedData = storedDataOptional,
+            let storedData = try? KeychainStore.shared.data(for: keyName),
             let restored = try? P256.KeyAgreement.PrivateKey(rawRepresentation: storedData)
         {
             privateKeyCache[userID] = restored
