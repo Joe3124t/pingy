@@ -52,6 +52,7 @@ const getMySettings = asyncHandler(async (req, res) => {
   res.status(200).json({
     user: {
       ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
       defaultWallpaperUrl: signMediaUrl(user?.defaultWallpaperUrl),
     },
     blockedUsers: blockedUsers.map((entry) => signMediaUrlsInUser(entry)),
@@ -80,7 +81,12 @@ const updateProfileSettings = asyncHandler(async (req, res) => {
 
   await emitProfileUpdateToContacts(req, user);
 
-  res.status(200).json({ user: signMediaUrlsInUser(user) });
+  res.status(200).json({
+    user: {
+      ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
+    },
+  });
 });
 
 const uploadAvatar = asyncHandler(async (req, res) => {
@@ -111,7 +117,12 @@ const uploadAvatar = asyncHandler(async (req, res) => {
 
   await emitProfileUpdateToContacts(req, user);
 
-  res.status(200).json({ user: signMediaUrlsInUser(user) });
+  res.status(200).json({
+    user: {
+      ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
+    },
+  });
 });
 
 const uploadDefaultWallpaper = asyncHandler(async (req, res) => {
@@ -135,6 +146,7 @@ const uploadDefaultWallpaper = asyncHandler(async (req, res) => {
   res.status(200).json({
     user: {
       ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
       defaultWallpaperUrl: signMediaUrl(user?.defaultWallpaperUrl),
     },
   });
@@ -149,7 +161,12 @@ const updatePrivacySettings = asyncHandler(async (req, res) => {
     readReceiptsEnabled,
   });
 
-  res.status(200).json({ user: signMediaUrlsInUser(user) });
+  res.status(200).json({
+    user: {
+      ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
+    },
+  });
 });
 
 const updateChatSettings = asyncHandler(async (req, res) => {
@@ -169,6 +186,7 @@ const updateChatSettings = asyncHandler(async (req, res) => {
   res.status(200).json({
     user: {
       ...signMediaUrlsInUser(user),
+      deviceId: req.auth?.deviceId || null,
       defaultWallpaperUrl: signMediaUrl(user?.defaultWallpaperUrl),
     },
   });

@@ -1,5 +1,5 @@
 const { verifyAccessToken } = require('../services/tokenService');
-const { findUserById } = require('../models/userModel');
+const { findUserAuthById } = require('../models/userModel');
 const { HttpError } = require('../utils/httpError');
 
 const extractBearerToken = (authorizationHeader = '') => {
@@ -19,12 +19,23 @@ const authMiddleware = async (req, res, next) => {
     }
 
     const payload = verifyAccessToken(token);
-    const user = await findUserById(payload.sub);
+    const user = await findUserAuthById(payload.sub);
 
     if (!user) {
       throw new HttpError(401, 'User no longer exists');
     }
 
+    if (user.currentDeviceId && String(user.currentDeviceId) !== String(payload.deviceId || '')) {
+      throw new HttpError(401, 'Session is no longer active on this device');
+    }
+
+    req.auth = {
+      userId: user.id,
+      deviceId: user.currentDeviceId || payload.deviceId || null,
+    };
+
+    delete user.passwordHash;
+    delete user.currentDeviceId;
     req.user = user;
     next();
   } catch (error) {

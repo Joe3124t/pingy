@@ -46,7 +46,7 @@ const listBlockedUsers = async (blockerId) => {
       SELECT
         u.id,
         u.username,
-        u.email,
+        u.phone_number AS "phoneNumber",
         u.avatar_url AS "avatarUrl",
         ub.created_at AS "blockedAt"
       FROM user_blocks ub

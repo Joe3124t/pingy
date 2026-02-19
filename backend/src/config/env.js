@@ -39,6 +39,15 @@ const envSchema = z.object({
   REFRESH_TOKEN_SECRET: z.string().min(32, 'REFRESH_TOKEN_SECRET must be at least 32 chars'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_DAYS: z.coerce.number().int().min(1).max(90).default(14),
+  OTP_VERIFICATION_SECRET: z.string().min(32).optional(),
+  OTP_CODE_TTL_MINUTES: z.coerce.number().int().min(3).max(60).default(10),
+  OTP_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
+  OTP_REQUEST_COOLDOWN_SECONDS: z.coerce.number().int().min(10).max(600).default(45),
+  OTP_VERIFY_TOKEN_TTL: z.string().default('10m'),
+  OTP_DEV_ALLOW_PLAINTEXT: z
+    .string()
+    .optional()
+    .transform((value) => parseBoolean(value, false)),
   PASSWORD_RESET_SECRET: z.string().min(32).optional(),
   PASSWORD_RESET_CODE_TTL_MINUTES: z.coerce.number().int().min(3).max(60).default(10),
   PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),

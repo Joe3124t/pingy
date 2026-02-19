@@ -122,7 +122,7 @@ final class SettingsService {
         let endpoint = try Endpoint.json(
             path: "crypto/public-key",
             method: .put,
-            payload: Payload(publicKeyJwk: publicKeyJWK, algorithm: "ECDH-P256")
+            payload: Payload(publicKeyJwk: publicKeyJWK, algorithm: "ECDH-Curve25519")
         )
         _ = try await authService.authorizedRequest(endpoint, as: UpsertPublicKeyResponse.self)
     }

@@ -22,13 +22,25 @@ enum CryptoServiceError: LocalizedError {
 }
 
 actor E2EECryptoService {
-    private let privateKeyPrefix = "pingy.e2ee.private.v1."
-    private var privateKeyCache: [String: P256.KeyAgreement.PrivateKey] = [:]
+    private let agreementPrivateKeyPrefix = "pingy.e2ee.x25519.private.v2."
+    private let identityPrivateKeyPrefix = "pingy.e2ee.ed25519.private.v2."
+    private let keyDerivationSalt = Data("pingy-v2-aesgcm".utf8)
+
+    private var agreementPrivateKeyCache: [String: Curve25519.KeyAgreement.PrivateKey] = [:]
+    private var identityPrivateKeyCache: [String: Curve25519.Signing.PrivateKey] = [:]
     private var sharedKeyCache: [String: SymmetricKey] = [:]
 
+    private var currentDeviceID: String {
+        DeviceIdentityStore.shared.currentDeviceID()
+    }
+
     func ensureIdentity(for userID: String) throws -> PublicKeyJWK {
-        let privateKey = try ensurePrivateKey(for: userID)
-        return makeJWK(from: privateKey.publicKey)
+        let agreementPrivateKey = try ensureAgreementPrivateKey(for: userID)
+        let identityPrivateKey = try ensureIdentityPrivateKey(for: userID)
+        return makeJWK(
+            agreementPublicKey: agreementPrivateKey.publicKey,
+            identityPublicKey: identityPrivateKey.publicKey
+        )
     }
 
     func encryptText(
@@ -95,32 +107,71 @@ actor E2EECryptoService {
     }
 
     func clearMemoryCaches() {
-        privateKeyCache.removeAll()
+        agreementPrivateKeyCache.removeAll()
+        identityPrivateKeyCache.removeAll()
         sharedKeyCache.removeAll()
     }
 
-    private func ensurePrivateKey(for userID: String) throws -> P256.KeyAgreement.PrivateKey {
-        if let cached = privateKeyCache[userID] {
+    func clearIdentityFromKeychain(for userID: String) {
+        let binding = keyBinding(for: userID)
+        try? KeychainStore.shared.delete(agreementPrivateKeyPrefix + binding)
+        try? KeychainStore.shared.delete(identityPrivateKeyPrefix + binding)
+        clearMemoryCaches()
+    }
+
+    private func keyBinding(for userID: String) -> String {
+        "\(userID).\(currentDeviceID)"
+    }
+
+    private func ensureAgreementPrivateKey(for userID: String) throws -> Curve25519.KeyAgreement.PrivateKey {
+        let binding = keyBinding(for: userID)
+        if let cached = agreementPrivateKeyCache[binding] {
             return cached
         }
 
-        let keyName = privateKeyPrefix + userID
+        let keyName = agreementPrivateKeyPrefix + binding
         if
             let storedData = try? KeychainStore.shared.data(for: keyName),
-            let restored = try? P256.KeyAgreement.PrivateKey(rawRepresentation: storedData)
+            let restored = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: storedData)
         {
-            privateKeyCache[userID] = restored
+            agreementPrivateKeyCache[binding] = restored
             return restored
         }
 
-        let created = P256.KeyAgreement.PrivateKey()
+        let created = Curve25519.KeyAgreement.PrivateKey()
         do {
             try KeychainStore.shared.setData(created.rawRepresentation, for: keyName)
         } catch {
             throw CryptoServiceError.keychainFailure
         }
 
-        privateKeyCache[userID] = created
+        agreementPrivateKeyCache[binding] = created
+        return created
+    }
+
+    private func ensureIdentityPrivateKey(for userID: String) throws -> Curve25519.Signing.PrivateKey {
+        let binding = keyBinding(for: userID)
+        if let cached = identityPrivateKeyCache[binding] {
+            return cached
+        }
+
+        let keyName = identityPrivateKeyPrefix + binding
+        if
+            let storedData = try? KeychainStore.shared.data(for: keyName),
+            let restored = try? Curve25519.Signing.PrivateKey(rawRepresentation: storedData)
+        {
+            identityPrivateKeyCache[binding] = restored
+            return restored
+        }
+
+        let created = Curve25519.Signing.PrivateKey()
+        do {
+            try KeychainStore.shared.setData(created.rawRepresentation, for: keyName)
+        } catch {
+            throw CryptoServiceError.keychainFailure
+        }
+
+        identityPrivateKeyCache[binding] = created
         return created
     }
 
@@ -129,55 +180,59 @@ actor E2EECryptoService {
         peerUserID: String,
         peerPublicKeyJWK: PublicKeyJWK
     ) throws -> SymmetricKey {
-        let cacheID = "\(userID):\(peerUserID):\(peerPublicKeyJWK.x):\(peerPublicKeyJWK.y)"
+        let cacheID = "\(keyBinding(for: userID)):\(peerUserID):\(peerPublicKeyJWK.kty):\(peerPublicKeyJWK.crv):\(peerPublicKeyJWK.x)"
         if let cached = sharedKeyCache[cacheID] {
             return cached
         }
 
-        let privateKey = try ensurePrivateKey(for: userID)
+        let privateKey = try ensureAgreementPrivateKey(for: userID)
         let peerPublicKey = try makePublicKey(from: peerPublicKeyJWK)
         let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: peerPublicKey)
 
-        let raw = sharedSecret.withUnsafeBytes { Data($0) }
-        let symmetricKey = SymmetricKey(data: raw.prefix(32))
+        let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: keyDerivationSalt,
+            sharedInfo: Data(cacheID.utf8),
+            outputByteCount: 32
+        )
         sharedKeyCache[cacheID] = symmetricKey
         return symmetricKey
     }
 
-    private func makePublicKey(from jwk: PublicKeyJWK) throws -> P256.KeyAgreement.PublicKey {
-        guard jwk.kty == "EC", jwk.crv == "P-256" else {
+    private func makePublicKey(from jwk: PublicKeyJWK) throws -> Curve25519.KeyAgreement.PublicKey {
+        guard jwk.kty == "OKP", jwk.crv == "X25519" else {
             throw CryptoServiceError.invalidPeerPublicKey
         }
         guard
             let x = Base64URL.decode(jwk.x),
-            let y = Base64URL.decode(jwk.y),
-            x.count == 32,
-            y.count == 32
+            x.count == 32
         else {
             throw CryptoServiceError.invalidPeerPublicKey
         }
 
-        var representation = Data([0x04])
-        representation.append(x)
-        representation.append(y)
-
         do {
-            return try P256.KeyAgreement.PublicKey(x963Representation: representation)
+            return try Curve25519.KeyAgreement.PublicKey(rawRepresentation: x)
         } catch {
             throw CryptoServiceError.invalidPeerPublicKey
         }
     }
 
-    private func makeJWK(from publicKey: P256.KeyAgreement.PublicKey) -> PublicKeyJWK {
-        let bytes = publicKey.x963Representation
-        let x = bytes.subdata(in: 1 ..< 33)
-        let y = bytes.subdata(in: 33 ..< 65)
-
-        return PublicKeyJWK(
-            x: Base64URL.encode(x),
-            y: Base64URL.encode(y),
+    private func makeJWK(
+        agreementPublicKey: Curve25519.KeyAgreement.PublicKey,
+        identityPublicKey: Curve25519.Signing.PublicKey
+    ) -> PublicKeyJWK {
+        PublicKeyJWK(
+            kty: "OKP",
+            crv: "X25519",
+            x: Base64URL.encode(agreementPublicKey.rawRepresentation),
+            y: nil,
             ext: true,
-            keyOps: nil
+            keyOps: nil,
+            identityPublicKey: IdentityPublicKeyJWK(
+                kty: "OKP",
+                crv: "Ed25519",
+                x: Base64URL.encode(identityPublicKey.rawRepresentation)
+            )
         )
     }
 }

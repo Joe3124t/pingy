@@ -17,7 +17,7 @@ struct AuthView: View {
                 form
             }
             .padding(PingySpacing.lg)
-            .frame(maxWidth: 480)
+            .frame(maxWidth: 520)
         }
     }
 
@@ -35,7 +35,7 @@ struct AuthView: View {
             }
 
             Text(title)
-                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .font(.system(size: 38, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
             Text(subtitle)
@@ -48,21 +48,7 @@ struct AuthView: View {
 
     private var form: some View {
         VStack(spacing: PingySpacing.sm) {
-            modePicker
-
-            if viewModel.mode == .register {
-                inputField(title: "Username", text: $viewModel.username, keyboard: .default)
-            }
-
-            inputField(title: "Email", text: $viewModel.email, keyboard: .emailAddress)
-
-            if viewModel.mode == .confirmReset {
-                inputField(title: "Reset code", text: $viewModel.resetCode, keyboard: .numberPad)
-                secureInputField(title: "New password", text: $viewModel.newPassword)
-                secureInputField(title: "Confirm password", text: $viewModel.confirmPassword)
-            } else if viewModel.mode != .forgotPassword {
-                secureInputField(title: "Password", text: $viewModel.password)
-            }
+            fieldSet
 
             if let error = viewModel.errorMessage {
                 statusView(text: error, color: PingyTheme.danger.opacity(0.14), textColor: PingyTheme.danger)
@@ -70,6 +56,14 @@ struct AuthView: View {
 
             if let info = viewModel.infoMessage {
                 statusView(text: info, color: PingyTheme.success.opacity(0.14), textColor: PingyTheme.success)
+            }
+
+            if let debugCode = viewModel.debugCodeHint, !debugCode.isEmpty {
+                statusView(
+                    text: "Debug OTP: \(debugCode)",
+                    color: PingyTheme.primary.opacity(0.12),
+                    textColor: PingyTheme.primaryStrong
+                )
             }
 
             Button {
@@ -83,7 +77,7 @@ struct AuthView: View {
                             .tint(.white)
                     }
                     Text(primaryButtonTitle)
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
+                        .font(.system(size: 20, weight: .semibold, design: .rounded))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 15)
@@ -94,58 +88,123 @@ struct AuthView: View {
             .buttonStyle(PingyPressableButtonStyle())
             .disabled(viewModel.isLoading)
 
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    viewModel.switchMode(viewModel.mode == .forgotPassword ? .login : .forgotPassword)
-                }
-            } label: {
-                Text(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset ? "Back to login" : "Forgot password?")
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .background(Color.white)
-                    .foregroundStyle(PingyTheme.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
-                            .stroke(PingyTheme.border, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(PingyPressableButtonStyle())
+            footerButtons
         }
         .pingyCard()
     }
 
-    private var modePicker: some View {
-        HStack(spacing: 8) {
-            pickerButton("Login", mode: .login)
-            pickerButton("Register", mode: .register)
+    @ViewBuilder
+    private var fieldSet: some View {
+        switch viewModel.mode {
+        case .phoneEntry:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
+
+        case .otpVerify:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
+            inputField(title: "OTP code", text: $viewModel.otpCode, keyboard: .numberPad)
+
+        case .registerProfile:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad, disabled: true)
+            inputField(title: "Display name", text: $viewModel.displayName, keyboard: .default)
+            inputField(title: "Bio", text: $viewModel.bio, keyboard: .default)
+            secureInputField(title: "Password", text: $viewModel.password)
+            secureInputField(title: "Confirm password", text: $viewModel.confirmPassword)
+
+        case .loginPassword:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
+            secureInputField(title: "Password", text: $viewModel.password)
+
+        case .forgotPasswordRequest:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
+
+        case .forgotPasswordConfirm:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
+            inputField(title: "Reset code", text: $viewModel.resetCode, keyboard: .numberPad)
+            secureInputField(title: "New password", text: $viewModel.newPassword)
+            secureInputField(title: "Confirm password", text: $viewModel.confirmPassword)
         }
-        .padding(4)
-        .background(PingyTheme.primarySoft)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .opacity(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset ? 0.35 : 1)
-        .allowsHitTesting(!(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset))
     }
 
-    private func pickerButton(_ title: String, mode: AuthViewModel.Mode) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                viewModel.switchMode(mode)
+    @ViewBuilder
+    private var footerButtons: some View {
+        switch viewModel.mode {
+        case .phoneEntry:
+            secondaryButton(title: "I already have a password") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.moveTo(.loginPassword)
+                }
             }
-        } label: {
+
+        case .otpVerify:
+            HStack(spacing: 10) {
+                secondaryButton(title: "Back") {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        viewModel.resetToPhoneEntry()
+                    }
+                }
+                secondaryButton(title: "Resend code") {
+                    Task {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            viewModel.moveTo(.phoneEntry)
+                        }
+                        await viewModel.submit()
+                    }
+                }
+            }
+
+        case .registerProfile:
+            secondaryButton(title: "Back to OTP") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.moveTo(.otpVerify)
+                }
+            }
+
+        case .loginPassword:
+            HStack(spacing: 10) {
+                secondaryButton(title: "Use OTP sign up") {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        viewModel.moveTo(.phoneEntry)
+                    }
+                }
+                secondaryButton(title: "Forgot password") {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        viewModel.moveTo(.forgotPasswordRequest)
+                    }
+                }
+            }
+
+        case .forgotPasswordRequest, .forgotPasswordConfirm:
+            secondaryButton(title: "Back to login") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.moveTo(.loginPassword)
+                }
+            }
+        }
+    }
+
+    private func secondaryButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(viewModel.mode == mode ? PingyTheme.textPrimary : PingyTheme.textSecondary)
+                .font(.system(size: 17, weight: .medium, design: .rounded))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(viewModel.mode == mode ? Color.white : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.vertical, 12)
+                .background(Color.white)
+                .foregroundStyle(PingyTheme.textPrimary)
+                .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
+                        .stroke(PingyTheme.border, lineWidth: 1)
+                )
         }
         .buttonStyle(PingyPressableButtonStyle())
     }
 
-    private func inputField(title: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
+    private func inputField(
+        title: String,
+        text: Binding<String>,
+        keyboard: UIKeyboardType,
+        disabled: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -164,6 +223,8 @@ struct AuthView: View {
                     RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
                         .stroke(PingyTheme.border, lineWidth: 1)
                 )
+                .disabled(disabled)
+                .opacity(disabled ? 0.6 : 1)
         }
     }
 
@@ -190,7 +251,7 @@ struct AuthView: View {
 
     private func statusView(text: String, color: Color, textColor: Color) -> some View {
         Text(text)
-            .font(.system(size: 15, weight: .medium, design: .rounded))
+            .font(.system(size: 14, weight: .medium, design: .rounded))
             .foregroundStyle(textColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 10)
@@ -201,39 +262,51 @@ struct AuthView: View {
 
     private var title: String {
         switch viewModel.mode {
-        case .login:
-            return "Welcome back"
-        case .register:
-            return "Create account"
-        case .forgotPassword:
-            return "Forgot password"
-        case .confirmReset:
+        case .phoneEntry:
+            return "Enter phone"
+        case .otpVerify:
+            return "Verify OTP"
+        case .registerProfile:
+            return "Create profile"
+        case .loginPassword:
+            return "Login"
+        case .forgotPasswordRequest:
             return "Reset password"
+        case .forgotPasswordConfirm:
+            return "Confirm reset"
         }
     }
 
     private var subtitle: String {
         switch viewModel.mode {
-        case .login:
-            return "Secure native messaging with end-to-end encryption."
-        case .register:
-            return "Create your private Pingy identity."
-        case .forgotPassword:
-            return "We'll send a 6-digit reset code to your email."
-        case .confirmReset:
-            return "Enter your code and set a new password."
+        case .phoneEntry:
+            return "Start with your phone number to continue."
+        case .otpVerify:
+            return "Enter the 6-digit code sent to your phone."
+        case .registerProfile:
+            return "Set display info and secure password."
+        case .loginPassword:
+            return "Sign in on this device only."
+        case .forgotPasswordRequest:
+            return "Request a reset code to your phone."
+        case .forgotPasswordConfirm:
+            return "Enter code and set a new password."
         }
     }
 
     private var primaryButtonTitle: String {
         switch viewModel.mode {
-        case .login:
+        case .phoneEntry:
+            return "Send OTP"
+        case .otpVerify:
+            return "Verify code"
+        case .registerProfile:
+            return "Create account"
+        case .loginPassword:
             return "Login"
-        case .register:
-            return "Register"
-        case .forgotPassword:
+        case .forgotPasswordRequest:
             return "Send reset code"
-        case .confirmReset:
+        case .forgotPasswordConfirm:
             return "Update password"
         }
     }

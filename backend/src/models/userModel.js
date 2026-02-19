@@ -3,7 +3,7 @@ const { query } = require('../config/db');
 const USER_PUBLIC_COLUMNS = `
   id,
   username,
-  email,
+  phone_number AS "phoneNumber",
   avatar_url AS "avatarUrl",
   bio,
   is_online AS "isOnline",
@@ -12,17 +12,70 @@ const USER_PUBLIC_COLUMNS = `
   theme_mode AS "themeMode",
   default_wallpaper_url AS "defaultWallpaperUrl",
   last_seen AS "lastSeen",
+  last_login_at AS "lastLoginAt",
   created_at AS "createdAt"
 `;
 
-const createUser = async ({ id, username, email, passwordHash, avatarUrl = null, bio = '' }) => {
+const USER_AUTH_COLUMNS = `
+  ${USER_PUBLIC_COLUMNS},
+  password_hash AS "passwordHash",
+  current_device_id AS "currentDeviceId"
+`;
+
+const createUser = async ({
+  id,
+  username,
+  phoneNumber,
+  email = null,
+  passwordHash,
+  deviceId = null,
+  avatarUrl = null,
+  bio = '',
+}) => {
+  const normalizedEmail =
+    email === null || email === undefined || String(email).trim() === ''
+      ? null
+      : String(email).trim().toLowerCase();
+  const normalizedDeviceId = String(deviceId || '').trim();
+  const lastLoginAt = normalizedDeviceId ? new Date() : null;
+
   const result = await query(
     `
-      INSERT INTO users (id, username, email, password_hash, avatar_url, bio)
-      VALUES ($1, $2, LOWER($3), $4, $5, $6)
+      INSERT INTO users (
+        id,
+        username,
+        phone_number,
+        email,
+        password_hash,
+        current_device_id,
+        last_login_at,
+        avatar_url,
+        bio
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9
+      )
       RETURNING ${USER_PUBLIC_COLUMNS}
     `,
-    [id, username, email, passwordHash, avatarUrl, bio],
+    [
+      id,
+      username,
+      phoneNumber,
+      normalizedEmail,
+      passwordHash,
+      normalizedDeviceId || null,
+      lastLoginAt,
+      avatarUrl,
+      bio,
+    ],
   );
 
   return result.rows[0];
@@ -42,24 +95,54 @@ const findUserById = async (userId) => {
   return result.rows[0] || null;
 };
 
-const findUserByEmailWithPassword = async (email) => {
+const findUserAuthById = async (userId) => {
   const result = await query(
     `
       SELECT
-        ${USER_PUBLIC_COLUMNS},
-        password_hash AS "passwordHash"
+        ${USER_AUTH_COLUMNS}
       FROM users
-      WHERE email = LOWER($1)
+      WHERE id = $1
       LIMIT 1
     `,
-    [email],
+    [userId],
   );
 
   return result.rows[0] || null;
 };
 
-const searchUsers = async ({ currentUserId, search, limit = 15 }) => {
-  const wildcard = `%${search}%`;
+const findUserByPhoneWithPassword = async (phoneNumber) => {
+  const result = await query(
+    `
+      SELECT
+        ${USER_AUTH_COLUMNS}
+      FROM users
+      WHERE phone_number = $1
+      LIMIT 1
+    `,
+    [phoneNumber],
+  );
+
+  return result.rows[0] || null;
+};
+
+const findUserByPhone = async (phoneNumber) => {
+  const result = await query(
+    `
+      SELECT ${USER_PUBLIC_COLUMNS}
+      FROM users
+      WHERE phone_number = $1
+      LIMIT 1
+    `,
+    [phoneNumber],
+  );
+
+  return result.rows[0] || null;
+};
+
+const searchUsers = async ({ currentUserId, phoneNumber, limit = 15 }) => {
+  if (!phoneNumber) {
+    return [];
+  }
 
   const result = await query(
     `
@@ -72,14 +155,11 @@ const searchUsers = async ({ currentUserId, search, limit = 15 }) => {
           WHERE (b.blocker_id = $1 AND b.blocked_id = users.id)
              OR (b.blocker_id = users.id AND b.blocked_id = $1)
         )
-        AND (
-          username ILIKE $2
-          OR email ILIKE $2
-        )
-      ORDER BY is_online DESC, username ASC
+        AND phone_number = $2
+      ORDER BY is_online DESC, username ASC, created_at DESC
       LIMIT $3
     `,
-    [currentUserId, wildcard, limit],
+    [currentUserId, phoneNumber, limit],
   );
 
   return result.rows;
@@ -193,6 +273,23 @@ const updateUserPasswordHash = async ({ userId, passwordHash }) => {
   return result.rows[0] || null;
 };
 
+const updateUserDeviceBinding = async ({ userId, deviceId }) => {
+  const result = await query(
+    `
+      UPDATE users
+      SET
+        current_device_id = $2,
+        last_login_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${USER_PUBLIC_COLUMNS}
+    `,
+    [userId, deviceId],
+  );
+
+  return result.rows[0] || null;
+};
+
 const deleteUserById = async (userId) => {
   const result = await query(
     `
@@ -206,20 +303,7 @@ const deleteUserById = async (userId) => {
   return Boolean(result.rows[0]);
 };
 
-const isUsernameAvailable = async ({ username, excludeUserId = null }) => {
-  const result = await query(
-    `
-      SELECT 1
-      FROM users
-      WHERE LOWER(username) = LOWER($1)
-        AND ($2::uuid IS NULL OR id <> $2::uuid)
-      LIMIT 1
-    `,
-    [username, excludeUserId],
-  );
-
-  return !result.rows[0];
-};
+const isUsernameAvailable = async () => true;
 
 const filterVisiblePresenceUserIds = async ({ viewerUserId, candidateUserIds = [] }) => {
   if (!Array.isArray(candidateUserIds) || candidateUserIds.length === 0) {
@@ -252,7 +336,9 @@ module.exports = {
   USER_PUBLIC_COLUMNS,
   createUser,
   findUserById,
-  findUserByEmailWithPassword,
+  findUserAuthById,
+  findUserByPhoneWithPassword,
+  findUserByPhone,
   searchUsers,
   setUserOnlineStatus,
   updateUserProfile,
@@ -260,6 +346,7 @@ module.exports = {
   updateUserPrivacySettings,
   updateUserChatSettings,
   updateUserPasswordHash,
+  updateUserDeviceBinding,
   deleteUserById,
   isUsernameAvailable,
   filterVisiblePresenceUserIds,

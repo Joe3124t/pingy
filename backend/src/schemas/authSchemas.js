@@ -8,15 +8,38 @@ const passwordSchema = z
   .regex(/[A-Z]/, 'Password must include an uppercase letter')
   .regex(/[0-9]/, 'Password must include a number');
 
+const phoneNumberSchema = z
+  .string()
+  .trim()
+  .regex(/^\+?[1-9]\d{7,14}$/, 'Phone number must be a valid international format');
+
+const deviceIdSchema = z.string().trim().min(16).max(128);
+
+const otpPurposeSchema = z.enum(['register', 'reset']);
+
 const registerSchema = z.object({
-  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/, 'Only letters, numbers, and underscores'),
-  email: z.string().email().max(255),
+  verificationToken: z.string().trim().min(30).max(2000),
+  displayName: z.string().trim().min(2).max(40),
+  bio: z.string().trim().max(160).optional(),
   password: passwordSchema,
+  deviceId: deviceIdSchema,
 });
 
 const loginSchema = z.object({
-  email: z.string().email().max(255),
+  phoneNumber: phoneNumberSchema,
   password: z.string().min(1),
+  deviceId: deviceIdSchema,
+});
+
+const requestOtpSchema = z.object({
+  phoneNumber: phoneNumberSchema,
+  purpose: otpPurposeSchema.default('register').optional(),
+});
+
+const verifyOtpSchema = z.object({
+  phoneNumber: phoneNumberSchema,
+  code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
+  purpose: otpPurposeSchema.default('register').optional(),
 });
 
 const refreshSchema = z.object({
@@ -28,16 +51,19 @@ const logoutSchema = z.object({
 });
 
 const forgotPasswordRequestSchema = z.object({
-  email: z.string().email().max(255),
+  phoneNumber: phoneNumberSchema,
 });
 
 const forgotPasswordConfirmSchema = z.object({
-  email: z.string().email().max(255),
+  phoneNumber: phoneNumberSchema,
   code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
   newPassword: passwordSchema,
+  deviceId: deviceIdSchema.optional(),
 });
 
 module.exports = {
+  requestOtpSchema,
+  verifyOtpSchema,
   registerSchema,
   loginSchema,
   refreshSchema,

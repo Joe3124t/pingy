@@ -8,8 +8,9 @@ const upsertMyPublicKey = asyncHandler(async (req, res) => {
 
   const key = await upsertUserPublicKey({
     userId: req.user.id,
+    deviceId: req.auth?.deviceId || null,
     publicKeyJwk,
-    algorithm: algorithm || 'ECDH-P256',
+    algorithm: algorithm || 'ECDH-Curve25519',
   });
 
   res.status(200).json({ key });

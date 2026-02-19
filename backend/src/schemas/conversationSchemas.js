@@ -7,7 +7,7 @@ const createDirectConversationSchema = z.object({
 });
 
 const conversationSearchSchema = z.object({
-  query: z.string().min(1).max(50),
+  query: z.string().trim().regex(/^\+?[1-9]\d{7,14}$/, 'Enter full international phone number'),
   limit: z.coerce.number().int().min(1).max(50).default(15),
 });
 

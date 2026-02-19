@@ -188,7 +188,7 @@ private struct ConversationListContent: View {
                                 Text(user.username)
                                     .font(.system(.headline, design: .rounded))
                                     .foregroundStyle(PingyTheme.textPrimary)
-                                Text(user.email ?? "")
+                                Text(user.phoneNumber ?? "")
                                     .font(.system(.subheadline, design: .rounded))
                                     .foregroundStyle(PingyTheme.textSecondary)
                             }
@@ -247,7 +247,7 @@ private struct ConversationListContent: View {
                 Text("Pingy")
                     .font(.system(size: 18, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.primaryStrong)
-                Text("v1.1 - Stability & Native UI Rebuild")
+                Text("v2.0 - Native Secure Messaging")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
@@ -265,7 +265,7 @@ private struct ConversationListContent: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            TextField("Search users", text: $viewModel.searchQuery)
+            TextField("Search by full phone number", text: $viewModel.searchQuery)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

@@ -2,9 +2,12 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY,
-  username VARCHAR(40) NOT NULL UNIQUE,
-  email VARCHAR(255) NOT NULL UNIQUE,
+  username VARCHAR(40) NOT NULL,
+  phone_number VARCHAR(20) NOT NULL UNIQUE,
+  email VARCHAR(255) UNIQUE,
   password_hash TEXT NOT NULL,
+  current_device_id VARCHAR(128),
+  last_login_at TIMESTAMPTZ,
   avatar_url TEXT,
   bio TEXT NOT NULL DEFAULT '',
   is_online BOOLEAN NOT NULL DEFAULT FALSE,
@@ -22,6 +25,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS show_online_status BOOLEAN NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_mode VARCHAR(12) NOT NULL DEFAULT 'auto';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_wallpaper_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS current_device_id VARCHAR(128);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+ALTER TABLE users
+  ALTER COLUMN email DROP NOT NULL;
+
+DO $$
+BEGIN
+  ALTER TABLE users
+    DROP CONSTRAINT users_username_key;
+EXCEPTION
+  WHEN undefined_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_number
+  ON users (phone_number)
+  WHERE phone_number IS NOT NULL;
 
 DO $$
 BEGIN
@@ -127,12 +148,21 @@ CREATE INDEX IF NOT EXISTS idx_participants_user
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id VARCHAR(128) NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   revoked_at TIMESTAMPTZ,
   replaced_by_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS device_id VARCHAR(128);
+UPDATE refresh_tokens
+SET device_id = COALESCE(NULLIF(device_id, ''), 'legacy-device')
+WHERE device_id IS NULL OR device_id = '';
+
+ALTER TABLE refresh_tokens
+  ALTER COLUMN device_id SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS password_reset_codes (
   id UUID PRIMARY KEY,
@@ -152,11 +182,31 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_codes_expiry
 
 CREATE TABLE IF NOT EXISTS user_public_keys (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  device_id VARCHAR(128),
   public_key_jwk JSONB NOT NULL,
-  algorithm VARCHAR(40) NOT NULL DEFAULT 'ECDH-P256',
+  algorithm VARCHAR(40) NOT NULL DEFAULT 'ECDH-Curve25519',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE user_public_keys ADD COLUMN IF NOT EXISTS device_id VARCHAR(128);
+
+CREATE TABLE IF NOT EXISTS phone_otp_codes (
+  id UUID PRIMARY KEY,
+  phone_number VARCHAR(20) NOT NULL,
+  purpose VARCHAR(20) NOT NULL CHECK (purpose IN ('register', 'reset')),
+  code_hash TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_otp_codes_phone
+  ON phone_otp_codes (phone_number, purpose, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_phone_otp_codes_expiry
+  ON phone_otp_codes (expires_at);
 
 CREATE TABLE IF NOT EXISTS user_blocks (
   blocker_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

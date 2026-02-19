@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "reset:v2": "node scripts/reset-v2.js",
     "lint": "echo 'Add linter'"
   },
   "keywords": [],

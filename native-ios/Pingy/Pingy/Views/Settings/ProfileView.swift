@@ -19,6 +19,7 @@ struct ProfileView: View {
                 profileHeader
                 profileCard
                 privacyCard
+                securityCard
                 blockedUsersCard
                 accountCard
             }
@@ -85,7 +86,7 @@ struct ProfileView: View {
                 Text(viewModel.currentUserSettings?.username ?? "Pingy user")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
-                Text(viewModel.currentUserSettings?.email ?? "")
+                Text(viewModel.currentUserSettings?.phoneNumber ?? "")
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
@@ -218,6 +219,18 @@ struct ProfileView: View {
         .pingyCard()
     }
 
+    private var securityCard: some View {
+        VStack(alignment: .leading, spacing: PingySpacing.sm) {
+            Text("Security")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            infoRow(title: "Device ID", value: viewModel.currentUserSettings?.deviceId ?? "This device")
+            infoRow(title: "Last login", value: viewModel.currentUserSettings?.lastLoginAt ?? "Unknown")
+        }
+        .pingyCard()
+    }
+
     private var accountCard: some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
             Text("Account")
@@ -255,6 +268,19 @@ struct ProfileView: View {
                         .stroke(PingyTheme.border, lineWidth: 1)
                 )
         }
+    }
+
+    private func infoRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+            Text(value)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func showSuccessBadge() {

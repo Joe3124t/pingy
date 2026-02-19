@@ -3,12 +3,13 @@ const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { env } = require('../config/env');
 
-const signAccessToken = (user) => {
+const signAccessToken = ({ id, username, phoneNumber, deviceId }) => {
   return jwt.sign(
     {
-      sub: user.id,
-      username: user.username,
-      email: user.email,
+      sub: id,
+      username,
+      phoneNumber,
+      deviceId,
     },
     env.ACCESS_TOKEN_SECRET,
     {

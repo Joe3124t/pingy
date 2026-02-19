@@ -13,6 +13,7 @@ struct MessageBubbleView: View {
 
     @State private var decryptedText: String?
     @State private var decryptionFailed = false
+    @State private var didRetryDecryption = false
     @State private var isVisible = false
 
     private var isOwn: Bool {
@@ -225,7 +226,7 @@ struct MessageBubbleView: View {
                 if let decryptedText {
                     return decryptedText
                 }
-                return decryptionFailed ? "Unable to decrypt message" : "Decrypting..."
+                return decryptionFailed ? "Message corrupted" : "Decrypting..."
             }
             return message.body?.stringValue ?? ""
         default:
@@ -245,6 +246,11 @@ struct MessageBubbleView: View {
         guard message.type == .text, message.isEncrypted else {
             return
         }
+
+        didRetryDecryption = false
+        decryptionFailed = false
+        decryptedText = nil
+
         guard let currentUserID else {
             return
         }
@@ -264,6 +270,26 @@ struct MessageBubbleView: View {
             decryptedText = plain
             decryptionFailed = false
         } catch {
+            if !didRetryDecryption {
+                didRetryDecryption = true
+                await cryptoService.clearMemoryCaches()
+
+                do {
+                    let plain = try await cryptoService.decryptText(
+                        payload: payload,
+                        userID: currentUserID,
+                        peerUserID: conversation.participantId,
+                        peerPublicKeyJWK: peerKey
+                    )
+                    decryptedText = plain
+                    decryptionFailed = false
+                    return
+                } catch {
+                    decryptionFailed = true
+                    return
+                }
+            }
+
             decryptionFailed = true
         }
     }

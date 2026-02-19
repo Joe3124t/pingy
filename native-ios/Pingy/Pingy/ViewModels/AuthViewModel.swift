@@ -3,23 +3,29 @@ import Foundation
 @MainActor
 final class AuthViewModel: ObservableObject {
     enum Mode {
-        case login
-        case register
-        case forgotPassword
-        case confirmReset
+        case phoneEntry
+        case otpVerify
+        case registerProfile
+        case loginPassword
+        case forgotPasswordRequest
+        case forgotPasswordConfirm
     }
 
-    @Published var mode: Mode = .login
-    @Published var email = ""
+    @Published var mode: Mode = .phoneEntry
+    @Published var phoneNumber = ""
+    @Published var otpCode = ""
+    @Published var displayName = ""
+    @Published var bio = ""
     @Published var password = ""
-    @Published var username = ""
-    @Published var resetCode = ""
-    @Published var newPassword = ""
     @Published var confirmPassword = ""
+    @Published var newPassword = ""
+    @Published var resetCode = ""
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
+    @Published var debugCodeHint: String?
 
+    private var registrationVerificationToken: String?
     private let authService: AuthService
     private let cryptoService: E2EECryptoService
     private let settingsService: SettingsService
@@ -38,39 +44,91 @@ final class AuthViewModel: ObservableObject {
 
         do {
             switch mode {
-            case .login:
-                let user = try await authService.login(email: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
-                try await bootstrapCrypto(userID: user.id)
-            case .register:
+            case .phoneEntry:
+                let response = try await authService.requestOTP(
+                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    purpose: "register"
+                )
+                infoMessage = response.message
+                debugCodeHint = response.debugCode
+                mode = .otpVerify
+
+            case .otpVerify:
+                let response = try await authService.verifyOTP(
+                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
+                    code: otpCode.trimmingCharacters(in: .whitespacesAndNewlines),
+                    purpose: "register"
+                )
+                registrationVerificationToken = response.verificationToken
+                if response.isRegistered {
+                    mode = .loginPassword
+                } else {
+                    mode = .registerProfile
+                }
+
+            case .registerProfile:
+                guard password == confirmPassword else {
+                    throw APIError.server(statusCode: 400, message: "Passwords do not match")
+                }
+
+                guard let verificationToken = registrationVerificationToken else {
+                    throw APIError.server(statusCode: 400, message: "Verify OTP code first")
+                }
+
                 let user = try await authService.register(
-                    username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                    email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                    verificationToken: verificationToken,
+                    displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    password: password,
+                    bio: bio.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                try await bootstrapCrypto(userID: user.id)
+
+            case .loginPassword:
+                let user = try await authService.login(
+                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
                     password: password
                 )
                 try await bootstrapCrypto(userID: user.id)
-            case .forgotPassword:
-                let message = try await authService.requestPasswordReset(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+
+            case .forgotPasswordRequest:
+                let message = try await authService.requestPasswordReset(
+                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 infoMessage = message
-                mode = .confirmReset
-            case .confirmReset:
+                mode = .forgotPasswordConfirm
+
+            case .forgotPasswordConfirm:
                 guard newPassword == confirmPassword else {
                     throw APIError.server(statusCode: 400, message: "Passwords do not match")
                 }
                 let message = try await authService.confirmPasswordReset(
-                    email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                    phoneNumber: phoneNumber.trimmingCharacters(in: .whitespacesAndNewlines),
                     code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
                     newPassword: newPassword
                 )
                 infoMessage = message
-                mode = .login
+                mode = .loginPassword
             }
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
-    func switchMode(_ mode: Mode) {
-        self.mode = mode
+    func moveTo(_ newMode: Mode) {
+        mode = newMode
+        errorMessage = nil
+        infoMessage = nil
+    }
+
+    func resetToPhoneEntry() {
+        mode = .phoneEntry
+        registrationVerificationToken = nil
+        otpCode = ""
+        password = ""
+        confirmPassword = ""
+        newPassword = ""
+        resetCode = ""
+        debugCodeHint = nil
         errorMessage = nil
         infoMessage = nil
     }

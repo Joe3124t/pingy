@@ -81,4 +81,35 @@ final class KeychainStore {
             throw KeychainStoreError.unexpectedStatus(status)
         }
     }
+
+    func deleteAll(matchingAccountPrefix prefix: String) throws {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecReturnAttributes: true,
+            kSecMatchLimit: kSecMatchLimitAll
+        ]
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        if status == errSecItemNotFound {
+            return
+        }
+
+        guard status == errSecSuccess else {
+            throw KeychainStoreError.unexpectedStatus(status)
+        }
+
+        let entries = result as? [[CFString: Any]] ?? []
+
+        for entry in entries {
+            guard let account = entry[kSecAttrAccount] as? String else {
+                continue
+            }
+            guard account.hasPrefix(prefix) else {
+                continue
+            }
+            try delete(account)
+        }
+    }
 }

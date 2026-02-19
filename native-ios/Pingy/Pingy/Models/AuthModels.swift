@@ -17,3 +17,13 @@ struct MeResponse: Codable {
 struct GenericMessageResponse: Codable {
     let message: String
 }
+
+struct OTPRequestResponse: Codable {
+    let message: String
+    let debugCode: String?
+}
+
+struct OTPVerifyResponse: Codable {
+    let verificationToken: String
+    let isRegistered: Bool
+}

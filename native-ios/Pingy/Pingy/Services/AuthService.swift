@@ -6,6 +6,7 @@ final class AuthService: ObservableObject, AuthorizedRequester {
 
     let sessionStore: SessionStore
     private let apiClient: APIClient
+    private let deviceIdentity = DeviceIdentityStore.shared
 
     init(apiClient: APIClient, sessionStore: SessionStore) {
         self.apiClient = apiClient
@@ -39,31 +40,76 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         }
     }
 
-    func login(email: String, password: String) async throws -> User {
+    func requestOTP(phoneNumber: String, purpose: String = "register") async throws -> OTPRequestResponse {
+        struct Payload: Encodable {
+            let phoneNumber: String
+            let purpose: String
+        }
+        let endpoint = try Endpoint.json(
+            path: "auth/phone/request-otp",
+            method: .post,
+            payload: Payload(phoneNumber: phoneNumber, purpose: purpose)
+        )
+        return try await apiClient.request(endpoint)
+    }
+
+    func verifyOTP(phoneNumber: String, code: String, purpose: String = "register") async throws -> OTPVerifyResponse {
+        struct Payload: Encodable {
+            let phoneNumber: String
+            let code: String
+            let purpose: String
+        }
+        let endpoint = try Endpoint.json(
+            path: "auth/phone/verify-otp",
+            method: .post,
+            payload: Payload(phoneNumber: phoneNumber, code: code, purpose: purpose)
+        )
+        return try await apiClient.request(endpoint)
+    }
+
+    func login(phoneNumber: String, password: String) async throws -> User {
         struct LoginPayload: Encodable {
-            let email: String
+            let phoneNumber: String
             let password: String
+            let deviceId: String
         }
         let endpoint = try Endpoint.json(
             path: "auth/login",
             method: .post,
-            payload: LoginPayload(email: email, password: password)
+            payload: LoginPayload(
+                phoneNumber: phoneNumber,
+                password: password,
+                deviceId: deviceIdentity.currentDeviceID()
+            )
         )
         let response: AuthResponse = try await apiClient.request(endpoint)
         sessionStore.update(user: response.user, tokens: response.tokens)
         return response.user
     }
 
-    func register(username: String, email: String, password: String) async throws -> User {
+    func register(
+        verificationToken: String,
+        displayName: String,
+        password: String,
+        bio: String = ""
+    ) async throws -> User {
         struct RegisterPayload: Encodable {
-            let username: String
-            let email: String
+            let verificationToken: String
+            let displayName: String
+            let bio: String
             let password: String
+            let deviceId: String
         }
         let endpoint = try Endpoint.json(
             path: "auth/register",
             method: .post,
-            payload: RegisterPayload(username: username, email: email, password: password)
+            payload: RegisterPayload(
+                verificationToken: verificationToken,
+                displayName: displayName,
+                bio: bio,
+                password: password,
+                deviceId: deviceIdentity.currentDeviceID()
+            )
         )
         let response: AuthResponse = try await apiClient.request(endpoint)
         sessionStore.update(user: response.user, tokens: response.tokens)
@@ -94,23 +140,33 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         sessionStore.clear()
     }
 
-    func requestPasswordReset(email: String) async throws -> String {
-        struct Payload: Encodable { let email: String }
-        let endpoint = try Endpoint.json(path: "auth/forgot-password/request", method: .post, payload: Payload(email: email))
+    func requestPasswordReset(phoneNumber: String) async throws -> String {
+        struct Payload: Encodable { let phoneNumber: String }
+        let endpoint = try Endpoint.json(
+            path: "auth/forgot-password/request",
+            method: .post,
+            payload: Payload(phoneNumber: phoneNumber)
+        )
         let response: GenericMessageResponse = try await apiClient.request(endpoint)
         return response.message
     }
 
-    func confirmPasswordReset(email: String, code: String, newPassword: String) async throws -> String {
+    func confirmPasswordReset(phoneNumber: String, code: String, newPassword: String) async throws -> String {
         struct Payload: Encodable {
-            let email: String
+            let phoneNumber: String
             let code: String
             let newPassword: String
+            let deviceId: String
         }
         let endpoint = try Endpoint.json(
             path: "auth/forgot-password/confirm",
             method: .post,
-            payload: Payload(email: email, code: code, newPassword: newPassword)
+            payload: Payload(
+                phoneNumber: phoneNumber,
+                code: code,
+                newPassword: newPassword,
+                deviceId: deviceIdentity.currentDeviceID()
+            )
         )
         let response: GenericMessageResponse = try await apiClient.request(endpoint)
         return response.message

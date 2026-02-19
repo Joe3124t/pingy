@@ -13,6 +13,7 @@ const { assertUsersCanInteract } = require('../services/blockService');
 const { signMediaUrl, signMediaUrlsInUser } = require('../services/mediaAccessService');
 const { HttpError } = require('../utils/httpError');
 const { uploadBuffer } = require('../services/storageService');
+const { normalizePhoneNumber } = require('../utils/phone');
 
 const emitConversationWallpaperUpdate = (req, { conversationId, wallpaperUrl, blurIntensity }) => {
   const io = req.app?.locals?.io;
@@ -84,10 +85,11 @@ const createDirectConversation = asyncHandler(async (req, res) => {
 
 const searchUsersController = asyncHandler(async (req, res) => {
   const { query: queryText, limit = 15 } = req.query;
+  const phoneNumber = normalizePhoneNumber(queryText);
 
   const users = await searchUsers({
     currentUserId: req.user.id,
-    search: queryText,
+    phoneNumber,
     limit,
   });
 

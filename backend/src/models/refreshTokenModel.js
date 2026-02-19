@@ -1,12 +1,12 @@
 const { query } = require('../config/db');
 
-const createRefreshToken = async ({ id, userId, tokenHash, expiresAt }) => {
+const createRefreshToken = async ({ id, userId, deviceId, tokenHash, expiresAt }) => {
   await query(
     `
-      INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO refresh_tokens (id, user_id, device_id, token_hash, expires_at)
+      VALUES ($1, $2, $3, $4, $5)
     `,
-    [id, userId, tokenHash, expiresAt],
+    [id, userId, deviceId, tokenHash, expiresAt],
   );
 };
 
@@ -16,6 +16,7 @@ const findActiveRefreshTokenByHash = async (tokenHash) => {
       SELECT
         id,
         user_id AS "userId",
+        device_id AS "deviceId",
         token_hash AS "tokenHash",
         expires_at AS "expiresAt",
         revoked_at AS "revokedAt",
@@ -66,9 +67,23 @@ const revokeRefreshTokensForUser = async (userId) => {
   );
 };
 
+const revokeRefreshTokensForUserExceptDevice = async ({ userId, keepDeviceId }) => {
+  await query(
+    `
+      UPDATE refresh_tokens
+      SET revoked_at = NOW()
+      WHERE user_id = $1
+        AND revoked_at IS NULL
+        AND device_id <> $2
+    `,
+    [userId, keepDeviceId],
+  );
+};
+
 module.exports = {
   createRefreshToken,
   findActiveRefreshTokenByHash,
   revokeRefreshTokenByHash,
   revokeRefreshTokensForUser,
+  revokeRefreshTokensForUserExceptDevice,
 };

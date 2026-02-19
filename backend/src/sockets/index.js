@@ -2,7 +2,7 @@ const { Server } = require('socket.io');
 const { allowedOrigins } = require('../config/env');
 const { verifyAccessToken } = require('../services/tokenService');
 const {
-  findUserById,
+  findUserAuthById,
   setUserOnlineStatus,
   filterVisiblePresenceUserIds,
 } = require('../models/userModel');
@@ -126,12 +126,18 @@ const createSocketServer = (server) => {
       }
 
       const payload = verifyAccessToken(token);
-      const user = await findUserById(payload.sub);
+      const user = await findUserAuthById(payload.sub);
 
       if (!user) {
         throw new Error('Socket user not found');
       }
 
+      if (user.currentDeviceId && String(user.currentDeviceId) !== String(payload.deviceId || '')) {
+        throw new Error('Socket session no longer active on this device');
+      }
+
+      delete user.passwordHash;
+      delete user.currentDeviceId;
       socket.data.user = user;
       next();
     } catch (error) {

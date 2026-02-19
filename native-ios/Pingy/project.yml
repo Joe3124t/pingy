@@ -28,7 +28,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Pingy/App/Pingy.entitlements
         DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 1.1
+        MARKETING_VERSION: 2.0
         TARGETED_DEVICE_FAMILY: 1,2
         SUPPORTED_PLATFORMS: iphoneos iphonesimulator
         SUPPORTS_MACCATALYST: NO

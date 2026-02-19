@@ -1,5 +1,7 @@
 const express = require('express');
 const {
+  requestOtp,
+  verifyOtp,
   register,
   login,
   refresh,
@@ -11,6 +13,8 @@ const {
 const { authMiddleware } = require('../middleware/authMiddleware');
 const { validateRequest } = require('../middleware/validateRequest');
 const {
+  requestOtpSchema,
+  verifyOtpSchema,
   registerSchema,
   loginSchema,
   refreshSchema,
@@ -21,6 +25,8 @@ const {
 
 const router = express.Router();
 
+router.post('/phone/request-otp', validateRequest(requestOtpSchema), requestOtp);
+router.post('/phone/verify-otp', validateRequest(verifyOtpSchema), verifyOtp);
 router.post('/register', validateRequest(registerSchema), register);
 router.post('/login', validateRequest(loginSchema), login);
 router.post('/refresh', validateRequest(refreshSchema), refresh);
