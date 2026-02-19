@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChatSettingsView: View {
     @ObservedObject var viewModel: MessengerViewModel
@@ -13,60 +14,22 @@ struct ChatSettingsView: View {
     @State private var showBlockConfirmation = false
 
     var body: some View {
-        Form {
-            Section("Conversation wallpaper") {
-                Text("Wallpaper stays fixed while messages scroll over it.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                Slider(value: $blurIntensity, in: 0 ... 20, step: 1) {
-                    Text("Blur")
-                }
-                Text("Blur intensity: \(Int(blurIntensity))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                PhotosPicker(selection: $wallpaperItem, matching: .images) {
-                    Label("Upload wallpaper", systemImage: "photo")
-                }
-
-                Button("Reset wallpaper") {
-                    Task {
-                        await viewModel.resetConversationWallpaper()
-                    }
-                }
+        ScrollView {
+            VStack(spacing: PingySpacing.md) {
+                wallpaperCard
+                safetyCard
+                deleteCard
             }
-
-            Section("Privacy and safety") {
-                if conversation.blockedByMe {
-                    Text("You blocked this user.")
-                        .foregroundStyle(.secondary)
-                } else if conversation.blockedByParticipant {
-                    Text("This user blocked you.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button("Block user", role: .destructive) {
-                        showBlockConfirmation = true
-                    }
-                }
-            }
-
-            Section("Conversation") {
-                Button("Delete chat for me", role: .destructive) {
-                    showDeleteForMeConfirmation = true
-                }
-
-                Button("Delete for both users", role: .destructive) {
-                    showDeleteForEveryoneConfirmation = true
-                }
-            }
+            .padding(PingySpacing.md)
         }
+        .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle("Chat settings")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Close") {
                     dismiss()
                 }
+                .buttonStyle(PingyPressableButtonStyle())
             }
         }
         .onAppear {
@@ -75,9 +38,15 @@ struct ChatSettingsView: View {
         .onChange(of: wallpaperItem) { newValue in
             guard let newValue else { return }
             Task {
+                let contentType = newValue.supportedContentTypes.first
+                let extensionPart = contentType?.preferredFilenameExtension ?? "jpg"
+                let mimeType = contentType?.preferredMIMEType ?? "image/jpeg"
+
                 if let data = try? await newValue.loadTransferable(type: Data.self) {
                     await viewModel.uploadConversationWallpaper(
                         imageData: data,
+                        fileName: "chat-wallpaper-\(UUID().uuidString).\(extensionPart)",
+                        mimeType: mimeType,
                         blurIntensity: Int(blurIntensity)
                     )
                 }
@@ -120,5 +89,85 @@ struct ChatSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+    }
+
+    private var wallpaperCard: some View {
+        VStack(alignment: .leading, spacing: PingySpacing.sm) {
+            Text("Conversation wallpaper")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            Text("Wallpaper stays fixed while messages scroll over it.")
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+
+            Slider(value: $blurIntensity, in: 0 ... 20, step: 1)
+                .tint(PingyTheme.primary)
+
+            Text("Blur intensity: \(Int(blurIntensity))")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+
+            PhotosPicker(selection: $wallpaperItem, matching: .images) {
+                Label("Upload wallpaper", systemImage: "photo")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.primaryStrong)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Button("Reset wallpaper") {
+                Task {
+                    await viewModel.resetConversationWallpaper()
+                }
+            }
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .buttonStyle(PingyPressableButtonStyle())
+            .foregroundStyle(PingyTheme.primaryStrong)
+        }
+        .pingyCard()
+    }
+
+    private var safetyCard: some View {
+        VStack(alignment: .leading, spacing: PingySpacing.sm) {
+            Text("Privacy & Safety")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            if conversation.blockedByMe {
+                Text("You blocked this user.")
+                    .foregroundStyle(PingyTheme.textSecondary)
+            } else if conversation.blockedByParticipant {
+                Text("This user blocked you.")
+                    .foregroundStyle(PingyTheme.textSecondary)
+            } else {
+                Button("Block user", role: .destructive) {
+                    showBlockConfirmation = true
+                }
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .buttonStyle(PingyPressableButtonStyle())
+            }
+        }
+        .pingyCard()
+    }
+
+    private var deleteCard: some View {
+        VStack(alignment: .leading, spacing: PingySpacing.sm) {
+            Text("Conversation")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            Button("Delete chat for me", role: .destructive) {
+                showDeleteForMeConfirmation = true
+            }
+            .font(.system(size: 16, weight: .semibold, design: .rounded))
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Button("Delete for both users", role: .destructive) {
+                showDeleteForEveryoneConfirmation = true
+            }
+            .font(.system(size: 16, weight: .semibold, design: .rounded))
+            .buttonStyle(PingyPressableButtonStyle())
+        }
+        .pingyCard()
     }
 }

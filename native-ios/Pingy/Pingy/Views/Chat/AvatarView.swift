@@ -3,6 +3,8 @@ import SwiftUI
 struct AvatarView: View {
     let url: String?
     let fallback: String
+    var size: CGFloat = 52
+    var cornerRadius: CGFloat = 16
 
     var body: some View {
         Group {
@@ -11,6 +13,7 @@ struct AvatarView: View {
                     switch phase {
                     case .empty:
                         ProgressView()
+                            .tint(.white)
                     case .success(let image):
                         image
                             .resizable()
@@ -25,15 +28,15 @@ struct AvatarView: View {
                 fallbackView
             }
         }
-        .frame(width: 52, height: 52)
+        .frame(width: size, height: size)
         .background(
             LinearGradient(
-                colors: [Color(red: 0.05, green: 0.72, blue: 0.90), Color(red: 0.04, green: 0.57, blue: 0.77)],
+                colors: [PingyTheme.primary, PingyTheme.primaryStrong],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     private var fallbackView: some View {

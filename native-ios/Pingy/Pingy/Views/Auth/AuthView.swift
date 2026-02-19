@@ -6,48 +6,48 @@ struct AuthView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.90, green: 0.97, blue: 0.99), Color(red: 0.84, green: 0.94, blue: 0.98)],
+                colors: [Color.white, PingyTheme.primarySoft],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 20) {
+            VStack(spacing: PingySpacing.lg) {
                 header
                 form
             }
-            .padding(20)
-            .frame(maxWidth: 460)
+            .padding(PingySpacing.lg)
+            .frame(maxWidth: 480)
         }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Image("LaunchLogo")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 38, height: 38)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 36, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 Text("PINGY")
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(red: 0.00, green: 0.38, blue: 0.48))
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.primaryStrong)
             }
 
             Text(title)
-                .font(.system(size: 42, weight: .bold, design: .rounded))
-                .foregroundStyle(.primary)
+                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
 
             Text(subtitle)
-                .font(.system(size: 20, weight: .regular, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 19, weight: .regular, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 20)
+        .padding(.top, 16)
     }
 
     private var form: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: PingySpacing.sm) {
             modePicker
 
             if viewModel.mode == .register {
@@ -65,14 +65,15 @@ struct AuthView: View {
             }
 
             if let error = viewModel.errorMessage {
-                statusView(text: error, color: .red.opacity(0.14), textColor: .red)
+                statusView(text: error, color: PingyTheme.danger.opacity(0.14), textColor: PingyTheme.danger)
             }
 
             if let info = viewModel.infoMessage {
-                statusView(text: info, color: .green.opacity(0.14), textColor: .green)
+                statusView(text: info, color: PingyTheme.success.opacity(0.14), textColor: PingyTheme.success)
             }
 
             Button {
+                PingyHaptics.softTap()
                 Task { await viewModel.submit() }
             } label: {
                 HStack(spacing: 10) {
@@ -82,35 +83,37 @@ struct AuthView: View {
                             .tint(.white)
                     }
                     Text(primaryButtonTitle)
-                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                        .font(.system(size: 21, weight: .semibold, design: .rounded))
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(Color(red: 0.06, green: 0.47, blue: 0.60))
+                .padding(.vertical, 15)
+                .background(PingyTheme.primary)
                 .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
             }
+            .buttonStyle(PingyPressableButtonStyle())
             .disabled(viewModel.isLoading)
 
             Button {
-                withAnimation(.spring) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     viewModel.switchMode(viewModel.mode == .forgotPassword ? .login : .forgotPassword)
                 }
             } label: {
                 Text(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset ? "Back to login" : "Forgot password?")
-                    .font(.system(size: 19, weight: .medium, design: .rounded))
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 13)
+                    .background(Color.white)
+                    .foregroundStyle(PingyTheme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
+                            .stroke(PingyTheme.border, lineWidth: 1)
                     )
             }
+            .buttonStyle(PingyPressableButtonStyle())
         }
-        .padding(20)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .shadow(color: .black.opacity(0.08), radius: 24, y: 16)
+        .pingyCard()
     }
 
     private var modePicker: some View {
@@ -119,68 +122,81 @@ struct AuthView: View {
             pickerButton("Register", mode: .register)
         }
         .padding(4)
-        .background(Color.primary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .opacity(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset ? 0.3 : 1)
+        .background(PingyTheme.primarySoft)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .opacity(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset ? 0.35 : 1)
         .allowsHitTesting(!(viewModel.mode == .forgotPassword || viewModel.mode == .confirmReset))
     }
 
     private func pickerButton(_ title: String, mode: AuthViewModel.Mode) -> some View {
         Button {
-            withAnimation(.spring) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 viewModel.switchMode(mode)
             }
         } label: {
             Text(title)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(viewModel.mode == mode ? Color.primary : Color.secondary)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(viewModel.mode == mode ? PingyTheme.textPrimary : PingyTheme.textSecondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(viewModel.mode == mode ? Color.white : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+        .buttonStyle(PingyPressableButtonStyle())
     }
 
     private func inputField(title: String, text: Binding<String>, keyboard: UIKeyboardType) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
             TextField("", text: text)
-                .font(.system(size: 22, weight: .regular, design: .rounded))
+                .font(.system(size: 18, weight: .regular, design: .rounded))
                 .keyboardType(keyboard)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .padding(.vertical, 14)
-                .padding(.horizontal, 16)
-                .background(Color.white.opacity(0.65))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
+                        .stroke(PingyTheme.border, lineWidth: 1)
+                )
         }
     }
 
     private func secureInputField(title: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
             SecureField("", text: text)
-                .font(.system(size: 22, weight: .regular, design: .rounded))
+                .font(.system(size: 18, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .padding(.vertical, 14)
-                .padding(.horizontal, 16)
-                .background(Color.white.opacity(0.65))
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
+                        .stroke(PingyTheme.border, lineWidth: 1)
+                )
         }
     }
 
     private func statusView(text: String, color: Color, textColor: Color) -> some View {
         Text(text)
-            .font(.system(size: 16, weight: .medium, design: .rounded))
+            .font(.system(size: 15, weight: .medium, design: .rounded))
             .foregroundStyle(textColor)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
             .background(color)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var title: String {
@@ -199,11 +215,11 @@ struct AuthView: View {
     private var subtitle: String {
         switch viewModel.mode {
         case .login:
-            return "Native secure messaging with end-to-end encryption."
+            return "Secure native messaging with end-to-end encryption."
         case .register:
-            return "Set up your secure Pingy profile."
+            return "Create your private Pingy identity."
         case .forgotPassword:
-            return "We will send a 6-digit code to your email."
+            return "We'll send a 6-digit reset code to your email."
         case .confirmReset:
             return "Enter your code and set a new password."
         }

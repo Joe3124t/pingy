@@ -37,7 +37,8 @@ const errorMiddleware = (error, req, res, next) => {
   console.error(error);
 
   return res.status(500).json({
-    message: 'Internal server error',
+    message: 'Unexpected server issue. Please try again shortly.',
+    code: 'UNEXPECTED_SERVER_ERROR',
   });
 };
 

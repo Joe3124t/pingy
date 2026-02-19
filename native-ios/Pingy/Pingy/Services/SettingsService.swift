@@ -28,9 +28,13 @@ final class SettingsService {
         return response.user
     }
 
-    func uploadAvatar(imageData: Data, filename: String = "avatar.jpg") async throws -> User {
+    func uploadAvatar(
+        imageData: Data,
+        filename: String = "avatar.jpg",
+        mimeType: String = "image/jpeg"
+    ) async throws -> User {
         var form = MultipartFormData()
-        form.appendFile(fieldName: "avatar", fileName: filename, mimeType: "image/jpeg", fileData: imageData)
+        form.appendFile(fieldName: "avatar", fileName: filename, mimeType: mimeType, fileData: imageData)
         form.finalize()
 
         var endpoint = Endpoint(path: "users/me/avatar", method: .post, body: form.data)
@@ -40,9 +44,13 @@ final class SettingsService {
         return response.user
     }
 
-    func uploadDefaultWallpaper(imageData: Data, filename: String = "wallpaper.jpg") async throws -> User {
+    func uploadDefaultWallpaper(
+        imageData: Data,
+        filename: String = "wallpaper.jpg",
+        mimeType: String = "image/jpeg"
+    ) async throws -> User {
         var form = MultipartFormData()
-        form.appendFile(fieldName: "wallpaper", fileName: filename, mimeType: "image/jpeg", fileData: imageData)
+        form.appendFile(fieldName: "wallpaper", fileName: filename, mimeType: mimeType, fileData: imageData)
         form.finalize()
 
         var endpoint = Endpoint(path: "users/me/chat/wallpaper", method: .post, body: form.data)

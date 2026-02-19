@@ -3,54 +3,18 @@ import SwiftUI
 
 struct MessengerSplitView: View {
     @ObservedObject var viewModel: MessengerViewModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
-        NavigationSplitView {
-            ConversationSidebarView(viewModel: viewModel)
-                .navigationTitle("Pingy")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            viewModel.isProfilePresented = true
-                        } label: {
-                            Image(systemName: "person.crop.circle")
-                        }
-                    }
-                }
-        } detail: {
-            if let conversation = viewModel.selectedConversation {
-                ChatDetailView(viewModel: viewModel, conversation: conversation)
-                    .navigationTitle(conversation.participantUsername)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItemGroup(placement: .topBarTrailing) {
-                            Button {
-                                viewModel.isChatSettingsPresented = true
-                            } label: {
-                                Image(systemName: "slider.horizontal.3")
-                            }
-
-                            Button {
-                                viewModel.isSettingsPresented = true
-                            } label: {
-                                Image(systemName: "gearshape")
-                            }
-                        }
-                    }
+        Group {
+            if horizontalSizeClass == .compact {
+                MessengerCompactContainer(viewModel: viewModel)
             } else {
-                noConversationView
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                viewModel.isSettingsPresented = true
-                            } label: {
-                                Image(systemName: "gearshape")
-                            }
-                        }
-                    }
+                MessengerRegularContainer(viewModel: viewModel)
             }
         }
-        .tint(Color(red: 0.04, green: 0.56, blue: 0.70))
+        .background(PingyTheme.background.ignoresSafeArea())
+        .tint(PingyTheme.primary)
         .sheet(isPresented: $viewModel.isSettingsPresented) {
             NavigationStack {
                 SettingsView(viewModel: viewModel)
@@ -88,72 +52,158 @@ struct MessengerSplitView: View {
             }
         )
     }
+}
 
-    private var noConversationView: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color(red: 0.02, green: 0.06, blue: 0.20), Color(red: 0.01, green: 0.12, blue: 0.32)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+private struct MessengerCompactContainer: View {
+    @ObservedObject var viewModel: MessengerViewModel
+    @State private var path: [String] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            ConversationListContent(
+                viewModel: viewModel,
+                onSelectConversation: { conversation in
+                    Task {
+                        await viewModel.selectConversation(conversation.conversationId)
+                        if path.last != conversation.conversationId {
+                            path.append(conversation.conversationId)
+                        }
+                    }
+                },
+                onSelectSearchUser: { user in
+                    Task {
+                        await viewModel.openOrCreateConversation(with: user)
+                        if let selectedConversationID = viewModel.selectedConversationID,
+                           path.last != selectedConversationID
+                        {
+                            path.append(selectedConversationID)
+                        }
+                    }
+                }
             )
-            .ignoresSafeArea()
+            .navigationTitle("Pingy")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        viewModel.isProfilePresented = true
+                    } label: {
+                        Image(systemName: "person.crop.circle")
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
 
-            VStack(spacing: 18) {
-                Image("LaunchLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 72, height: 72)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .cyan.opacity(0.35), radius: 14, y: 6)
-
-                Text("No active chat")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Text("Choose a conversation from the sidebar to start encrypted messaging.")
-                    .font(.system(size: 22, weight: .regular, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 30)
+                    Button {
+                        viewModel.isSettingsPresented = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
             }
-            .padding(30)
-            .background(.ultraThinMaterial.opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .padding(22)
+            .navigationDestination(for: String.self) { conversationID in
+                ConversationDetailHost(
+                    viewModel: viewModel,
+                    conversationID: conversationID
+                )
+            }
         }
     }
 }
 
-struct ConversationSidebarView: View {
+private struct MessengerRegularContainer: View {
     @ObservedObject var viewModel: MessengerViewModel
 
     var body: some View {
-        VStack(spacing: 14) {
-            profileCard
+        NavigationSplitView {
+            ConversationListContent(
+                viewModel: viewModel,
+                onSelectConversation: { conversation in
+                    Task {
+                        await viewModel.selectConversation(conversation.conversationId)
+                    }
+                },
+                onSelectSearchUser: { user in
+                    Task {
+                        await viewModel.openOrCreateConversation(with: user)
+                    }
+                }
+            )
+            .navigationTitle("Pingy")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        viewModel.isProfilePresented = true
+                    } label: {
+                        Image(systemName: "person.crop.circle")
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+
+                    Button {
+                        viewModel.isSettingsPresented = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
+            }
+        } detail: {
+            if let conversation = viewModel.selectedConversation {
+                ChatDetailView(viewModel: viewModel, conversation: conversation)
+                    .navigationTitle(conversation.participantUsername)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                viewModel.isChatSettingsPresented = true
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                            }
+                            .buttonStyle(PingyPressableButtonStyle())
+                        }
+                    }
+            } else {
+                NoConversationView()
+            }
+        }
+    }
+}
+
+private struct ConversationListContent: View {
+    @ObservedObject var viewModel: MessengerViewModel
+    let onSelectConversation: (Conversation) -> Void
+    let onSelectSearchUser: (User) -> Void
+
+    var body: some View {
+        VStack(spacing: PingySpacing.md) {
+            profileHeader
             searchField
 
             if !viewModel.searchResults.isEmpty {
                 List(viewModel.searchResults) { user in
                     Button {
-                        Task { await viewModel.openOrCreateConversation(with: user) }
+                        onSelectSearchUser(user)
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: PingySpacing.sm) {
                             AvatarView(url: user.avatarUrl, fallback: user.username)
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(user.username)
-                                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                                    .font(.system(.headline, design: .rounded))
+                                    .foregroundStyle(PingyTheme.textPrimary)
                                 Text(user.email ?? "")
-                                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                                    .foregroundStyle(.secondary)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(PingyTheme.textSecondary)
                             }
+                            Spacer()
                         }
+                        .padding(.vertical, 4)
                     }
+                    .buttonStyle(.plain)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             } else {
                 List(viewModel.conversations) { conversation in
                     Button {
-                        Task { await viewModel.selectConversation(conversation.conversationId) }
+                        onSelectConversation(conversation)
                     } label: {
                         ConversationRowView(
                             conversation: conversation,
@@ -171,68 +221,131 @@ struct ConversationSidebarView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .refreshable {
+                    await viewModel.loadConversations()
+                }
             }
         }
-        .padding(12)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 0.95, green: 0.98, blue: 1.00), Color(red: 0.91, green: 0.96, blue: 0.99)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
+        .padding(PingySpacing.md)
+        .background(PingyTheme.background.ignoresSafeArea())
     }
 
-    private var profileCard: some View {
-        HStack(spacing: 12) {
-            AvatarView(url: viewModel.currentUserSettings?.avatarUrl, fallback: viewModel.currentUserSettings?.username ?? "P")
+    private var profileHeader: some View {
+        HStack(spacing: PingySpacing.sm) {
+            Image("LaunchLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(viewModel.currentUserSettings?.username ?? "Pingy User")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                Text("Tap profile for privacy & account")
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundStyle(.secondary)
+                Text("Pingy")
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.primaryStrong)
+                Text("v1.1 - Stability & Native UI Rebuild")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
             }
+
             Spacer()
-            Image(systemName: "chevron.right")
-                .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pingyCard()
         .onTapGesture {
             viewModel.isProfilePresented = true
         }
     }
 
     private var searchField: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: PingySpacing.sm) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(PingyTheme.textSecondary)
+
             TextField("Search users", text: $viewModel.searchQuery)
-                .font(.system(size: 18, weight: .regular, design: .rounded))
+                .font(.system(size: 17, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .onSubmit {
                     Task { await viewModel.searchUsers() }
                 }
+
             if !viewModel.searchQuery.isEmpty {
                 Button {
                     viewModel.searchQuery = ""
                     viewModel.searchResults = []
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PingyTheme.textSecondary)
                 }
+                .buttonStyle(PingyPressableButtonStyle())
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Color.white.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.04), radius: 8, y: 3)
+        .padding(.horizontal, PingySpacing.md)
+        .padding(.vertical, PingySpacing.sm)
+        .pingyCard()
+    }
+}
+
+private struct ConversationDetailHost: View {
+    @ObservedObject var viewModel: MessengerViewModel
+    let conversationID: String
+
+    var body: some View {
+        Group {
+            if let conversation = viewModel.conversations.first(where: { $0.conversationId == conversationID }) {
+                ChatDetailView(viewModel: viewModel, conversation: conversation)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                viewModel.isChatSettingsPresented = true
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                            }
+                            .buttonStyle(PingyPressableButtonStyle())
+                        }
+                    }
+            } else if viewModel.isLoadingConversations {
+                ProgressView("Loading chat...")
+                    .font(.system(.body, design: .rounded))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PingyTheme.background)
+            } else {
+                NoConversationView(message: "Conversation is unavailable.")
+            }
+        }
+        .task(id: conversationID) {
+            await viewModel.selectConversation(conversationID)
+        }
+    }
+}
+
+private struct NoConversationView: View {
+    var message: String = "Select a chat from the sidebar to start messaging."
+
+    var body: some View {
+        VStack(spacing: PingySpacing.lg) {
+            Image("LaunchLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Text("No active chat")
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            Text(message)
+                .font(.system(size: 18, weight: .regular, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PingyTheme.background)
     }
 }
 
@@ -241,57 +354,66 @@ struct ConversationRowView: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: PingySpacing.sm) {
             ZStack(alignment: .bottomTrailing) {
                 AvatarView(url: conversation.participantAvatarUrl, fallback: conversation.participantUsername)
                 Circle()
-                    .fill(conversation.participantIsOnline ? Color.green : Color.gray.opacity(0.5))
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                    .fill(conversation.participantIsOnline ? PingyTheme.success : Color.gray.opacity(0.45))
+                    .frame(width: 11, height: 11)
+                    .overlay(Circle().stroke(.white, lineWidth: 2))
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(conversation.participantUsername)
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                        .foregroundStyle(isSelected ? .white : .primary)
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(isSelected ? .white : PingyTheme.textPrimary)
                     Spacer()
+
                     if let lastTime = conversation.lastMessageCreatedAt {
                         Text(formatTime(lastTime))
                             .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
+                            .foregroundStyle(isSelected ? .white.opacity(0.86) : PingyTheme.textSecondary)
                     }
                 }
+
                 Text(lastPreview)
                     .lineLimit(1)
                     .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundStyle(isSelected ? .white.opacity(0.9) : .secondary)
+                    .foregroundStyle(isSelected ? .white.opacity(0.9) : PingyTheme.textSecondary)
             }
+
             if conversation.unreadCount > 0 {
                 Text("\(conversation.unreadCount)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(isSelected ? Color.white.opacity(0.24) : Color.cyan)
+                    .background(isSelected ? Color.white.opacity(0.2) : PingyTheme.primary)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
             }
         }
         .padding(12)
         .background(
-            isSelected
-                ? LinearGradient(
-                    colors: [Color(red: 0.03, green: 0.63, blue: 0.82), Color(red: 0.06, green: 0.55, blue: 0.76)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                : LinearGradient(
-                    colors: [Color.white.opacity(0.86), Color.white.opacity(0.70)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    isSelected
+                        ? LinearGradient(
+                            colors: [PingyTheme.primary, PingyTheme.primaryStrong],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        : LinearGradient(
+                            colors: [Color.white, Color.white.opacity(0.92)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                 )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(PingyTheme.border, lineWidth: isSelected ? 0 : 1)
+        )
     }
 
     private var lastPreview: String {

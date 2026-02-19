@@ -17,10 +17,20 @@ enum APIError: LocalizedError {
         case .unauthorized:
             return "Session expired. Please log in again."
         case .server(_, let message):
+            let lowered = message.lowercased()
+            if lowered.contains("internal server error") {
+                return "Server is temporarily busy. Please try again in a moment."
+            }
+            if lowered.contains("unsupported") && lowered.contains("mime") {
+                return "This file format is not supported."
+            }
             return message
         case .decodingError:
-            return "Unable to decode server response"
+            return "We couldn't sync data from server. Pull to refresh and try again."
         case .network(let error):
+            if (error as NSError).domain == NSURLErrorDomain {
+                return "Network connection failed. Check internet and retry."
+            }
             return error.localizedDescription
         }
     }

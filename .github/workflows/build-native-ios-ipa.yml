@@ -34,6 +34,15 @@ jobs:
             -scheme Pingy \
             -configuration Release \
             -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean
+
+          xcodebuild \
+            -project Pingy.xcodeproj \
+            -scheme Pingy \
+            -configuration Release \
+            -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \

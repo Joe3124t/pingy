@@ -88,12 +88,21 @@ const uploadAvatar = asyncHandler(async (req, res) => {
     throw new HttpError(400, 'Avatar file is required');
   }
 
-  const uploaded = await uploadBuffer({
-    buffer: req.file.buffer,
-    originalName: req.file.originalname,
-    mimeType: req.file.mimetype,
-    folder: 'avatars',
-  });
+  if (!req.file.mimetype || !req.file.mimetype.startsWith('image/')) {
+    throw new HttpError(400, 'Avatar must be a valid image format');
+  }
+
+  let uploaded;
+  try {
+    uploaded = await uploadBuffer({
+      buffer: req.file.buffer,
+      originalName: req.file.originalname || `avatar-${Date.now()}`,
+      mimeType: req.file.mimetype,
+      folder: 'avatars',
+    });
+  } catch (error) {
+    throw new HttpError(500, 'Avatar upload failed. Please retry with another image.');
+  }
 
   const user = await setUserAvatar({
     userId: req.user.id,

@@ -11,20 +11,21 @@ struct ChatDetailView: View {
     @State private var draft = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isFileImporterPresented = false
-    @State private var pendingScrollID: String?
 
     var body: some View {
         ZStack {
             chatWallpaper
+
             VStack(spacing: 0) {
                 topBar
-                Divider().overlay(Color.white.opacity(0.08))
+                Divider().overlay(PingyTheme.border)
                 messagesList
             }
         }
         .safeAreaInset(edge: .bottom) {
             composer
-                .background(.ultraThinMaterial)
+                .background(PingyTheme.surface)
+                .overlay(Rectangle().fill(PingyTheme.border).frame(height: 1), alignment: .top)
         }
         .onAppear {
             draft = ""
@@ -53,47 +54,57 @@ struct ChatDetailView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: PingySpacing.sm) {
             AvatarView(url: conversation.participantAvatarUrl, fallback: conversation.participantUsername)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(conversation.participantUsername)
-                    .font(.system(size: 25, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+
                 if conversation.participantIsOnline {
                     Label("Online", systemImage: "circle.fill")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.green)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.success)
                 } else {
                     Text(lastSeenText)
-                        .font(.system(size: 15, weight: .regular, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.65))
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
                 }
             }
+
             Spacer()
+
             Text("E2EE")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.primaryStrong)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
+                .background(PingyTheme.primarySoft)
                 .clipShape(Capsule())
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.black.opacity(0.20))
+        .padding(.horizontal, PingySpacing.md)
+        .padding(.vertical, PingySpacing.sm)
+        .background(PingyTheme.surface)
     }
 
     private var messagesList: some View {
         ScrollViewReader { reader in
             ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(viewModel.activeMessages) { message in
+                LazyVStack(spacing: 6) {
+                    if viewModel.isLoadingMessages, viewModel.activeMessages.isEmpty {
+                        ProgressView("Loading messages...")
+                            .padding(.top, 32)
+                            .foregroundStyle(PingyTheme.textSecondary)
+                    }
+
+                    ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
                         MessageBubbleView(
                             message: message,
                             conversation: conversation,
                             currentUserID: viewModel.currentUserID,
                             cryptoService: viewModel.cryptoServiceProxy,
+                            isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
                             onReply: {
                                 viewModel.setReplyTarget(message)
                             },
@@ -103,25 +114,28 @@ struct ChatDetailView: View {
                         )
                         .id(message.id)
                     }
+
                     if let typingText = viewModel.typingByConversation[conversation.conversationId] {
-                        HStack {
-                            Text("\(typingText) is typing...")
+                        HStack(spacing: 8) {
+                            TypingIndicatorView()
+                            Text("\(typingText) is typing")
                                 .font(.system(size: 14, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.75))
-                                .padding(10)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .foregroundStyle(PingyTheme.textSecondary)
                             Spacer()
                         }
                         .padding(.horizontal, 12)
+                        .padding(.top, 6)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 12)
+                .padding(.horizontal, PingySpacing.sm)
+                .padding(.vertical, PingySpacing.md)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .refreshable {
+                await viewModel.loadMessages(conversationID: conversation.conversationId, force: true)
             }
             .onChange(of: viewModel.activeMessages.count) { _ in
-                pendingScrollID = viewModel.activeMessages.last?.id
-                if let id = pendingScrollID {
+                if let id = viewModel.activeMessages.last?.id {
                     withAnimation(.easeOut(duration: 0.25)) {
                         reader.scrollTo(id, anchor: .bottom)
                     }
@@ -138,23 +152,30 @@ struct ChatDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Replying to \(reply.senderUsername ?? "message")")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(PingyTheme.primaryStrong)
+
                         Text(reply.body?.stringValue ?? reply.mediaName ?? "Message")
                             .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .foregroundStyle(PingyTheme.textSecondary)
                             .lineLimit(1)
                     }
+
                     Spacer()
+
                     Button {
                         viewModel.setReplyTarget(nil)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
+                            .foregroundStyle(PingyTheme.textSecondary)
                     }
+                    .buttonStyle(PingyPressableButtonStyle())
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, PingySpacing.md)
+                .padding(.top, 4)
             }
 
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .bottom, spacing: PingySpacing.sm) {
                 Menu {
                     PhotosPicker(selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]), photoLibrary: .shared()) {
                         Label("Photo or video", systemImage: "photo")
@@ -166,22 +187,27 @@ struct ChatDetailView: View {
                     }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 24, weight: .semibold))
+                        .font(.system(size: 21, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(Color.white.opacity(0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .frame(width: 44, height: 44)
+                        .background(PingyTheme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .buttonStyle(PingyPressableButtonStyle())
 
                 TextField("Write a message...", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 22, weight: .regular, design: .rounded))
+                    .font(.system(size: 18, weight: .regular, design: .rounded))
                     .lineLimit(1 ... 4)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.10))
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .background(Color.white)
+                    .foregroundStyle(PingyTheme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
+                            .stroke(PingyTheme.border, lineWidth: 1)
+                    )
                     .onChange(of: draft) { newValue in
                         viewModel.sendTyping(!newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
@@ -190,47 +216,42 @@ struct ChatDetailView: View {
                     Task { await toggleVoiceRecord() }
                 } label: {
                     Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(voiceRecorder.isRecording ? Color.red : Color.white.opacity(0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(Color.red.opacity(voiceRecorder.isRecording ? 0.8 : 0), lineWidth: 2)
-                                .scaleEffect(voiceRecorder.isRecording ? 1.12 : 1.0)
-                                .opacity(voiceRecorder.isRecording ? 0.25 : 0)
-                                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: voiceRecorder.isRecording)
-                        )
+                        .frame(width: 44, height: 44)
+                        .background(voiceRecorder.isRecording ? PingyTheme.danger : PingyTheme.primaryStrong)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .buttonStyle(PingyPressableButtonStyle())
 
                 Button {
                     let textToSend = draft
                     draft = ""
                     viewModel.sendTyping(false)
+                    PingyHaptics.softTap()
                     Task { await viewModel.sendText(textToSend) }
                 } label: {
                     Image(systemName: "paperplane.fill")
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .background(Color(red: 0.02, green: 0.64, blue: 0.83))
-                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .frame(width: 48, height: 48)
+                        .background(PingyTheme.primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .buttonStyle(PingyPressableButtonStyle())
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSendingMessage)
-                .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.6 : 1)
+                .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.55 : 1)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, PingySpacing.sm)
             .padding(.bottom, 8)
         }
         .padding(.top, 8)
-        .background(Color.black.opacity(0.15))
     }
 
     private var chatWallpaper: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 0.02, green: 0.06, blue: 0.20), Color(red: 0.01, green: 0.11, blue: 0.30)],
+                colors: [Color(red: 0.94, green: 0.97, blue: 0.99), Color(red: 0.90, green: 0.96, blue: 0.98)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -247,15 +268,13 @@ struct ChatDetailView: View {
                             .resizable()
                             .scaledToFill()
                             .blur(radius: CGFloat(conversation.blurIntensity))
-                            .opacity(0.45)
-                            .overlay(Color.black.opacity(0.25))
+                            .opacity(0.3)
                     case .failure:
                         EmptyView()
                     @unknown default:
                         EmptyView()
                     }
                 }
-                .ignoresSafeArea()
             }
         }
         .ignoresSafeArea()
@@ -272,6 +291,27 @@ struct ChatDetailView: View {
         let relative = RelativeDateTimeFormatter()
         relative.unitsStyle = .full
         return "last seen \(relative.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private var renderedMessages: [Message] {
+        viewModel.activeMessages
+    }
+
+    private func isGrouped(index: Int, messages: [Message]) -> Bool {
+        guard index > 0 else { return false }
+
+        let current = messages[index]
+        let previous = messages[index - 1]
+        guard current.senderId == previous.senderId else { return false }
+
+        let formatter = ISO8601DateFormatter()
+        guard let currentDate = formatter.date(from: current.createdAt),
+              let previousDate = formatter.date(from: previous.createdAt)
+        else {
+            return false
+        }
+
+        return currentDate.timeIntervalSince(previousDate) < 180
     }
 
     private func sendPickedPhoto(item: PhotosPickerItem) async {
@@ -366,5 +406,30 @@ struct ChatDetailView: View {
                 viewModel.activeError = error.localizedDescription
             }
         }
+    }
+}
+
+private struct TypingIndicatorView: View {
+    @State private var phase: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0 ..< 3, id: \.self) { index in
+                Circle()
+                    .fill(PingyTheme.primary)
+                    .frame(width: 6, height: 6)
+                    .scaleEffect(dotScale(for: index))
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                phase = 1
+            }
+        }
+    }
+
+    private func dotScale(for index: Int) -> CGFloat {
+        let base = phase + CGFloat(index) * 0.2
+        return 0.7 + (sin(base * .pi) + 1) * 0.25
     }
 }

@@ -46,6 +46,7 @@ final class SocketIOWebSocketManager: ObservableObject {
     private var receiveTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var shouldReconnect = true
+    private var isConnecting = false
     private var reconnectAttempts = 0
     private var nextAckID = 1
     private var ackHandlers: [Int: (Result<JSONValue, Error>) -> Void] = [:]
@@ -56,7 +57,7 @@ final class SocketIOWebSocketManager: ObservableObject {
     }
 
     func connectIfNeeded() {
-        guard webSocketTask == nil else { return }
+        guard webSocketTask == nil, !isConnecting, !isConnected else { return }
         shouldReconnect = true
         Task {
             await connect()
@@ -71,6 +72,7 @@ final class SocketIOWebSocketManager: ObservableObject {
         receiveTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        isConnecting = false
         isConnected = false
     }
 
@@ -156,6 +158,10 @@ final class SocketIOWebSocketManager: ObservableObject {
     }
 
     private func connect() async {
+        guard !isConnecting else { return }
+        isConnecting = true
+        defer { isConnecting = false }
+
         do {
             let token = try await authService.validAccessToken()
             var request = URLRequest(url: webSocketURL)
@@ -164,6 +170,7 @@ final class SocketIOWebSocketManager: ObservableObject {
 
             let task = urlSession.webSocketTask(with: request)
             webSocketTask = task
+            AppLogger.debug("Socket connecting...")
             task.resume()
             startReceiveLoop(task: task)
         } catch {
@@ -235,6 +242,8 @@ final class SocketIOWebSocketManager: ObservableObject {
 
         if frame == "40" {
             isConnected = true
+            reconnectAttempts = 0
+            AppLogger.debug("Socket connected.")
             return
         }
 
@@ -329,7 +338,7 @@ final class SocketIOWebSocketManager: ObservableObject {
     }
 
     func emitWithAck<T: Encodable>(event: String, payload: T) async throws -> JSONValue {
-        guard isConnected else {
+        guard isConnected, webSocketTask != nil else {
             throw SocketError.notConnected
         }
 

@@ -59,6 +59,7 @@ final class ConversationService {
         conversationID: String,
         imageData: Data,
         fileName: String,
+        mimeType: String,
         blurIntensity: Int
     ) async throws -> ConversationWallpaperEvent {
         struct Response: Decodable {
@@ -75,7 +76,7 @@ final class ConversationService {
         form.appendFile(
             fieldName: "wallpaper",
             fileName: fileName,
-            mimeType: "image/jpeg",
+            mimeType: mimeType,
             fileData: imageData
         )
         form.finalize()

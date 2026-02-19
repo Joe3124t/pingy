@@ -2,16 +2,35 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SOURCE_ICON="$ROOT_DIR/Resources/pingy-icon-source.png"
+PRIMARY_SOURCE="$ROOT_DIR/../../icon.png"
+FALLBACK_SOURCE="$ROOT_DIR/Resources/pingy-icon-source.png"
+WORK_ICON="$ROOT_DIR/Resources/.generated-square-icon.png"
 APPICON_DIR="$ROOT_DIR/Resources/Assets.xcassets/AppIcon.appiconset"
 LAUNCH_DIR="$ROOT_DIR/Resources/Assets.xcassets/LaunchLogo.imageset"
 
-if [[ ! -f "$SOURCE_ICON" ]]; then
-  echo "Source icon not found: $SOURCE_ICON"
+if [[ -f "$PRIMARY_SOURCE" ]]; then
+  SOURCE_ICON="$PRIMARY_SOURCE"
+elif [[ -f "$FALLBACK_SOURCE" ]]; then
+  SOURCE_ICON="$FALLBACK_SOURCE"
+else
+  echo "Source icon not found at: $PRIMARY_SOURCE or $FALLBACK_SOURCE"
   exit 1
 fi
 
 mkdir -p "$APPICON_DIR" "$LAUNCH_DIR"
+
+SOURCE_WIDTH="$(sips -g pixelWidth "$SOURCE_ICON" | awk '/pixelWidth/ {print $2}')"
+SOURCE_HEIGHT="$(sips -g pixelHeight "$SOURCE_ICON" | awk '/pixelHeight/ {print $2}')"
+
+if [[ "$SOURCE_WIDTH" != "$SOURCE_HEIGHT" ]]; then
+  SIDE="$SOURCE_WIDTH"
+  if [[ "$SOURCE_HEIGHT" -lt "$SIDE" ]]; then
+    SIDE="$SOURCE_HEIGHT"
+  fi
+  cp "$SOURCE_ICON" "$WORK_ICON"
+  sips --cropToHeightWidth "$SIDE" "$SIDE" "$WORK_ICON" --out "$WORK_ICON" >/dev/null
+  SOURCE_ICON="$WORK_ICON"
+fi
 
 generate_size() {
   local size="$1"

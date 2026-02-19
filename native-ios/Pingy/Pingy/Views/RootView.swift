@@ -4,37 +4,32 @@ struct RootView: View {
     @ObservedObject var authViewModel: AuthViewModel
     @ObservedObject var messengerViewModel: MessengerViewModel
     @ObservedObject var sessionStore: SessionStore
-    @EnvironmentObject private var environment: AppEnvironment
+    @State private var didBindForCurrentSession = false
 
     var body: some View {
         Group {
             if sessionStore.isAuthenticated {
                 MessengerSplitView(viewModel: messengerViewModel)
-                    .onAppear {
-                        messengerViewModel.bindSocket()
-                    }
                     .task(id: sessionStore.currentUser?.id) {
+                        if !didBindForCurrentSession {
+                            messengerViewModel.bindSocket()
+                            didBindForCurrentSession = true
+                        }
                         await messengerViewModel.reloadAll()
                     }
             } else {
                 AuthView(viewModel: authViewModel)
             }
         }
-        .preferredColorScheme(resolvedColorScheme)
-        .animation(.spring(duration: 0.28), value: sessionStore.isAuthenticated)
-    }
+        .preferredColorScheme(.light)
+        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: sessionStore.isAuthenticated)
+        .onChange(of: sessionStore.isAuthenticated) { isAuthenticated in
+            if isAuthenticated {
+                return
+            }
 
-    private var resolvedColorScheme: ColorScheme? {
-        guard let theme = messengerViewModel.currentUserSettings?.themeMode else {
-            return nil
-        }
-        switch theme {
-        case .auto:
-            return nil
-        case .light:
-            return .light
-        case .dark:
-            return .dark
+            didBindForCurrentSession = false
+            messengerViewModel.disconnectSocket()
         }
     }
 }

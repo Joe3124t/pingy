@@ -16,6 +16,9 @@ final class MessengerViewModel: ObservableObject {
     @Published var currentUserSettings: User?
     @Published var activeError: String?
     @Published var isSendingMessage = false
+    @Published var isUploadingAvatar = false
+    @Published var isSavingProfile = false
+    @Published var profileSaveToken = UUID()
     @Published var pendingReplyMessage: Message?
     @Published var isSettingsPresented = false
     @Published var isProfilePresented = false
@@ -28,6 +31,7 @@ final class MessengerViewModel: ObservableObject {
     private let socketManager: SocketIOWebSocketManager
     private let cryptoService: E2EECryptoService
     private var notificationObserver: NSObjectProtocol?
+    private var isSocketBound = false
 
     init(
         authService: AuthService,
@@ -82,6 +86,12 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func bindSocket() {
+        guard !isSocketBound else {
+            socketManager.connectIfNeeded()
+            return
+        }
+
+        isSocketBound = true
         socketManager.onEvent = { [weak self] event in
             guard let self else { return }
             self.handleSocketEvent(event)
@@ -90,6 +100,7 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func disconnectSocket() {
+        isSocketBound = false
         socketManager.onEvent = nil
         socketManager.disconnect()
     }
@@ -106,7 +117,7 @@ final class MessengerViewModel: ObservableObject {
         do {
             conversations = try await conversationService.listConversations()
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -116,7 +127,7 @@ final class MessengerViewModel: ObservableObject {
             currentUserSettings = settings.user
             blockedUsers = settings.blockedUsers
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -150,7 +161,7 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation[conversationID] = messages.sorted(by: { $0.createdAt < $1.createdAt })
             await markCurrentAsSeen()
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -164,7 +175,7 @@ final class MessengerViewModel: ObservableObject {
         do {
             searchResults = try await conversationService.searchUsers(query: query)
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -178,7 +189,7 @@ final class MessengerViewModel: ObservableObject {
             searchQuery = ""
             await selectConversation(conversation.conversationId)
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -204,12 +215,22 @@ final class MessengerViewModel: ObservableObject {
             let sent: Message
 
             if socketManager.isConnected {
-                sent = try await socketManager.sendEncryptedMessage(
-                    conversationId: conversation.conversationId,
-                    body: encrypted,
-                    clientId: clientID,
-                    replyToMessageId: pendingReplyMessage?.id
-                )
+                do {
+                    sent = try await socketManager.sendEncryptedMessage(
+                        conversationId: conversation.conversationId,
+                        body: encrypted,
+                        clientId: clientID,
+                        replyToMessageId: pendingReplyMessage?.id
+                    )
+                } catch {
+                    AppLogger.debug("Socket send failed, falling back to REST.")
+                    sent = try await messageService.sendTextMessage(
+                        conversationID: conversation.conversationId,
+                        encryptedBody: encrypted,
+                        clientID: clientID,
+                        replyToMessageID: pendingReplyMessage?.id
+                    )
+                }
             } else {
                 sent = try await messageService.sendTextMessage(
                     conversationID: conversation.conversationId,
@@ -222,7 +243,7 @@ final class MessengerViewModel: ObservableObject {
             upsertMessage(sent)
             pendingReplyMessage = nil
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -250,7 +271,7 @@ final class MessengerViewModel: ObservableObject {
             upsertMessage(message)
             pendingReplyMessage = nil
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -272,7 +293,7 @@ final class MessengerViewModel: ObservableObject {
             upsertMessage(message)
             pendingReplyMessage = nil
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -306,7 +327,7 @@ final class MessengerViewModel: ObservableObject {
             let update = try await messageService.toggleReaction(messageID: messageID, emoji: emoji)
             applyReactionUpdate(update)
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -325,7 +346,7 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation[conversationID] = []
             selectedConversationID = nil
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -335,7 +356,7 @@ final class MessengerViewModel: ObservableObject {
             blockedUsers = try await settingsService.blockUser(userID: participantID)
             await loadConversations()
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -344,11 +365,15 @@ final class MessengerViewModel: ObservableObject {
             blockedUsers = try await settingsService.unblockUser(userID: userID)
             await loadConversations()
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
-    func saveProfile(username: String, bio: String) async {
+    @discardableResult
+    func saveProfile(username: String, bio: String) async -> Bool {
+        isSavingProfile = true
+        defer { isSavingProfile = false }
+
         do {
             let updated = try await settingsService.updateProfile(username: username, bio: bio)
             currentUserSettings = updated
@@ -362,8 +387,11 @@ final class MessengerViewModel: ObservableObject {
                 )
                 authService.sessionStore.update(user: me, tokens: tokens)
             }
+            profileSaveToken = UUID()
+            return true
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
+            return false
         }
     }
 
@@ -374,7 +402,7 @@ final class MessengerViewModel: ObservableObject {
                 readReceiptsEnabled: readReceipts
             )
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -385,39 +413,60 @@ final class MessengerViewModel: ObservableObject {
                 defaultWallpaperURL: defaultWallpaperURL
             )
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
-    func uploadAvatar(_ imageData: Data) async {
+    @discardableResult
+    func uploadAvatar(_ imageData: Data, fileName: String, mimeType: String) async -> Bool {
+        isUploadingAvatar = true
+        defer { isUploadingAvatar = false }
+
         do {
-            currentUserSettings = try await settingsService.uploadAvatar(imageData: imageData)
+            currentUserSettings = try await settingsService.uploadAvatar(
+                imageData: imageData,
+                filename: fileName,
+                mimeType: mimeType
+            )
             await loadConversations()
+            profileSaveToken = UUID()
+            return true
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error, fallback: "Couldn't upload profile photo. Try JPG/PNG under 5 MB.")
+            return false
         }
     }
 
-    func uploadDefaultWallpaper(_ imageData: Data) async {
+    func uploadDefaultWallpaper(_ imageData: Data, fileName: String, mimeType: String) async {
         do {
-            currentUserSettings = try await settingsService.uploadDefaultWallpaper(imageData: imageData)
+            currentUserSettings = try await settingsService.uploadDefaultWallpaper(
+                imageData: imageData,
+                filename: fileName,
+                mimeType: mimeType
+            )
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
-    func uploadConversationWallpaper(imageData: Data, blurIntensity: Int) async {
+    func uploadConversationWallpaper(
+        imageData: Data,
+        fileName: String,
+        mimeType: String,
+        blurIntensity: Int
+    ) async {
         guard let conversationID = selectedConversationID else { return }
         do {
             let event = try await conversationService.uploadConversationWallpaper(
                 conversationID: conversationID,
                 imageData: imageData,
-                fileName: "chat-wallpaper-\(UUID().uuidString).jpg",
+                fileName: fileName,
+                mimeType: mimeType,
                 blurIntensity: blurIntensity
             )
             applyConversationWallpaperEvent(event)
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -429,7 +478,7 @@ final class MessengerViewModel: ObservableObject {
                 ConversationWallpaperEvent(conversationId: conversationID, wallpaperUrl: nil, blurIntensity: 0)
             )
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -442,7 +491,7 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation = [:]
             selectedConversationID = nil
         } catch {
-            activeError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            setError(from: error)
         }
     }
 
@@ -577,5 +626,22 @@ final class MessengerViewModel: ObservableObject {
             conversations[index].wallpaperUrl = event.wallpaperUrl
             conversations[index].blurIntensity = event.blurIntensity
         }
+    }
+
+    private func setError(from error: Error, fallback: String? = nil) {
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let lowered = message.lowercased()
+
+        if lowered.contains("internal server error") {
+            activeError = fallback ?? "Server is temporarily busy. Please try again."
+            return
+        }
+
+        if lowered.contains("decode") {
+            activeError = "We couldn't sync latest data. Pull to refresh and retry."
+            return
+        }
+
+        activeError = fallback ?? message
     }
 }
