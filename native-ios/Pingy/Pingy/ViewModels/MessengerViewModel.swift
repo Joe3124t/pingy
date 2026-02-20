@@ -1567,7 +1567,7 @@ final class MessengerViewModel: ObservableObject {
 
         if let socketError = error as? SocketError {
             switch socketError {
-            case .notConnected, .ackTimeout:
+            case .notConnected, .ackTimeout, .connectTimeout:
                 return true
             case .invalidAckPayload:
                 return false
