@@ -8,7 +8,7 @@ struct AvatarView: View {
 
     var body: some View {
         Group {
-            if let urlString = url, let parsed = URL(string: urlString) {
+            if let parsed = MediaURLResolver.resolve(url) {
                 AsyncImage(url: parsed) { phase in
                     switch phase {
                     case .empty:

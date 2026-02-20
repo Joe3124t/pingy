@@ -155,7 +155,7 @@ struct MessageBubbleView: View {
                 .frame(maxWidth: 320, alignment: .leading)
 
         case .image:
-            if let urlString = message.mediaUrl, let url = URL(string: urlString) {
+            if let url = MediaURLResolver.resolve(message.mediaUrl) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .empty:
@@ -177,7 +177,7 @@ struct MessageBubbleView: View {
             }
 
         case .video:
-            if let urlString = message.mediaUrl, let url = URL(string: urlString) {
+            if let url = MediaURLResolver.resolve(message.mediaUrl) {
                 Link(destination: url) {
                     Label("Open video", systemImage: "video.fill")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -186,7 +186,7 @@ struct MessageBubbleView: View {
             }
 
         case .file:
-            if let urlString = message.mediaUrl, let url = URL(string: urlString) {
+            if let url = MediaURLResolver.resolve(message.mediaUrl) {
                 Link(destination: url) {
                     Label(message.mediaName ?? "Open file", systemImage: "doc.fill")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
@@ -195,7 +195,7 @@ struct MessageBubbleView: View {
             }
 
         case .voice:
-            if let urlString = message.mediaUrl, let url = URL(string: urlString) {
+            if let url = MediaURLResolver.resolve(message.mediaUrl) {
                 VoiceMessagePlayerView(url: url, durationMs: message.voiceDurationMs ?? 0, isOwnMessage: isOwn)
                     .frame(maxWidth: 240, alignment: .leading)
             }

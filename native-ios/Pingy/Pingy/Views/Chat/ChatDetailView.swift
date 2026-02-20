@@ -260,8 +260,7 @@ struct ChatDetailView: View {
         ZStack {
             PingyTheme.wallpaperFallback(for: colorScheme)
 
-            if let urlString = conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl,
-               let url = URL(string: urlString)
+            if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl)
             {
                 if url.isFileURL,
                    let image = UIImage(contentsOfFile: url.path)
