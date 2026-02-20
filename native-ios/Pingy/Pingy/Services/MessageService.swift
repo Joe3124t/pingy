@@ -28,12 +28,12 @@ final class MessageService {
 
     func sendTextMessage(
         conversationID: String,
-        encryptedBody: EncryptedPayload,
+        body: String,
         clientID: String,
         replyToMessageID: String?
     ) async throws -> Message {
         struct Payload: Encodable {
-            let body: EncryptedPayload
+            let body: String
             let isEncrypted: Bool
             let clientId: String
             let replyToMessageId: String?
@@ -43,8 +43,8 @@ final class MessageService {
             path: "messages/\(conversationID)",
             method: .post,
             payload: Payload(
-                body: encryptedBody,
-                isEncrypted: true,
+                body: body,
+                isEncrypted: false,
                 clientId: clientID,
                 replyToMessageId: replyToMessageID
             )

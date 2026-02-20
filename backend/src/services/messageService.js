@@ -78,23 +78,38 @@ const createConversationMessage = async ({
   let normalizedEncryptionFlag = false;
 
   if (type === 'text') {
-    if (!isEncrypted || !body) {
-      throw new HttpError(400, 'Encrypted text payload is required');
-    }
-
-    let parsedPayload = body;
-
-    if (typeof body === 'string') {
-      try {
-        parsedPayload = JSON.parse(body);
-      } catch {
-        throw new HttpError(400, 'Invalid encrypted payload');
+    if (isEncrypted) {
+      if (!body) {
+        throw new HttpError(400, 'Encrypted text payload is required');
       }
-    }
 
-    const payload = assertEncryptedPayload(parsedPayload);
-    normalizedBody = JSON.stringify(payload);
-    normalizedEncryptionFlag = true;
+      let parsedPayload = body;
+
+      if (typeof body === 'string') {
+        try {
+          parsedPayload = JSON.parse(body);
+        } catch {
+          throw new HttpError(400, 'Invalid encrypted payload');
+        }
+      }
+
+      const payload = assertEncryptedPayload(parsedPayload);
+      normalizedBody = JSON.stringify(payload);
+      normalizedEncryptionFlag = true;
+    } else {
+      if (typeof body === 'string') {
+        normalizedBody = sanitizeText(body, 4000);
+      } else if (body && typeof body === 'object' && typeof body.text === 'string') {
+        normalizedBody = sanitizeText(body.text, 4000);
+      } else {
+        normalizedBody = null;
+      }
+
+      if (!normalizedBody) {
+        throw new HttpError(400, 'Text body is required');
+      }
+      normalizedEncryptionFlag = false;
+    }
   } else {
     normalizedBody = body ? sanitizeText(body, 500) : null;
   }

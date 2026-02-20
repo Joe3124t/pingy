@@ -259,7 +259,10 @@ struct MessageBubbleView: View {
                 if let decryptedText {
                     return decryptedText
                 }
-                return decryptionFailed ? "Message corrupted" : "Decrypting..."
+                if decryptionFailed {
+                    return decryptedFallbackText ?? "Encrypted message"
+                }
+                return "Decrypting..."
             }
             return message.body?.stringValue ?? ""
         default:
@@ -353,6 +356,24 @@ struct MessageBubbleView: View {
         }
 
         return nil
+    }
+
+    private var decryptedFallbackText: String? {
+        guard let text = message.body?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else {
+            return nil
+        }
+
+        if let data = text.data(using: .utf8),
+           let parsed = try? JSONDecoder().decode(EncryptedPayload.self, from: data),
+           !parsed.ciphertext.isEmpty,
+           !parsed.iv.isEmpty
+        {
+            return nil
+        }
+
+        return text
     }
 }
 

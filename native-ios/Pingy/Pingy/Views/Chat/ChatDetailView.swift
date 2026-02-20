@@ -13,7 +13,6 @@ struct ChatDetailView: View {
     @FocusState private var isComposerFocused: Bool
 
     @StateObject private var voiceRecorder = VoiceRecorderService()
-    @StateObject private var keyboardObserver = KeyboardObserver()
 
     @State private var draft = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -24,29 +23,26 @@ struct ChatDetailView: View {
     @State private var isMicGestureActive = false
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .bottom) {
-                chatWallpaper
+        ZStack {
+            chatWallpaper
 
-                VStack(spacing: 0) {
-                    topBar
-                    Divider().overlay(PingyTheme.border.opacity(0.4))
-                    messagesList(bottomInset: composerHeight + 12)
-                }
-
-                composer
-                    .padding(.bottom, composerBottomPadding(safeAreaBottom: proxy.safeAreaInsets.bottom))
-                    .background(
-                        GeometryReader { geometry in
-                            Color.clear
-                                .onAppear { composerHeight = geometry.size.height }
-                                .onChange(of: geometry.size.height) { composerHeight = $0 }
-                        }
-                    )
+            VStack(spacing: 0) {
+                topBar
+                Divider().overlay(PingyTheme.border.opacity(0.4))
+                messagesList(bottomInset: composerHeight + 16)
             }
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-            .background(PingyTheme.background)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            composer
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear
+                            .onAppear { composerHeight = geometry.size.height }
+                            .onChange(of: geometry.size.height) { composerHeight = $0 }
+                    }
+                )
+        }
+        .background(PingyTheme.background)
         .onAppear {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = true
@@ -141,7 +137,7 @@ struct ChatDetailView: View {
             Spacer()
 
             Button {
-                viewModel.activeError = "Voice calls are coming soon."
+                startVoiceCall()
             } label: {
                 Image(systemName: "phone.fill")
                     .font(.system(size: 16, weight: .semibold))
@@ -427,13 +423,6 @@ struct ChatDetailView: View {
         viewModel.activeMessages
     }
 
-    private func composerBottomPadding(safeAreaBottom: CGFloat) -> CGFloat {
-        if keyboardObserver.height > 0 {
-            return max(8, keyboardObserver.height - safeAreaBottom + 6)
-        }
-        return max(8, safeAreaBottom + 4)
-    }
-
     private func isGrouped(index: Int, messages: [Message]) -> Bool {
         guard index > 0 else { return false }
 
@@ -556,6 +545,24 @@ struct ChatDetailView: View {
         }
     }
 
+    private func startVoiceCall() {
+        let rawPhone = (viewModel.contactPhoneNumber(for: conversation.participantId) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let dialable = rawPhone.filter { "+0123456789".contains($0) }
+
+        guard !dialable.isEmpty else {
+            viewModel.activeError = "Phone number is unavailable for this contact."
+            return
+        }
+
+        guard let telURL = URL(string: "tel://\(dialable)"), UIApplication.shared.canOpenURL(telURL) else {
+            viewModel.activeError = "Voice call is unavailable on this device."
+            return
+        }
+
+        UIApplication.shared.open(telURL, options: [:], completionHandler: nil)
+    }
+
     @ViewBuilder
     private func wallpaperImage(_ image: Image, canvasSize: CGSize) -> some View {
         image
@@ -565,60 +572,5 @@ struct ChatDetailView: View {
             .clipped()
             .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
             .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-    }
-}
-
-private final class KeyboardObserver: ObservableObject {
-    @Published var height: CGFloat = 0
-    private var observers: [NSObjectProtocol] = []
-
-    init() {
-        let center = NotificationCenter.default
-
-        observers.append(
-            center.addObserver(
-                forName: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] note in
-                Task { @MainActor [weak self] in
-                    self?.handleKeyboard(note)
-                }
-            }
-        )
-
-        observers.append(
-            center.addObserver(
-                forName: UIResponder.keyboardWillHideNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        self?.height = 0
-                    }
-                }
-            }
-        )
-    }
-
-    deinit {
-        let center = NotificationCenter.default
-        for observer in observers {
-            center.removeObserver(observer)
-        }
-    }
-
-    @MainActor
-    private func handleKeyboard(_ notification: Notification) {
-        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
-        }
-
-        let screenHeight = UIScreen.main.bounds.height
-        let newHeight = max(0, screenHeight - frameValue.minY)
-        withAnimation(.easeOut(duration: 0.2)) {
-            height = newHeight
-        }
     }
 }

@@ -1,9 +1,11 @@
 ﻿const { z } = require('zod');
 const { encryptedPayloadSchema } = require('../crypto/e2ee');
 
+const plainTextBodySchema = z.string().trim().min(1).max(4000);
+
 const sendTextMessageSchema = z.object({
-  body: encryptedPayloadSchema,
-  isEncrypted: z.literal(true).default(true).optional(),
+  body: z.union([encryptedPayloadSchema, plainTextBodySchema]),
+  isEncrypted: z.boolean().optional(),
   clientId: z.string().min(5).max(80).optional(),
   replyToMessageId: z.string().uuid().optional(),
 });

@@ -42,6 +42,7 @@ final class MessengerViewModel: ObservableObject {
     @Published private(set) var networkBannerState: NetworkBannerState = .hidden
     @Published private(set) var isInternetReachable = true
     @Published private(set) var isSocketConnected = false
+    @Published private(set) var isSocketConnecting = false
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -56,6 +57,7 @@ final class MessengerViewModel: ObservableObject {
     private let networkMonitorQueue = DispatchQueue(label: "pingy.network.monitor")
     private var notificationObserver: NSObjectProtocol?
     private var socketConnectionObserver: AnyCancellable?
+    private var socketConnectingObserver: AnyCancellable?
     private var isSocketBound = false
     private var isSyncingAfterReconnect = false
     private var reconnectSyncRetryTask: Task<Void, Never>?
@@ -137,11 +139,18 @@ final class MessengerViewModel: ObservableObject {
         }
 
         isSocketConnected = socketManager.isConnected
+        isSocketConnecting = socketManager.isConnecting
         socketConnectionObserver = socketManager.$isConnected
             .receive(on: RunLoop.main)
             .sink { [weak self] isConnected in
                 guard let self else { return }
                 self.handleSocketConnectionUpdate(isConnected: isConnected)
+            }
+        socketConnectingObserver = socketManager.$isConnecting
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isConnecting in
+                guard let self else { return }
+                self.handleSocketConnectingUpdate(isConnecting: isConnecting)
             }
 
         startNetworkMonitoring()
@@ -152,6 +161,7 @@ final class MessengerViewModel: ObservableObject {
             NotificationCenter.default.removeObserver(notificationObserver)
         }
         socketConnectionObserver?.cancel()
+        socketConnectingObserver?.cancel()
         reconnectSyncRetryTask?.cancel()
         networkMonitor.cancel()
     }
@@ -464,17 +474,6 @@ final class MessengerViewModel: ObservableObject {
                 let conversation = try await self.conversationService.createDirectConversation(recipientID: user.id)
                 if !self.conversations.contains(where: { $0.conversationId == conversation.conversationId }) {
                     self.conversations.insert(conversation, at: 0)
-                }
-
-                do {
-                    _ = try await self.resolvePeerPublicKey(
-                        conversationID: conversation.conversationId,
-                        participantID: conversation.participantId,
-                        forceRefresh: conversation.participantPublicKeyJwk == nil
-                    )
-                } catch {
-                    AppLogger.error("Peer key unavailable for \(conversation.participantId): \(error.localizedDescription)")
-                    self.activeError = "Secure key exchange is not ready with this user yet."
                 }
 
                 self.searchResults = []
@@ -939,7 +938,7 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func sendPendingTextMessage(_ item: PendingTextMessage) async throws -> Message {
-        guard let me = authService.sessionStore.currentUser else {
+        guard authService.sessionStore.currentUser != nil else {
             throw APIError.unauthorized
         }
 
@@ -947,85 +946,32 @@ final class MessengerViewModel: ObservableObject {
             throw APIError.server(statusCode: 404, message: "Conversation not found")
         }
 
-        let messageOnce = try await encryptAndDeliverPendingMessage(item, me: me, conversation: conversation)
-        return messageOnce
+        return try await deliverPendingTextMessage(item, conversation: conversation)
     }
 
-    private func encryptAndDeliverPendingMessage(
+    private func deliverPendingTextMessage(
         _ item: PendingTextMessage,
-        me: User,
         conversation: Conversation
     ) async throws -> Message {
-        do {
-            let peerKey = try await resolvePeerPublicKey(
-                conversationID: conversation.conversationId,
-                participantID: item.participantId,
-                forceRefresh: true
-            )
-
-            let encrypted = try await cryptoService.encryptText(
-                plaintext: item.plainText,
-                userID: me.id,
-                peerUserID: item.participantId,
-                peerPublicKeyJWK: peerKey
-            )
-
-            if socketManager.isConnected {
-                do {
-                    return try await socketManager.sendEncryptedMessage(
-                        conversationId: item.conversationId,
-                        body: encrypted,
-                        clientId: item.clientId,
-                        replyToMessageId: item.replyToMessageId
-                    )
-                } catch {
-                    AppLogger.debug("Socket send failed for \(item.clientId), fallback to REST.")
-                }
+        if socketManager.isConnected {
+            do {
+                return try await socketManager.sendPlainTextMessage(
+                    conversationId: item.conversationId,
+                    body: item.plainText,
+                    clientId: item.clientId,
+                    replyToMessageId: item.replyToMessageId
+                )
+            } catch {
+                AppLogger.debug("Socket send failed for \(item.clientId), fallback to REST.")
             }
-
-            return try await messageService.sendTextMessage(
-                conversationID: item.conversationId,
-                encryptedBody: encrypted,
-                clientID: item.clientId,
-                replyToMessageID: item.replyToMessageId
-            )
-        } catch {
-            AppLogger.error("Send failed for \(item.clientId): \(error.localizedDescription)")
-            // One handshake/key refresh retry before surfacing a corruption/session error.
-            await cryptoService.invalidateConversationKey(userID: me.id, peerUserID: item.participantId)
-            let refreshedKey = try await resolvePeerPublicKey(
-                conversationID: conversation.conversationId,
-                participantID: item.participantId,
-                forceRefresh: true
-            )
-
-            let encryptedRetry = try await cryptoService.encryptText(
-                plaintext: item.plainText,
-                userID: me.id,
-                peerUserID: item.participantId,
-                peerPublicKeyJWK: refreshedKey
-            )
-
-            if socketManager.isConnected {
-                do {
-                    return try await socketManager.sendEncryptedMessage(
-                        conversationId: item.conversationId,
-                        body: encryptedRetry,
-                        clientId: item.clientId,
-                        replyToMessageId: item.replyToMessageId
-                    )
-                } catch {
-                    AppLogger.debug("Socket retry failed for \(item.clientId), fallback to REST.")
-                }
-            }
-
-            return try await messageService.sendTextMessage(
-                conversationID: item.conversationId,
-                encryptedBody: encryptedRetry,
-                clientID: item.clientId,
-                replyToMessageID: item.replyToMessageId
-            )
         }
+
+        return try await messageService.sendTextMessage(
+            conversationID: conversation.conversationId,
+            body: item.plainText,
+            clientID: item.clientId,
+            replyToMessageID: item.replyToMessageId
+        )
     }
 
     private func handleSocketEvent(_ event: SocketEvent) {
@@ -1248,6 +1194,9 @@ final class MessengerViewModel: ObservableObject {
 
     private func handleSocketConnectionUpdate(isConnected: Bool) {
         isSocketConnected = isConnected
+        if isConnected {
+            isSocketConnecting = false
+        }
         updateNetworkBannerState()
         if isConnected, isInternetReachable {
             Task { [weak self] in
@@ -1257,12 +1206,21 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
+    private func handleSocketConnectingUpdate(isConnecting: Bool) {
+        isSocketConnecting = isConnecting
+        updateNetworkBannerState()
+    }
+
     private func updateNetworkBannerState() {
         let nextState: NetworkBannerState
 
         if !isInternetReachable {
             nextState = .waitingForInternet
-        } else if isSocketBound && authService.sessionStore.currentUser != nil && !isSocketConnected {
+        } else if isSocketBound,
+                  authService.sessionStore.currentUser != nil,
+                  !isSocketConnected,
+                  isSocketConnecting
+        {
             nextState = .connecting
         } else if isSyncingAfterReconnect {
             nextState = .updating

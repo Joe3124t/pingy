@@ -4,6 +4,7 @@ enum SocketError: LocalizedError {
     case notConnected
     case ackTimeout
     case invalidAckPayload
+    case connectTimeout
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +14,8 @@ enum SocketError: LocalizedError {
             return "Socket acknowledgement timeout"
         case .invalidAckPayload:
             return "Invalid socket acknowledgement payload"
+        case .connectTimeout:
+            return "Socket connection timed out"
         }
     }
 }
@@ -33,6 +36,7 @@ enum SocketEvent {
 @MainActor
 final class SocketIOWebSocketManager: ObservableObject {
     @Published private(set) var isConnected = false
+    @Published private(set) var isConnecting = false
 
     var onEvent: ((SocketEvent) -> Void)?
 
@@ -45,8 +49,8 @@ final class SocketIOWebSocketManager: ObservableObject {
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var connectTimeoutTask: Task<Void, Never>?
     private var shouldReconnect = true
-    private var isConnecting = false
     private var reconnectAttempts = 0
     private var nextAckID = 1
     private var ackHandlers: [Int: (Result<JSONValue, Error>) -> Void] = [:]
@@ -57,7 +61,8 @@ final class SocketIOWebSocketManager: ObservableObject {
     }
 
     func connectIfNeeded() {
-        guard webSocketTask == nil, !isConnecting, !isConnected else { return }
+        guard !isConnected else { return }
+        guard webSocketTask == nil, !isConnecting else { return }
         shouldReconnect = true
         Task {
             await connect()
@@ -68,6 +73,8 @@ final class SocketIOWebSocketManager: ObservableObject {
         shouldReconnect = false
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
         receiveTask?.cancel()
         receiveTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
@@ -158,10 +165,49 @@ final class SocketIOWebSocketManager: ObservableObject {
         return try decoder.decode(Message.self, from: messageData)
     }
 
+    func sendPlainTextMessage(
+        conversationId: String,
+        body: String,
+        clientId: String,
+        replyToMessageId: String?
+    ) async throws -> Message {
+        struct SendPayload: Encodable {
+            let conversationId: String
+            let body: String
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
+        let ack = try await emitWithAck(
+            event: "message:send",
+            payload: SendPayload(
+                conversationId: conversationId,
+                body: body,
+                isEncrypted: false,
+                clientId: clientId,
+                replyToMessageId: replyToMessageId
+            )
+        )
+
+        guard let payloadObject = ack.objectValue else {
+            throw SocketError.invalidAckPayload
+        }
+        guard (payloadObject["ok"]?.boolValue ?? false) == true else {
+            let message = payloadObject["message"]?.stringValue ?? "Message send failed"
+            throw APIError.server(statusCode: 400, message: message)
+        }
+
+        guard let messageValue = payloadObject["message"] else {
+            throw SocketError.invalidAckPayload
+        }
+        let messageData = try JSONEncoder().encode(messageValue)
+        return try decoder.decode(Message.self, from: messageData)
+    }
+
     private func connect() async {
         guard !isConnecting else { return }
         isConnecting = true
-        defer { isConnecting = false }
 
         do {
             let token = try await authService.validAccessToken()
@@ -174,7 +220,9 @@ final class SocketIOWebSocketManager: ObservableObject {
             AppLogger.debug("Socket connecting...")
             task.resume()
             startReceiveLoop(task: task)
+            scheduleConnectTimeout(for: task)
         } catch {
+            isConnecting = false
             AppLogger.error("Socket connect failed: \(error.localizedDescription)")
             scheduleReconnect()
         }
@@ -208,6 +256,9 @@ final class SocketIOWebSocketManager: ObservableObject {
 
     private func handleDisconnect(error: Error) {
         AppLogger.error("Socket disconnected: \(error.localizedDescription)")
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        isConnecting = false
         isConnected = false
         webSocketTask = nil
         receiveTask?.cancel()
@@ -242,9 +293,12 @@ final class SocketIOWebSocketManager: ObservableObject {
             return
         }
 
-        if frame == "40" {
+        if frame.hasPrefix("40") {
             isConnected = true
+            isConnecting = false
             reconnectAttempts = 0
+            connectTimeoutTask?.cancel()
+            connectTimeoutTask = nil
             AppLogger.debug("Socket connected.")
             return
         }
@@ -256,6 +310,26 @@ final class SocketIOWebSocketManager: ObservableObject {
 
         if frame.hasPrefix("43") {
             handleAckPacket(frame)
+        }
+    }
+
+    private func scheduleConnectTimeout(for task: URLSessionWebSocketTask) {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = Task { [weak self, weak task] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let task else { return }
+            guard self.webSocketTask === task, !self.isConnected else { return }
+
+            AppLogger.error("Socket connect timeout. Scheduling reconnect.")
+            self.isConnecting = false
+            self.webSocketTask?.cancel(with: .goingAway, reason: nil)
+            self.webSocketTask = nil
+            self.receiveTask?.cancel()
+            self.receiveTask = nil
+            self.failAllAckHandlers(with: SocketError.connectTimeout)
+            self.scheduleReconnect()
         }
     }
 
