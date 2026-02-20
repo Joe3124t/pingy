@@ -48,10 +48,18 @@ struct ChatDetailView: View {
             .background(PingyTheme.background)
         }
         .onAppear {
+            if horizontalSizeClass == .compact {
+                viewModel.isCompactChatDetailPresented = true
+            }
             draft = ""
             Task {
                 await viewModel.loadMessages(conversationID: conversation.conversationId)
                 await viewModel.markCurrentAsSeen()
+            }
+        }
+        .onDisappear {
+            if horizontalSizeClass == .compact {
+                viewModel.isCompactChatDetailPresented = false
             }
         }
         .onChange(of: selectedPhotoItem) { newValue in
@@ -201,7 +209,11 @@ struct ChatDetailView: View {
             }
             .scrollDismissesKeyboard(.immediately)
             .refreshable {
-                await viewModel.loadMessages(conversationID: conversation.conversationId, force: true)
+                await viewModel.loadMessages(
+                    conversationID: conversation.conversationId,
+                    force: true,
+                    suppressNetworkAlert: true
+                )
             }
             .onTapGesture {
                 isComposerFocused = false
@@ -356,8 +368,6 @@ struct ChatDetailView: View {
                         .clipped()
                         .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
                         .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                        .saturation(colorScheme == .dark ? 0.9 : 1.0)
-                        .opacity(colorScheme == .dark ? 0.9 : 0.96)
                 } else {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -371,8 +381,6 @@ struct ChatDetailView: View {
                                 .clipped()
                                 .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
                                 .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                                .saturation(colorScheme == .dark ? 0.9 : 1.0)
-                                .opacity(colorScheme == .dark ? 0.9 : 0.96)
                         case .failure:
                             EmptyView()
                         @unknown default:
@@ -554,7 +562,6 @@ struct ChatDetailView: View {
     }
 }
 
-@MainActor
 private final class KeyboardObserver: ObservableObject {
     @Published var height: CGFloat = 0
     private var observers: [NSObjectProtocol] = []
@@ -568,7 +575,9 @@ private final class KeyboardObserver: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] note in
-                self?.handleKeyboard(note)
+                Task { @MainActor [weak self] in
+                    self?.handleKeyboard(note)
+                }
             }
         )
 
@@ -578,8 +587,10 @@ private final class KeyboardObserver: ObservableObject {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    self?.height = 0
+                Task { @MainActor [weak self] in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        self?.height = 0
+                    }
                 }
             }
         )
@@ -592,6 +603,7 @@ private final class KeyboardObserver: ObservableObject {
         }
     }
 
+    @MainActor
     private func handleKeyboard(_ notification: Notification) {
         guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
             return

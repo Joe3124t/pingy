@@ -302,7 +302,7 @@ private struct ConversationListContent: View {
 
     private func conversationRow(_ conversation: Conversation) -> some View {
         let displayName = viewModel.contactDisplayName(for: conversation)
-        Button {
+        return Button {
             onSelectConversation(conversation)
             if conversation.unreadCount > 0 {
                 viewModel.markConversationRead(conversation.conversationId)

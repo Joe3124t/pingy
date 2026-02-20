@@ -164,7 +164,7 @@ final class ContactSyncService {
 
     private func resolveContactsAccess(promptForPermission: Bool) async -> Bool {
         switch CNContactStore.authorizationStatus(for: .contacts) {
-        case .authorized:
+        case .authorized, .limited:
             return true
         case .notDetermined:
             guard promptForPermission else { return false }

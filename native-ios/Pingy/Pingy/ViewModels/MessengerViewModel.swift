@@ -106,7 +106,8 @@ final class MessengerViewModel: ObservableObject {
         ) { [weak self] note in
             guard let self else { return }
             if let conversationID = note.userInfo?["conversationId"] as? String {
-                Task {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
                     if !self.conversations.contains(where: { $0.conversationId == conversationID }) {
                         await self.loadConversations()
                     }
@@ -284,7 +285,11 @@ final class MessengerViewModel: ObservableObject {
         await loadMessages(conversationID: conversationID)
     }
 
-    func loadMessages(conversationID: String, force: Bool = false) async {
+    func loadMessages(
+        conversationID: String,
+        force: Bool = false,
+        suppressNetworkAlert: Bool = false
+    ) async {
         if !force, messagesByConversation[conversationID] != nil {
             await markCurrentAsSeen()
             return
@@ -299,7 +304,7 @@ final class MessengerViewModel: ObservableObject {
             persistMessagesCache()
             await markCurrentAsSeen()
         } catch {
-            if isTransientNetworkError(error) {
+            if isTransientNetworkError(error) || (suppressNetworkAlert && isLikelyOfflineError(error)) {
                 AppLogger.debug("Keeping cached messages for \(conversationID) due offline refresh.")
                 if messagesByConversation[conversationID] == nil {
                     messagesByConversation[conversationID] = []
@@ -1288,6 +1293,14 @@ final class MessengerViewModel: ObservableObject {
             }
         }
         return false
+    }
+
+    private func isLikelyOfflineError(_ error: Error) -> Bool {
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("network")
+            || lowered.contains("internet")
+            || lowered.contains("offline")
+            || lowered.contains("timed out")
     }
 
     private func setError(from error: Error, fallback: String? = nil) {

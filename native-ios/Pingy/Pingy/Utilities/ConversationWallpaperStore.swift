@@ -16,7 +16,7 @@ actor ConversationWallpaperStore {
     private var records: [String: LocalConversationWallpaper] = [:]
 
     init() {
-        records = loadRecords()
+        records = Self.loadRecords(defaults: defaults, defaultsKey: defaultsKey)
     }
 
     func applyOverrides(to conversations: [Conversation]) -> [Conversation] {
@@ -117,7 +117,10 @@ actor ConversationWallpaperStore {
         return wallpapersDir
     }
 
-    private func loadRecords() -> [String: LocalConversationWallpaper] {
+    private static func loadRecords(
+        defaults: UserDefaults,
+        defaultsKey: String
+    ) -> [String: LocalConversationWallpaper] {
         guard let data = defaults.data(forKey: defaultsKey) else {
             return [:]
         }
