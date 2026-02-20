@@ -4,6 +4,11 @@ const {
   verifyPhoneOtp,
   registerUser,
   loginUser,
+  verifyTotpLogin,
+  getTotpStatusForUser,
+  startTotpSetup,
+  verifyTotpSetup,
+  disableTotpForUser,
   refreshUserTokens,
   logoutUser,
   requestPasswordResetCode,
@@ -45,6 +50,16 @@ const login = asyncHandler(async (req, res) => {
   const payload = req.body;
   const auth = await loginUser(payload);
 
+  if (auth.requiresTotp) {
+    res.status(200).json({
+      requiresTotp: true,
+      challengeToken: auth.challengeToken,
+      userHint: auth.userHint,
+      message: 'Enter your authenticator code to continue',
+    });
+    return;
+  }
+
   res.status(200).json({
     user: {
       ...signMediaUrlsInUser(auth.user),
@@ -53,6 +68,23 @@ const login = asyncHandler(async (req, res) => {
     tokens: {
       accessToken: auth.accessToken,
       refreshToken: auth.refreshToken,
+    },
+  });
+});
+
+const verifyTotpLoginController = asyncHandler(async (req, res) => {
+  const { challengeToken, code, recoveryCode } = req.body;
+  const result = await verifyTotpLogin({
+    challengeToken,
+    code,
+    recoveryCode,
+  });
+
+  res.status(200).json({
+    user: signMediaUrlsInUser(result.auth.user),
+    tokens: {
+      accessToken: result.auth.accessToken,
+      refreshToken: result.auth.refreshToken,
     },
   });
 });
@@ -108,14 +140,56 @@ const confirmPasswordReset = asyncHandler(async (req, res) => {
   });
 });
 
+const getTotpStatusController = asyncHandler(async (req, res) => {
+  const status = await getTotpStatusForUser({
+    userId: req.auth.userId,
+  });
+
+  res.status(200).json(status);
+});
+
+const startTotpSetupController = asyncHandler(async (req, res) => {
+  const setup = await startTotpSetup({
+    userId: req.auth.userId,
+  });
+
+  res.status(200).json(setup);
+});
+
+const verifyTotpSetupController = asyncHandler(async (req, res) => {
+  const { code } = req.body;
+  const result = await verifyTotpSetup({
+    userId: req.auth.userId,
+    code,
+  });
+
+  res.status(200).json(result);
+});
+
+const disableTotpController = asyncHandler(async (req, res) => {
+  const { code, recoveryCode } = req.body;
+  const result = await disableTotpForUser({
+    userId: req.auth.userId,
+    code,
+    recoveryCode,
+  });
+
+  res.status(200).json(result);
+});
+
 module.exports = {
   requestOtp,
   verifyOtp,
   register,
   login,
+  verifyTotpLoginController,
   refresh,
   logout,
   me,
   requestPasswordReset,
   confirmPasswordReset,
+  getTotpStatusController,
+  startTotpSetupController,
+  verifyTotpSetupController,
+  disableTotpController,
 };

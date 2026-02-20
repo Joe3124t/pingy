@@ -7,6 +7,7 @@ final class AuthViewModel: ObservableObject {
         case otpVerify
         case registerProfile
         case loginPassword
+        case loginTotpVerify
         case forgotPasswordRequest
         case forgotPasswordConfirm
     }
@@ -20,6 +21,10 @@ final class AuthViewModel: ObservableObject {
     @Published var confirmPassword = ""
     @Published var newPassword = ""
     @Published var resetCode = ""
+    @Published var totpCode = ""
+    @Published var totpRecoveryCode = ""
+    @Published var totpUserHint: AuthUserHint?
+    @Published var totpChallengeToken: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
@@ -84,9 +89,40 @@ final class AuthViewModel: ObservableObject {
                 try await bootstrapCrypto(userID: user.id)
 
             case .loginPassword:
-                let user = try await authService.login(
+                let result = try await authService.login(
                     phoneNumber: normalizedPhone,
                     password: password
+                )
+
+                switch result {
+                case .authenticated(let user):
+                    try await bootstrapCrypto(userID: user.id)
+                case .requiresTotp(let challengeToken, let userHint, let message):
+                    totpChallengeToken = challengeToken
+                    totpUserHint = userHint
+                    infoMessage = message
+                    mode = .loginTotpVerify
+                }
+
+            case .loginTotpVerify:
+                guard let challengeToken = totpChallengeToken else {
+                    throw APIError.server(statusCode: 400, message: "Two-step challenge expired. Login again.")
+                }
+
+                let cleanTotp = totpCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cleanRecovery = totpRecoveryCode.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if cleanTotp.isEmpty && cleanRecovery.isEmpty {
+                    throw APIError.server(statusCode: 400, message: "Enter authenticator code or recovery code")
+                }
+                if !cleanTotp.isEmpty && !cleanRecovery.isEmpty {
+                    throw APIError.server(statusCode: 400, message: "Use authenticator code or recovery code, not both")
+                }
+
+                let user = try await authService.verifyTotpLogin(
+                    challengeToken: challengeToken,
+                    code: cleanTotp.isEmpty ? nil : cleanTotp,
+                    recoveryCode: cleanRecovery.isEmpty ? nil : cleanRecovery
                 )
                 try await bootstrapCrypto(userID: user.id)
 
@@ -118,6 +154,13 @@ final class AuthViewModel: ObservableObject {
         mode = newMode
         errorMessage = nil
         infoMessage = nil
+
+        if newMode != .loginTotpVerify {
+            totpCode = ""
+            totpRecoveryCode = ""
+            totpUserHint = nil
+            totpChallengeToken = nil
+        }
     }
 
     func resetToPhoneEntry() {
@@ -128,6 +171,10 @@ final class AuthViewModel: ObservableObject {
         confirmPassword = ""
         newPassword = ""
         resetCode = ""
+        totpCode = ""
+        totpRecoveryCode = ""
+        totpUserHint = nil
+        totpChallengeToken = nil
         errorMessage = nil
         infoMessage = nil
     }

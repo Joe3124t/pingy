@@ -15,6 +15,7 @@ struct User: Codable, Identifiable, Equatable {
     var readReceiptsEnabled: Bool?
     var themeMode: ThemeMode?
     var defaultWallpaperUrl: String?
+    var totpEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -31,6 +32,7 @@ struct User: Codable, Identifiable, Equatable {
         case readReceiptsEnabled
         case themeMode
         case defaultWallpaperUrl
+        case totpEnabled
     }
 
     var displayName: String {

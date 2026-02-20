@@ -61,6 +61,63 @@ const forgotPasswordConfirmSchema = z.object({
   deviceId: deviceIdSchema.optional(),
 });
 
+const totpCodeSchema = z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits');
+
+const verifyTotpLoginSchema = z.object({
+  challengeToken: z.string().trim().min(30).max(4000),
+  code: totpCodeSchema.optional(),
+  recoveryCode: z.string().trim().min(8).max(30).optional(),
+}).superRefine((value, context) => {
+  const hasCode = Boolean(value.code);
+  const hasRecoveryCode = Boolean(value.recoveryCode);
+
+  if (!hasCode && !hasRecoveryCode) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Provide code or recoveryCode',
+      path: ['code'],
+    });
+  }
+
+  if (hasCode && hasRecoveryCode) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Use either code or recoveryCode, not both',
+      path: ['recoveryCode'],
+    });
+  }
+});
+
+const verifyTotpSetupSchema = z.object({
+  code: totpCodeSchema,
+});
+
+const disableTotpSchema = z
+  .object({
+    code: totpCodeSchema.optional(),
+    recoveryCode: z.string().trim().min(8).max(30).optional(),
+  })
+  .superRefine((value, context) => {
+    const hasCode = Boolean(value.code);
+    const hasRecoveryCode = Boolean(value.recoveryCode);
+
+    if (!hasCode && !hasRecoveryCode) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide code or recoveryCode',
+        path: ['code'],
+      });
+    }
+
+    if (hasCode && hasRecoveryCode) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Use either code or recoveryCode, not both',
+        path: ['recoveryCode'],
+      });
+    }
+  });
+
 module.exports = {
   requestOtpSchema,
   verifyOtpSchema,
@@ -70,4 +127,7 @@ module.exports = {
   logoutSchema,
   forgotPasswordRequestSchema,
   forgotPasswordConfirmSchema,
+  verifyTotpLoginSchema,
+  verifyTotpSetupSchema,
+  disableTotpSchema,
 };

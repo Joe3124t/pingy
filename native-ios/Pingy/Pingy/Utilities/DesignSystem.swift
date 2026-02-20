@@ -17,6 +17,7 @@ enum PingyTheme {
 
     static let success = Color(uiColor: .systemGreen)
     static let danger = Color(uiColor: .systemRed)
+    static let warning = Color(uiColor: .systemOrange)
 
     static let sentBubbleStart = Color("AccentColor")
     static let sentBubbleEnd = Color("AccentColorStrong")

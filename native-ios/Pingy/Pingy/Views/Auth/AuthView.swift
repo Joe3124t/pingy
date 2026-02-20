@@ -103,6 +103,20 @@ struct AuthView: View {
             inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
             secureInputField(title: "Password", text: $viewModel.password)
 
+        case .loginTotpVerify:
+            if let userHint = viewModel.totpUserHint {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Account")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
+                    Text("\(userHint.username) • \(userHint.phoneMasked)")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                }
+            }
+            inputField(title: "Authenticator code", text: $viewModel.totpCode, keyboard: .numberPad)
+            inputField(title: "Recovery code (optional)", text: $viewModel.totpRecoveryCode, keyboard: .default)
+
         case .forgotPasswordRequest:
             inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
 
@@ -159,6 +173,13 @@ struct AuthView: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         viewModel.moveTo(.forgotPasswordRequest)
                     }
+                }
+            }
+
+        case .loginTotpVerify:
+            secondaryButton(title: "Back to login") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.moveTo(.loginPassword)
                 }
             }
 
@@ -259,6 +280,8 @@ struct AuthView: View {
             return "Create profile"
         case .loginPassword:
             return "Login"
+        case .loginTotpVerify:
+            return "Two-step check"
         case .forgotPasswordRequest:
             return "Reset password"
         case .forgotPasswordConfirm:
@@ -276,6 +299,8 @@ struct AuthView: View {
             return "Set display info and secure password."
         case .loginPassword:
             return "Sign in on this device only."
+        case .loginTotpVerify:
+            return "Enter code from Google Authenticator or your recovery code."
         case .forgotPasswordRequest:
             return "Request a reset code to your phone."
         case .forgotPasswordConfirm:
@@ -293,6 +318,8 @@ struct AuthView: View {
             return "Create account"
         case .loginPassword:
             return "Login"
+        case .loginTotpVerify:
+            return "Verify secure login"
         case .forgotPasswordRequest:
             return "Send reset code"
         case .forgotPasswordConfirm:

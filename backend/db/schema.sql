@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS users (
   read_receipts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   theme_mode VARCHAR(12) NOT NULL DEFAULT 'auto' CHECK (theme_mode IN ('light', 'dark', 'auto')),
   default_wallpaper_url TEXT,
+  totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  totp_secret_enc TEXT,
+  totp_pending_secret_enc TEXT,
+  totp_pending_expires_at TIMESTAMPTZ,
+  totp_confirmed_at TIMESTAMPTZ,
   last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -25,6 +30,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS show_online_status BOOLEAN NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_mode VARCHAR(12) NOT NULL DEFAULT 'auto';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_wallpaper_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_enc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret_enc TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_expires_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_confirmed_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS current_device_id VARCHAR(128);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
@@ -250,6 +260,18 @@ CREATE TABLE IF NOT EXISTS user_push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_user_push_subscriptions_user
   ON user_push_subscriptions (user_id);
+
+CREATE TABLE IF NOT EXISTS user_totp_recovery_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, code_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_totp_recovery_codes_user
+  ON user_totp_recovery_codes (user_id, consumed_at);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$

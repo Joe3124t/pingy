@@ -48,6 +48,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => parseBoolean(value, false)),
+  TOTP_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => parseBoolean(value, true)),
+  TOTP_ISSUER: z.string().default('Pingy'),
+  TOTP_ENCRYPTION_SECRET: z.string().optional(),
+  TOTP_CHALLENGE_SECRET: z.string().optional(),
+  TOTP_CHALLENGE_TTL: z.string().default('10m'),
+  TOTP_SETUP_TTL_MINUTES: z.coerce.number().int().min(3).max(60).default(15),
+  TOTP_RECOVERY_CODES_COUNT: z.coerce.number().int().min(4).max(20).default(8),
   OTP_SMS_RELAY_URL: z.string().url().optional(),
   OTP_SMS_RELAY_TOKEN: z.string().min(8).optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),

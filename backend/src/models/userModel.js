@@ -11,6 +11,7 @@ const USER_PUBLIC_COLUMNS = `
   read_receipts_enabled AS "readReceiptsEnabled",
   theme_mode AS "themeMode",
   default_wallpaper_url AS "defaultWallpaperUrl",
+  totp_enabled AS "totpEnabled",
   last_seen AS "lastSeen",
   last_login_at AS "lastLoginAt",
   created_at AS "createdAt"
@@ -19,7 +20,11 @@ const USER_PUBLIC_COLUMNS = `
 const USER_AUTH_COLUMNS = `
   ${USER_PUBLIC_COLUMNS},
   password_hash AS "passwordHash",
-  current_device_id AS "currentDeviceId"
+  current_device_id AS "currentDeviceId",
+  totp_secret_enc AS "totpSecretEnc",
+  totp_pending_secret_enc AS "totpPendingSecretEnc",
+  totp_pending_expires_at AS "totpPendingExpiresAt",
+  totp_confirmed_at AS "totpConfirmedAt"
 `;
 
 const createUser = async ({

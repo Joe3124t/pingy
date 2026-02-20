@@ -25,6 +25,16 @@ const {
   consumePhoneOtpCode,
   registerFailedPhoneOtpAttempt,
 } = require('../models/phoneOtpModel');
+const {
+  getUserTotpState,
+  setUserTotpPendingSecret,
+  activateUserTotpSecret,
+  clearUserTotpPendingSecret,
+  disableUserTotp,
+  replaceUserRecoveryCodeHashes,
+  consumeRecoveryCodeHash,
+  countAvailableRecoveryCodes,
+} = require('../models/userTotpModel');
 const { deleteUserPublicKey } = require('../models/userKeyModel');
 const {
   signAccessToken,
@@ -32,6 +42,17 @@ const {
   hashRefreshToken,
   getRefreshTokenExpiryDate,
 } = require('./tokenService');
+const {
+  generateBase32Secret,
+  verifyTotpCode,
+  createOtpAuthUrl,
+  encryptTotpSecret,
+  decryptTotpSecret,
+  generateRecoveryCodes,
+  hashRecoveryCode,
+  createTotpChallengeToken,
+  parseTotpChallengeToken,
+} = require('../crypto/totp');
 const { normalizePhoneNumber } = require('../utils/phone');
 const { HttpError } = require('../utils/httpError');
 
@@ -101,6 +122,31 @@ const buildDisplayNameFromPhone = (phoneNumber) => {
   const suffix = String(phoneNumber || '').slice(-4);
   return `Pingy ${suffix}`.trim();
 };
+
+const maskPhoneNumber = (phoneNumber) => {
+  const normalized = String(phoneNumber || '').trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= 4) {
+    return normalized;
+  }
+
+  const prefixLength = Math.min(4, normalized.length - 2);
+  const suffixLength = 2;
+  const hiddenLength = Math.max(0, normalized.length - prefixLength - suffixLength);
+
+  return `${normalized.slice(0, prefixLength)}${'*'.repeat(hiddenLength)}${normalized.slice(
+    normalized.length - suffixLength,
+  )}`;
+};
+
+const normalizeRecoveryCode = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase();
 
 const buildOtpMessage = ({ code, purpose }) => {
   if (purpose === 'reset') {
@@ -396,8 +442,58 @@ const registerUser = async ({ verificationToken, password, displayName, bio, dev
   });
 };
 
+const verifyTotpOrRecovery = async ({
+  userId,
+  encryptedSecret,
+  code,
+  recoveryCode,
+  allowRecovery = false,
+}) => {
+  const normalizedCode = String(code || '').trim();
+  const normalizedRecovery = normalizeRecoveryCode(recoveryCode);
+
+  if (normalizedCode) {
+    if (!encryptedSecret) {
+      throw new HttpError(400, 'Two-step verification is not configured for this account');
+    }
+
+    const secret = decryptTotpSecret(encryptedSecret);
+    if (verifyTotpCode({ secret, code: normalizedCode })) {
+      return {
+        verified: true,
+        method: 'totp',
+      };
+    }
+  }
+
+  if (allowRecovery && normalizedRecovery) {
+    const consumed = await consumeRecoveryCodeHash({
+      userId,
+      codeHash: hashRecoveryCode(normalizedRecovery),
+    });
+
+    if (consumed) {
+      return {
+        verified: true,
+        method: 'recovery',
+      };
+    }
+  }
+
+  return {
+    verified: false,
+    method: null,
+  };
+};
+
 const loginUser = async ({ phoneNumber, password, deviceId }) => {
   const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  const normalizedDeviceId = String(deviceId || '').trim();
+
+  if (!normalizedDeviceId) {
+    throw new HttpError(400, 'deviceId is required');
+  }
+
   const userWithPassword = await findUserByPhoneWithPassword(normalizedPhone);
 
   if (!userWithPassword) {
@@ -410,11 +506,239 @@ const loginUser = async ({ phoneNumber, password, deviceId }) => {
     throw new HttpError(401, 'Invalid credentials');
   }
 
-  return issueAuthTokens({
+  const isTotpRequired =
+    env.TOTP_ENABLED && userWithPassword.totpEnabled && Boolean(userWithPassword.totpSecretEnc);
+
+  if (isTotpRequired) {
+    return {
+      requiresTotp: true,
+      challengeToken: createTotpChallengeToken({
+        userId: userWithPassword.id,
+        deviceId: normalizedDeviceId,
+      }),
+      userHint: {
+        id: userWithPassword.id,
+        username: userWithPassword.username,
+        phoneMasked: maskPhoneNumber(userWithPassword.phoneNumber),
+      },
+    };
+  }
+
+  const auth = await issueAuthTokens({
     userId: userWithPassword.id,
+    deviceId: normalizedDeviceId,
+    rotateKeys: true,
+  });
+
+  return {
+    requiresTotp: false,
+    ...auth,
+  };
+};
+
+const verifyTotpLogin = async ({ challengeToken, code, recoveryCode }) => {
+  if (!env.TOTP_ENABLED) {
+    throw new HttpError(400, 'Two-step verification is disabled on server');
+  }
+
+  const { userId, deviceId } = parseTotpChallengeToken(challengeToken);
+  const userWithPassword = await findUserAuthById(userId);
+
+  if (!userWithPassword) {
+    throw new HttpError(401, 'Account session is invalid. Login again');
+  }
+
+  if (!userWithPassword.totpEnabled || !userWithPassword.totpSecretEnc) {
+    throw new HttpError(401, 'Two-step verification is not enabled for this account');
+  }
+
+  const verification = await verifyTotpOrRecovery({
+    userId,
+    encryptedSecret: userWithPassword.totpSecretEnc,
+    code,
+    recoveryCode,
+    allowRecovery: true,
+  });
+
+  if (!verification.verified) {
+    throw new HttpError(401, 'Invalid authenticator code');
+  }
+
+  const auth = await issueAuthTokens({
+    userId,
     deviceId,
     rotateKeys: true,
   });
+
+  return {
+    requiresTotp: false,
+    auth,
+  };
+};
+
+const getTotpStatusForUser = async ({ userId }) => {
+  if (!env.TOTP_ENABLED) {
+    return {
+      enabled: false,
+      pending: false,
+      pendingExpiresAt: null,
+      recoveryCodesAvailable: 0,
+      issuer: env.TOTP_ISSUER,
+      isServerEnabled: false,
+    };
+  }
+
+  const state = await getUserTotpState(userId);
+
+  if (!state) {
+    throw new HttpError(404, 'User not found');
+  }
+
+  const pendingExpiresAt = state.totpPendingExpiresAt ? new Date(state.totpPendingExpiresAt) : null;
+  const hasExpiredPendingSecret =
+    Boolean(state.totpPendingSecretEnc) &&
+    Boolean(pendingExpiresAt) &&
+    Number.isFinite(pendingExpiresAt.getTime()) &&
+    pendingExpiresAt.getTime() <= Date.now();
+
+  if (hasExpiredPendingSecret) {
+    await clearUserTotpPendingSecret(userId);
+  }
+
+  const isPending = Boolean(
+    state.totpPendingSecretEnc &&
+      pendingExpiresAt &&
+      Number.isFinite(pendingExpiresAt.getTime()) &&
+      pendingExpiresAt.getTime() > Date.now(),
+  );
+  const recoveryCodesAvailable = state.totpEnabled
+    ? await countAvailableRecoveryCodes(userId)
+    : 0;
+
+  return {
+    enabled: Boolean(state.totpEnabled),
+    pending: isPending,
+    pendingExpiresAt: pendingExpiresAt ? pendingExpiresAt.toISOString() : null,
+    recoveryCodesAvailable,
+    issuer: env.TOTP_ISSUER,
+    isServerEnabled: true,
+  };
+};
+
+const startTotpSetup = async ({ userId }) => {
+  if (!env.TOTP_ENABLED) {
+    throw new HttpError(400, 'Two-step verification is disabled on server');
+  }
+
+  const user = await findUserById(userId);
+
+  if (!user) {
+    throw new HttpError(404, 'User not found');
+  }
+
+  const secret = generateBase32Secret();
+  const encryptedSecret = encryptTotpSecret(secret);
+  const expiresAt = new Date(Date.now() + env.TOTP_SETUP_TTL_MINUTES * 60 * 1000);
+  const accountName = user.phoneNumber || user.username || user.id;
+
+  await setUserTotpPendingSecret({
+    userId,
+    encryptedSecret,
+    expiresAt,
+  });
+
+  return {
+    secret,
+    otpAuthUrl: createOtpAuthUrl({
+      secret,
+      accountName,
+      issuer: env.TOTP_ISSUER,
+    }),
+    issuer: env.TOTP_ISSUER,
+    accountName,
+    expiresAt: expiresAt.toISOString(),
+  };
+};
+
+const verifyTotpSetup = async ({ userId, code }) => {
+  if (!env.TOTP_ENABLED) {
+    throw new HttpError(400, 'Two-step verification is disabled on server');
+  }
+
+  const state = await getUserTotpState(userId);
+
+  if (!state?.totpPendingSecretEnc) {
+    throw new HttpError(400, 'Start two-step setup first');
+  }
+
+  const expiresAt = state.totpPendingExpiresAt ? new Date(state.totpPendingExpiresAt) : null;
+
+  if (!expiresAt || expiresAt.getTime() <= Date.now()) {
+    await clearUserTotpPendingSecret(userId);
+    throw new HttpError(400, 'Two-step setup expired. Start setup again');
+  }
+
+  const secret = decryptTotpSecret(state.totpPendingSecretEnc);
+  const isValid = verifyTotpCode({
+    secret,
+    code,
+  });
+
+  if (!isValid) {
+    throw new HttpError(400, 'Invalid authenticator code');
+  }
+
+  await activateUserTotpSecret({
+    userId,
+    encryptedSecret: state.totpPendingSecretEnc,
+  });
+
+  const recoveryCodes = generateRecoveryCodes(env.TOTP_RECOVERY_CODES_COUNT);
+  const recoveryHashes = recoveryCodes.map((recoveryCode) =>
+    hashRecoveryCode(normalizeRecoveryCode(recoveryCode)),
+  );
+
+  await replaceUserRecoveryCodeHashes({
+    userId,
+    hashes: recoveryHashes,
+  });
+
+  return {
+    message: 'Two-step verification enabled successfully',
+    recoveryCodes,
+  };
+};
+
+const disableTotpForUser = async ({ userId, code, recoveryCode }) => {
+  if (!env.TOTP_ENABLED) {
+    throw new HttpError(400, 'Two-step verification is disabled on server');
+  }
+
+  const state = await getUserTotpState(userId);
+
+  if (!state?.totpEnabled || !state.totpSecretEnc) {
+    return {
+      message: 'Two-step verification is already disabled',
+    };
+  }
+
+  const verification = await verifyTotpOrRecovery({
+    userId,
+    encryptedSecret: state.totpSecretEnc,
+    code,
+    recoveryCode,
+    allowRecovery: true,
+  });
+
+  if (!verification.verified) {
+    throw new HttpError(401, 'Invalid authenticator code');
+  }
+
+  await disableUserTotp(userId);
+
+  return {
+    message: 'Two-step verification disabled successfully',
+  };
 };
 
 const refreshUserTokens = async (refreshToken) => {
@@ -554,6 +878,11 @@ module.exports = {
   verifyPhoneOtp,
   registerUser,
   loginUser,
+  verifyTotpLogin,
+  getTotpStatusForUser,
+  startTotpSetup,
+  verifyTotpSetup,
+  disableTotpForUser,
   refreshUserTokens,
   logoutUser,
   requestPasswordResetCode,

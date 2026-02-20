@@ -1,5 +1,10 @@
 import Foundation
 
+enum LoginFlowResult {
+    case authenticated(User)
+    case requiresTotp(challengeToken: String, userHint: AuthUserHint?, message: String?)
+}
+
 @MainActor
 final class AuthService: ObservableObject, AuthorizedRequester {
     @Published private(set) var isRestoringSession = false
@@ -81,7 +86,7 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         )
     }
 
-    func login(phoneNumber: String, password: String) async throws -> User {
+    func login(phoneNumber: String, password: String) async throws -> LoginFlowResult {
         struct LoginPayload: Encodable {
             let phoneNumber: String
             let password: String
@@ -96,7 +101,49 @@ final class AuthService: ObservableObject, AuthorizedRequester {
                 deviceId: deviceIdentity.currentDeviceID()
             )
         )
-        let response: AuthResponse = try await apiClient.request(endpoint)
+        let response: LoginResponse = try await apiClient.request(endpoint)
+
+        if response.requiresTotp == true {
+            guard let challengeToken = response.challengeToken, !challengeToken.isEmpty else {
+                throw APIError.server(statusCode: 400, message: "Two-step challenge is missing")
+            }
+            return .requiresTotp(
+                challengeToken: challengeToken,
+                userHint: response.userHint,
+                message: response.message
+            )
+        }
+
+        guard let user = response.user, let tokens = response.tokens else {
+            throw APIError.decodingError
+        }
+
+        sessionStore.update(user: user, tokens: tokens)
+        return .authenticated(user)
+    }
+
+    func verifyTotpLogin(
+        challengeToken: String,
+        code: String?,
+        recoveryCode: String?
+    ) async throws -> User {
+        struct Payload: Encodable {
+            let challengeToken: String
+            let code: String?
+            let recoveryCode: String?
+        }
+
+        let response: TotpLoginPayloadResponse = try await requestWithPathFallback(
+            candidatePaths: [
+                "auth/totp/login/verify",
+                "auth/login/totp/verify"
+            ],
+            payload: Payload(
+                challengeToken: challengeToken,
+                code: code?.trimmingCharacters(in: .whitespacesAndNewlines),
+                recoveryCode: recoveryCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        )
         sessionStore.update(user: response.user, tokens: response.tokens)
         return response.user
     }
@@ -183,6 +230,49 @@ final class AuthService: ObservableObject, AuthorizedRequester {
             )
         )
         let response: GenericMessageResponse = try await apiClient.request(endpoint)
+        return response.message
+    }
+
+    func getTotpStatus() async throws -> TotpStatusResponse {
+        try await authorizedRequest(
+            Endpoint(path: "auth/totp/status", method: .get),
+            as: TotpStatusResponse.self
+        )
+    }
+
+    func startTotpSetup() async throws -> TotpSetupStartResponse {
+        let endpoint = try Endpoint.json(path: "auth/totp/setup/start", method: .post, payload: EmptyBody())
+        return try await authorizedRequest(endpoint, as: TotpSetupStartResponse.self)
+    }
+
+    func verifyTotpSetup(code: String) async throws -> TotpSetupVerifyResponse {
+        struct Payload: Encodable {
+            let code: String
+        }
+
+        let endpoint = try Endpoint.json(
+            path: "auth/totp/setup/verify",
+            method: .post,
+            payload: Payload(code: code.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        return try await authorizedRequest(endpoint, as: TotpSetupVerifyResponse.self)
+    }
+
+    func disableTotp(code: String?, recoveryCode: String?) async throws -> String {
+        struct Payload: Encodable {
+            let code: String?
+            let recoveryCode: String?
+        }
+
+        let endpoint = try Endpoint.json(
+            path: "auth/totp/disable",
+            method: .post,
+            payload: Payload(
+                code: code?.trimmingCharacters(in: .whitespacesAndNewlines),
+                recoveryCode: recoveryCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        )
+        let response: GenericMessageResponse = try await authorizedRequest(endpoint, as: GenericMessageResponse.self)
         return response.message
     }
 
@@ -275,3 +365,5 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         }
     }
 }
+
+private struct EmptyBody: Encodable {}

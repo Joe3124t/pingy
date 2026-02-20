@@ -36,6 +36,10 @@ const authMiddleware = async (req, res, next) => {
 
     delete user.passwordHash;
     delete user.currentDeviceId;
+    delete user.totpSecretEnc;
+    delete user.totpPendingSecretEnc;
+    delete user.totpPendingExpiresAt;
+    delete user.totpConfirmedAt;
     req.user = user;
     next();
   } catch (error) {
