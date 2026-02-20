@@ -7,7 +7,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var refreshToken: String?
 
     var isAuthenticated: Bool {
-        currentUser != nil && !(accessToken ?? "").isEmpty && !(refreshToken ?? "").isEmpty
+        currentUser != nil && !(accessToken ?? "").isEmpty
     }
 
     private let userDefaults = UserDefaults.standard
@@ -19,6 +19,13 @@ final class SessionStore: ObservableObject {
         static let refreshToken = "pingy.session.refreshToken"
         static let currentUser = "pingy.session.currentUser"
         static let migrationVersion = "pingy.security.migrationVersion"
+    }
+
+    private struct AccessTokenClaims: Decodable {
+        let sub: String
+        let username: String?
+        let phoneNumber: String?
+        let deviceId: String?
     }
 
     init() {
@@ -81,6 +88,65 @@ final class SessionStore: ObservableObject {
         if let userData = userDefaults.data(forKey: Keys.currentUser) {
             currentUser = try? JSONDecoder().decode(User.self, from: userData)
         }
+
+        if currentUser == nil {
+            restoreUserFromAccessTokenIfNeeded()
+        }
+    }
+
+    private func restoreUserFromAccessTokenIfNeeded() {
+        guard let accessToken, !accessToken.isEmpty else { return }
+        guard let claims = Self.decodeClaims(from: accessToken) else { return }
+
+        let fallbackUsername = claims.username?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedUsername: String
+        if let fallbackUsername, !fallbackUsername.isEmpty {
+            resolvedUsername = fallbackUsername
+        } else if let phone = claims.phoneNumber, !phone.isEmpty {
+            resolvedUsername = phone
+        } else {
+            resolvedUsername = "Pingy User"
+        }
+
+        let fallbackUser = User(
+            id: claims.sub,
+            username: resolvedUsername,
+            phoneNumber: claims.phoneNumber,
+            email: nil,
+            avatarUrl: nil,
+            bio: nil,
+            isOnline: nil,
+            lastSeen: nil,
+            lastLoginAt: nil,
+            deviceId: claims.deviceId,
+            showOnlineStatus: nil,
+            readReceiptsEnabled: nil,
+            themeMode: nil,
+            defaultWallpaperUrl: nil,
+            totpEnabled: nil
+        )
+
+        currentUser = fallbackUser
+        if let data = try? JSONEncoder().encode(fallbackUser) {
+            userDefaults.set(data, forKey: Keys.currentUser)
+        }
+    }
+
+    private static func decodeClaims(from jwt: String) -> AccessTokenClaims? {
+        let parts = jwt.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+
+        var payload = String(parts[1])
+        payload = payload.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+
+        let remainder = payload.count % 4
+        if remainder != 0 {
+            payload += String(repeating: "=", count: 4 - remainder)
+        }
+
+        guard let data = Data(base64Encoded: payload) else { return nil }
+        return try? JSONDecoder().decode(AccessTokenClaims.self, from: data)
     }
 
     private func runOneTimeKeychainResetIfNeeded() {

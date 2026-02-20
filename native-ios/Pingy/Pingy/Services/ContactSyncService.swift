@@ -67,7 +67,12 @@ final class ContactSyncService {
             } catch let apiError as APIError {
                 if case .server(let statusCode, let message) = apiError {
                     let lowered = message.lowercased()
-                    if statusCode == 404 || lowered.contains("route not found") {
+                    if statusCode == 404
+                        || statusCode == 405
+                        || lowered.contains("route not found")
+                        || lowered.contains("cannot post")
+                        || lowered.contains("not found")
+                    {
                         throw ContactSyncError.routeUnavailable
                     }
                 }
@@ -111,8 +116,28 @@ final class ContactSyncService {
         var userById: [String: ContactSearchResult] = [:]
 
         for entry in candidates.prefix(30) {
-            for phone in entry.phoneNumbers.prefix(3) {
-                let foundUsers = try await searchUsersByPhone(phone, limit: 3)
+            let phones = entry.phoneNumbers
+                .filter(Self.isValidSearchPhone)
+                .prefix(3)
+
+            for phone in phones {
+                let foundUsers: [User]
+                do {
+                    foundUsers = try await searchUsersByPhone(phone, limit: 3)
+                } catch let apiError as APIError {
+                    if case .server(let statusCode, let message) = apiError {
+                        let lowered = message.lowercased()
+                        if statusCode == 400
+                            || lowered.contains("full international phone")
+                            || lowered.contains("phone")
+                        {
+                            continue
+                        }
+                    }
+                    throw apiError
+                } catch {
+                    continue
+                }
                 for user in foundUsers {
                     userById[user.id] = ContactSearchResult(
                         id: user.id,
@@ -206,6 +231,10 @@ final class ContactSyncService {
     }
 
     private func searchUsersByPhone(_ phoneNumber: String, limit: Int) async throws -> [User] {
+        guard Self.isValidSearchPhone(phoneNumber) else {
+            return []
+        }
+
         struct SearchUsersResponse: Decodable {
             let users: [User]
         }
@@ -268,5 +297,12 @@ final class ContactSyncService {
     private static func sha256Hex(_ value: String) -> String {
         let digest = SHA256.hash(data: Data(value.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func isValidSearchPhone(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let pattern = #"^\+[1-9]\d{7,14}$"#
+        return trimmed.range(of: pattern, options: .regularExpression) != nil
     }
 }

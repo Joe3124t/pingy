@@ -19,11 +19,10 @@ final class AuthService: ObservableObject, AuthorizedRequester {
     }
 
     func restoreSession() async {
-        guard sessionStore.currentUser != nil else { return }
-        guard sessionStore.refreshToken != nil else {
-            sessionStore.clear()
+        guard sessionStore.accessToken != nil else {
             return
         }
+        guard sessionStore.refreshToken != nil else { return }
 
         isRestoringSession = true
         defer { isRestoringSession = false }
