@@ -1,4 +1,5 @@
 import PhotosUI
+import Photos
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -17,10 +18,13 @@ struct ChatDetailView: View {
     @State private var draft = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var quickCameraItem: PhotosPickerItem?
+    @State private var isMediaPickerPresented = false
+    @State private var isQuickCameraPickerPresented = false
     @State private var isFileImporterPresented = false
     @State private var composerHeight: CGFloat = 84
     @State private var isContactInfoPresented = false
     @State private var isMicGestureActive = false
+    @State private var photoPermissionAlertMessage: String?
 
     var body: some View {
         ZStack {
@@ -86,6 +90,36 @@ struct ChatDetailView: View {
             NavigationStack {
                 ContactInfoView(viewModel: viewModel, conversation: conversation)
             }
+        }
+        .photosPicker(
+            isPresented: $isMediaPickerPresented,
+            selection: $selectedPhotoItem,
+            matching: .any(of: [.images, .videos]),
+            photoLibrary: .shared()
+        )
+        .photosPicker(
+            isPresented: $isQuickCameraPickerPresented,
+            selection: $quickCameraItem,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .alert(
+            "Photo access required",
+            isPresented: Binding(
+                get: { photoPermissionAlertMessage != nil },
+                set: { shouldShow in
+                    if !shouldShow {
+                        photoPermissionAlertMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("Open Settings") {
+                openAppSettings()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(photoPermissionAlertMessage ?? "Enable Photos access in Settings to send images and videos.")
         }
         .toolbar(.hidden, for: .tabBar)
         .toolbar(.hidden, for: .navigationBar)
@@ -263,11 +297,9 @@ struct ChatDetailView: View {
 
             HStack(alignment: .bottom, spacing: 8) {
                 Menu {
-                    PhotosPicker(
-                        selection: $selectedPhotoItem,
-                        matching: .any(of: [.images, .videos]),
-                        photoLibrary: .shared()
-                    ) {
+                    Button {
+                        Task { await presentMediaPicker(imagesOnly: false) }
+                    } label: {
                         Label("Photo or video", systemImage: "photo")
                     }
                     Button {
@@ -295,7 +327,9 @@ struct ChatDetailView: View {
                             viewModel.sendTyping(!newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
 
-                    PhotosPicker(selection: $quickCameraItem, matching: .images, photoLibrary: .shared()) {
+                    Button {
+                        Task { await presentMediaPicker(imagesOnly: true) }
+                    } label: {
                         Image(systemName: "camera.fill")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(PingyTheme.textSecondary)
@@ -363,17 +397,12 @@ struct ChatDetailView: View {
                             canvasSize: geometry.size
                         )
                     } else {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .empty:
-                                EmptyView()
-                            case .success(let image):
-                                wallpaperImage(image, canvasSize: geometry.size)
-                            case .failure:
-                                EmptyView()
-                            @unknown default:
-                                EmptyView()
-                            }
+                        CachedRemoteImage(url: url) { image in
+                            wallpaperImage(image, canvasSize: geometry.size)
+                        } placeholder: {
+                            EmptyView()
+                        } failure: {
+                            EmptyView()
                         }
                     }
                 }
@@ -444,12 +473,20 @@ struct ChatDetailView: View {
         guard let data = try? await item.loadTransferable(type: Data.self) else { return }
         let contentType = item.supportedContentTypes.first
         let isVideo = contentType?.conforms(to: .movie) ?? false
-        let suggestedName = contentType?.preferredFilenameExtension ?? (isVideo ? "mp4" : "jpg")
-        let mimeType = contentType?.preferredMIMEType ?? (isVideo ? "video/mp4" : "image/jpeg")
+        var suggestedName = contentType?.preferredFilenameExtension ?? (isVideo ? "mp4" : "jpg")
+        var mimeType = contentType?.preferredMIMEType ?? (isVideo ? "video/mp4" : "image/jpeg")
         let type: MessageType = isVideo ? .video : .image
+        var payload = data
+
+        // Normalize HEIC/HEIF to JPEG so backend/media previews stay consistent across devices.
+        if !isVideo, (mimeType == "image/heic" || mimeType == "image/heif"), let image = UIImage(data: data), let jpegData = image.jpegData(compressionQuality: 0.9) {
+            payload = jpegData
+            mimeType = "image/jpeg"
+            suggestedName = "jpg"
+        }
 
         await viewModel.sendMedia(
-            data: data,
+            data: payload,
             fileName: "media-\(UUID().uuidString).\(suggestedName)",
             mimeType: mimeType,
             type: type
@@ -508,13 +545,60 @@ struct ChatDetailView: View {
         if mimeType.hasPrefix("image/") {
             return .image
         }
-        if mimeType == "video/mp4" {
+        if mimeType.hasPrefix("video/") {
             return .video
         }
         if mimeType.hasPrefix("audio/") {
             return .voice
         }
         return .file
+    }
+
+    @MainActor
+    private func presentMediaPicker(imagesOnly: Bool) async {
+        let granted = await ensurePhotoAccess()
+        guard granted else {
+            photoPermissionAlertMessage = "Allow Photos access to send media from your gallery."
+            return
+        }
+
+        if imagesOnly {
+            isQuickCameraPickerPresented = true
+        } else {
+            isMediaPickerPresented = true
+        }
+    }
+
+    private func ensurePhotoAccess() async -> Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        switch status {
+        case .authorized, .limited:
+            return true
+        case .notDetermined:
+            let requested = await requestPhotoAccess()
+            return requested == .authorized || requested == .limited
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func requestPhotoAccess() async -> PHAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    private func openAppSettings() {
+        guard let settingsURL = URL(string: UIApplication.openSettingsURLString),
+              UIApplication.shared.canOpenURL(settingsURL)
+        else {
+            return
+        }
+        UIApplication.shared.open(settingsURL)
     }
 
     private func handleMicPressing(_ isPressing: Bool) async {

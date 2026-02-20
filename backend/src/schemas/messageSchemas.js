@@ -7,7 +7,7 @@ const sendTextMessageSchema = z.object({
   body: z.union([encryptedPayloadSchema, plainTextBodySchema]),
   isEncrypted: z.boolean().optional(),
   clientId: z.string().min(5).max(80).optional(),
-  replyToMessageId: z.string().uuid().optional(),
+  replyToMessageId: z.string().trim().min(1).max(120).optional(),
 });
 
 const messageIdParamsSchema = z.object({
@@ -28,7 +28,7 @@ const uploadMessageSchema = z.object({
   body: z.string().max(500).optional(),
   voiceDurationMs: z.coerce.number().int().min(0).max(3600000).optional(),
   clientId: z.string().min(5).max(80).optional(),
-  replyToMessageId: z.string().uuid().optional(),
+  replyToMessageId: z.string().trim().min(1).max(120).optional(),
 });
 
 const reactionEmojiValues = [

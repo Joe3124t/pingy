@@ -40,8 +40,16 @@ const normalizeAPNSPrivateKey = () =>
     .trim()
     .replace(/\\n/g, '\n');
 
-const getAPNsAuthority = () =>
-  env.APNS_USE_SANDBOX ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+const getAPNsAuthorities = () => {
+  const sandbox = 'https://api.sandbox.push.apple.com';
+  const production = 'https://api.push.apple.com';
+
+  if (env.APNS_USE_SANDBOX) {
+    return [sandbox, production];
+  }
+
+  return [production, sandbox];
+};
 
 const getAPNsAuthToken = () => {
   const now = Date.now();
@@ -162,11 +170,10 @@ const shouldDeleteAPNSSubscription = ({ statusCode, reason }) => {
   return false;
 };
 
-const sendAPNSNotification = async ({ deviceToken, payload, conversationId }) =>
+const sendAPNSNotification = async ({ deviceToken, payload, conversationId, authority }) =>
   new Promise((resolve) => {
     try {
       const authToken = getAPNsAuthToken();
-      const authority = getAPNsAuthority();
       const client = http2.connect(authority);
       let resolved = false;
 
@@ -254,6 +261,47 @@ const sendAPNSNotification = async ({ deviceToken, payload, conversationId }) =>
     }
   });
 
+const sendAPNSNotificationWithFallback = async ({ deviceToken, payload, conversationId }) => {
+  const authorities = getAPNsAuthorities();
+  let lastResult = {
+    ok: false,
+    statusCode: 0,
+    reason: 'APNs delivery failed',
+  };
+
+  for (const authority of authorities) {
+    const result = await sendAPNSNotification({
+      deviceToken,
+      payload,
+      conversationId,
+      authority,
+    });
+
+    if (result.ok) {
+      return result;
+    }
+
+    lastResult = result;
+
+    // If APNs rejects with token/topic mismatch, retry against the other APNs environment.
+    if (
+      result.statusCode === 400 &&
+      APNS_INVALID_REASONS.has(String(result.reason || ''))
+    ) {
+      continue;
+    }
+
+    if (result.statusCode === 0) {
+      // Connection-level failures can be environment-specific, so retry once on fallback authority.
+      continue;
+    }
+
+    break;
+  }
+
+  return lastResult;
+};
+
 const sendMessagePushToUser = async ({ recipientUserId, message, badgeCount = 0 }) => {
   if (!recipientUserId || !message || !isPushDeliveryConfigured()) {
     return {
@@ -285,7 +333,7 @@ const sendMessagePushToUser = async ({ recipientUserId, message, badgeCount = 0 
           return { ok: false, skipped: true };
         }
 
-        const result = await sendAPNSNotification({
+        const result = await sendAPNSNotificationWithFallback({
           deviceToken: apnsDeviceToken,
           payload: apnsPayload,
           conversationId: message?.conversationId,

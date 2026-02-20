@@ -5,6 +5,12 @@ struct PingyApp: App {
     @StateObject private var environment = AppEnvironment()
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    init() {
+        let memoryCapacity = 60 * 1024 * 1024
+        let diskCapacity = 300 * 1024 * 1024
+        URLCache.shared = URLCache(memoryCapacity: memoryCapacity, diskCapacity: diskCapacity, diskPath: "PingyURLCache")
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView(

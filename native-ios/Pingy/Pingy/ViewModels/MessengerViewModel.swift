@@ -498,7 +498,7 @@ final class MessengerViewModel: ObservableObject {
             conversationId: conversation.conversationId,
             participantId: conversation.participantId,
             plainText: plain,
-            replyToMessageId: pendingReplyMessage?.id,
+            replyToMessageId: normalizedReplyToMessageId(pendingReplyMessage?.id),
             clientId: "ios-\(UUID().uuidString)",
             createdAtISO: ISO8601DateFormatter().string(from: Date())
         )
@@ -528,7 +528,7 @@ final class MessengerViewModel: ObservableObject {
                 body: body,
                 voiceDurationMs: nil,
                 clientID: "ios-\(UUID().uuidString)",
-                replyToMessageID: pendingReplyMessage?.id
+                replyToMessageID: normalizedReplyToMessageId(pendingReplyMessage?.id)
             )
             upsertMessage(message)
             pendingReplyMessage = nil
@@ -550,7 +550,7 @@ final class MessengerViewModel: ObservableObject {
                 body: nil,
                 voiceDurationMs: durationMs,
                 clientID: "ios-\(UUID().uuidString)",
-                replyToMessageID: pendingReplyMessage?.id
+                replyToMessageID: normalizedReplyToMessageId(pendingReplyMessage?.id)
             )
             upsertMessage(message)
             pendingReplyMessage = nil
@@ -911,7 +911,8 @@ final class MessengerViewModel: ObservableObject {
         }
 
         while !pendingTextQueue.isEmpty {
-            let item = pendingTextQueue.removeFirst()
+            let rawItem = pendingTextQueue.removeFirst()
+            let item = normalizedPendingTextMessage(rawItem)
             persistPendingQueue()
             do {
                 let sent = try await sendPendingTextMessage(item)
@@ -970,7 +971,25 @@ final class MessengerViewModel: ObservableObject {
             conversationID: conversation.conversationId,
             body: item.plainText,
             clientID: item.clientId,
-            replyToMessageID: item.replyToMessageId
+            replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
+        )
+    }
+
+    private func normalizedReplyToMessageId(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return UUID(uuidString: trimmed) == nil ? nil : trimmed
+    }
+
+    private func normalizedPendingTextMessage(_ item: PendingTextMessage) -> PendingTextMessage {
+        PendingTextMessage(
+            conversationId: item.conversationId,
+            participantId: item.participantId,
+            plainText: item.plainText,
+            replyToMessageId: normalizedReplyToMessageId(item.replyToMessageId),
+            clientId: item.clientId,
+            createdAtISO: item.createdAtISO
         )
     }
 
@@ -1621,6 +1640,10 @@ final class MessengerViewModel: ObservableObject {
                 }
                 if lowered.contains("public key not found") {
                     activeError = "Secure key exchange is not ready with this user yet."
+                    return
+                }
+                if lowered.contains("validation failed") {
+                    activeError = fallback ?? "Couldn't send this message. Please try again."
                     return
                 }
                 if lowered.contains("blocked") || lowered.contains("cannot interact") {

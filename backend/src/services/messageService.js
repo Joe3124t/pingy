@@ -21,6 +21,8 @@ const { HttpError } = require('../utils/httpError');
 const { assertEncryptedPayload } = require('../crypto/e2ee');
 const { assertUsersCanInteract } = require('./blockService');
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const assertConversationAccess = async ({ conversationId, userId }) => {
   const allowed = await isUserInConversation({ conversationId, userId });
 
@@ -121,13 +123,19 @@ const createConversationMessage = async ({
   let normalizedReplyToMessageId = null;
 
   if (replyToMessageId) {
-    const replyTarget = await findMessageById(replyToMessageId);
+    const replyCandidate = String(replyToMessageId).trim();
 
-    if (!replyTarget || replyTarget.conversationId !== conversationId) {
-      throw new HttpError(400, 'replyToMessageId must reference a message in the same conversation');
+    if (!UUID_PATTERN.test(replyCandidate)) {
+      normalizedReplyToMessageId = null;
+    } else {
+      const replyTarget = await findMessageById(replyCandidate);
+
+      if (!replyTarget || replyTarget.conversationId !== conversationId) {
+        throw new HttpError(400, 'replyToMessageId must reference a message in the same conversation');
+      }
+
+      normalizedReplyToMessageId = replyTarget.id;
     }
-
-    normalizedReplyToMessageId = replyTarget.id;
   }
 
   const message = await createMessage({

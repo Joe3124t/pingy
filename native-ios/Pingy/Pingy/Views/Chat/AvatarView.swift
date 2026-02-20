@@ -9,20 +9,15 @@ struct AvatarView: View {
     var body: some View {
         Group {
             if let parsed = MediaURLResolver.resolve(url) {
-                AsyncImage(url: parsed) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                            .tint(.white)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        fallbackView
-                    @unknown default:
-                        fallbackView
-                    }
+                CachedRemoteImage(url: parsed) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    ProgressView()
+                        .tint(.white)
+                } failure: {
+                    fallbackView
                 }
             } else {
                 fallbackView

@@ -8,10 +8,13 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     @Published private(set) var deviceTokenHex: String?
 
     private let settingsService: SettingsService
+    private let userDefaults = UserDefaults.standard
+    private let tokenDefaultsKey = "pingy.apns.deviceTokenHex"
 
     init(settingsService: SettingsService) {
         self.settingsService = settingsService
         super.init()
+        deviceTokenHex = userDefaults.string(forKey: tokenDefaultsKey)
     }
 
     func configure() async {
@@ -20,6 +23,11 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         authorizationStatus = await center.notificationSettings().authorizationStatus
 
         if authorizationStatus == .authorized || authorizationStatus == .provisional || authorizationStatus == .ephemeral {
+            if let token = deviceTokenHex, !token.isEmpty {
+                Task {
+                    await settingsService.registerAPNsToken(token)
+                }
+            }
             UIApplication.shared.registerForRemoteNotifications()
         }
     }
@@ -40,6 +48,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     func didRegisterDeviceToken(_ token: Data) {
         let tokenHex = token.map { String(format: "%02.2hhx", $0) }.joined()
         deviceTokenHex = tokenHex
+        userDefaults.set(tokenHex, forKey: tokenDefaultsKey)
 
         Task {
             await settingsService.registerAPNsToken(tokenHex)

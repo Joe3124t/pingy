@@ -6,6 +6,7 @@ struct RootView: View {
     @ObservedObject var sessionStore: SessionStore
     @ObservedObject var themeManager: ThemeManager
     @EnvironmentObject private var appEnvironment: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
     @State private var didBindForCurrentSession = false
     @AppStorage("pingy.v3.language") private var appLanguage = "System"
 
@@ -41,6 +42,23 @@ struct RootView: View {
 
             didBindForCurrentSession = false
             messengerViewModel.disconnectSocket()
+        }
+        .onChange(of: scenePhase) { phase in
+            guard sessionStore.isAuthenticated else { return }
+
+            switch phase {
+            case .active:
+                messengerViewModel.bindSocket()
+                Task {
+                    await appEnvironment.pushManager.configure()
+                }
+            case .background:
+                messengerViewModel.disconnectSocket()
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
         }
     }
 

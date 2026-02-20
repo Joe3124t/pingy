@@ -4,7 +4,7 @@ const { HttpError } = require('../utils/httpError');
 
 const MIME_BY_TYPE = {
   image: new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']),
-  video: new Set(['video/mp4']),
+  video: new Set(['video/mp4', 'video/quicktime', 'video/x-m4v']),
   file: new Set([
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
