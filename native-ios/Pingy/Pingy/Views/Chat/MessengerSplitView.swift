@@ -46,6 +46,11 @@ struct MessengerSplitView: View {
                 Text(viewModel.activeError ?? "Unknown error")
             }
         )
+        .onChange(of: horizontalSizeClass) { newValue in
+            if newValue != .compact {
+                viewModel.isCompactChatDetailPresented = false
+            }
+        }
     }
 }
 
@@ -89,6 +94,15 @@ private struct MessengerCompactContainer: View {
                     conversationID: conversationID
                 )
             }
+        }
+        .onAppear {
+            viewModel.isCompactChatDetailPresented = !path.isEmpty
+        }
+        .onChange(of: path) { newPath in
+            viewModel.isCompactChatDetailPresented = !newPath.isEmpty
+        }
+        .onDisappear {
+            viewModel.isCompactChatDetailPresented = false
         }
     }
 }

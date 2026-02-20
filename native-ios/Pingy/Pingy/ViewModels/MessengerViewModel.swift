@@ -29,6 +29,7 @@ final class MessengerViewModel: ObservableObject {
     @Published var isSettingsPresented = false
     @Published var isProfilePresented = false
     @Published var isChatSettingsPresented = false
+    @Published var isCompactChatDetailPresented = false
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -180,6 +181,10 @@ final class MessengerViewModel: ObservableObject {
             conversations = try await conversationService.listConversations()
             persistConversationsCache()
         } catch {
+            if isTransientNetworkError(error) {
+                AppLogger.debug("Skipping conversations refresh error while offline.")
+                return
+            }
             setError(from: error)
         }
     }
@@ -276,6 +281,13 @@ final class MessengerViewModel: ObservableObject {
             persistMessagesCache()
             await markCurrentAsSeen()
         } catch {
+            if isTransientNetworkError(error) {
+                AppLogger.debug("Keeping cached messages for \(conversationID) due offline refresh.")
+                if messagesByConversation[conversationID] == nil {
+                    messagesByConversation[conversationID] = []
+                }
+                return
+            }
             setError(from: error)
         }
     }
@@ -1191,6 +1203,20 @@ final class MessengerViewModel: ObservableObject {
 
         let lowered = error.localizedDescription.lowercased()
         return lowered.contains("network") || lowered.contains("timeout")
+    }
+
+    private func isTransientNetworkError(_ error: Error) -> Bool {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .network, .invalidResponse:
+                return true
+            case .server(let statusCode, _):
+                return statusCode >= 500
+            default:
+                return false
+            }
+        }
+        return false
     }
 
     private func setError(from error: Error, fallback: String? = nil) {

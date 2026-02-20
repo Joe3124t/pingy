@@ -52,6 +52,7 @@ struct ChatDetailView: View {
                 await sendPickedFile(url: url)
             }
         }
+        .toolbar(.hidden, for: .tabBar)
     }
 
     private var topBar: some View {
@@ -269,6 +270,8 @@ struct ChatDetailView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
                         .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
                         .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
                         .saturation(colorScheme == .dark ? 0.88 : 1.0)
@@ -282,6 +285,8 @@ struct ChatDetailView: View {
                             image
                                 .resizable()
                                 .scaledToFill()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .clipped()
                                 .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
                                 .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
                                 .saturation(colorScheme == .dark ? 0.88 : 1.0)

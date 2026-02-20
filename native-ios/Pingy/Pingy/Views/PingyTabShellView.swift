@@ -66,12 +66,18 @@ struct PingyTabShellView: View {
         }
         .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomGlassBar
-                .padding(.horizontal, PingySpacing.md)
-                .padding(.top, 6)
-                .padding(.bottom, 4)
+            if shouldShowBottomBar {
+                bottomGlassBar
+                    .padding(.horizontal, PingySpacing.md)
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
+            }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+    }
+
+    private var shouldShowBottomBar: Bool {
+        !(selectedTab == .chats && messengerViewModel.isCompactChatDetailPresented)
     }
 
     private var bottomGlassBar: some View {
