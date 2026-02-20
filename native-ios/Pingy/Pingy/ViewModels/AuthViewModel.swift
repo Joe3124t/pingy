@@ -4,32 +4,34 @@ import Foundation
 final class AuthViewModel: ObservableObject {
     enum Mode {
         case phoneEntry
-        case otpVerify
+        case signupAuthenticator
         case registerProfile
         case loginPassword
         case loginTotpVerify
-        case forgotPasswordRequest
-        case forgotPasswordConfirm
     }
 
     @Published var mode: Mode = .phoneEntry
     @Published var phoneNumber = ""
-    @Published var otpCode = ""
     @Published var displayName = ""
     @Published var bio = ""
     @Published var password = ""
     @Published var confirmPassword = ""
-    @Published var newPassword = ""
-    @Published var resetCode = ""
+
+    @Published var signupCode = ""
+    @Published var signupChallengeToken: String?
+    @Published var signupRegistrationToken: String?
+    @Published var signupSecret = ""
+    @Published var signupOtpAuthUrl = ""
+
     @Published var totpCode = ""
     @Published var totpRecoveryCode = ""
     @Published var totpUserHint: AuthUserHint?
     @Published var totpChallengeToken: String?
+
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
 
-    private var registrationVerificationToken: String?
     private let authService: AuthService
     private let cryptoService: E2EECryptoService
     private let settingsService: SettingsService
@@ -51,37 +53,37 @@ final class AuthViewModel: ObservableObject {
 
             switch mode {
             case .phoneEntry:
-                let response = try await authService.requestOTP(
-                    phoneNumber: normalizedPhone,
-                    purpose: "register"
-                )
+                let response = try await authService.startAuthenticatorSignup(phoneNumber: normalizedPhone)
+                signupChallengeToken = response.challengeToken
+                signupSecret = response.secret
+                signupOtpAuthUrl = response.otpAuthUrl
                 infoMessage = response.message
-                mode = .otpVerify
+                mode = .signupAuthenticator
 
-            case .otpVerify:
-                let response = try await authService.verifyOTP(
-                    phoneNumber: normalizedPhone,
-                    code: otpCode.trimmingCharacters(in: .whitespacesAndNewlines),
-                    purpose: "register"
-                )
-                registrationVerificationToken = response.verificationToken
-                if response.isRegistered {
-                    mode = .loginPassword
-                } else {
-                    mode = .registerProfile
+            case .signupAuthenticator:
+                guard let challengeToken = signupChallengeToken, !challengeToken.isEmpty else {
+                    throw APIError.server(statusCode: 400, message: "Start authenticator setup first")
                 }
+
+                let response = try await authService.verifyAuthenticatorSignup(
+                    challengeToken: challengeToken,
+                    code: signupCode
+                )
+                signupRegistrationToken = response.registrationToken
+                infoMessage = response.message
+                mode = .registerProfile
 
             case .registerProfile:
                 guard password == confirmPassword else {
                     throw APIError.server(statusCode: 400, message: "Passwords do not match")
                 }
 
-                guard let verificationToken = registrationVerificationToken else {
-                    throw APIError.server(statusCode: 400, message: "Verify OTP code first")
+                guard let registrationToken = signupRegistrationToken, !registrationToken.isEmpty else {
+                    throw APIError.server(statusCode: 400, message: "Verify authenticator code first")
                 }
 
-                let user = try await authService.register(
-                    verificationToken: verificationToken,
+                let user = try await authService.completeAuthenticatorSignup(
+                    registrationToken: registrationToken,
                     displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
                     password: password,
                     bio: bio.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,25 +127,6 @@ final class AuthViewModel: ObservableObject {
                     recoveryCode: cleanRecovery.isEmpty ? nil : cleanRecovery
                 )
                 try await bootstrapCrypto(userID: user.id)
-
-            case .forgotPasswordRequest:
-                let message = try await authService.requestPasswordReset(
-                    phoneNumber: normalizedPhone
-                )
-                infoMessage = message
-                mode = .forgotPasswordConfirm
-
-            case .forgotPasswordConfirm:
-                guard newPassword == confirmPassword else {
-                    throw APIError.server(statusCode: 400, message: "Passwords do not match")
-                }
-                let message = try await authService.confirmPasswordReset(
-                    phoneNumber: normalizedPhone,
-                    code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
-                    newPassword: newPassword
-                )
-                infoMessage = message
-                mode = .loginPassword
             }
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -161,20 +144,34 @@ final class AuthViewModel: ObservableObject {
             totpUserHint = nil
             totpChallengeToken = nil
         }
+
+        if newMode != .signupAuthenticator && newMode != .registerProfile {
+            signupCode = ""
+            signupChallengeToken = nil
+            signupRegistrationToken = nil
+            signupSecret = ""
+            signupOtpAuthUrl = ""
+        }
     }
 
     func resetToPhoneEntry() {
         mode = .phoneEntry
-        registrationVerificationToken = nil
-        otpCode = ""
+        displayName = ""
+        bio = ""
         password = ""
         confirmPassword = ""
-        newPassword = ""
-        resetCode = ""
+
+        signupCode = ""
+        signupChallengeToken = nil
+        signupRegistrationToken = nil
+        signupSecret = ""
+        signupOtpAuthUrl = ""
+
         totpCode = ""
         totpRecoveryCode = ""
         totpUserHint = nil
         totpChallengeToken = nil
+
         errorMessage = nil
         infoMessage = nil
     }
@@ -204,7 +201,6 @@ final class AuthViewModel: ObservableObject {
             return "+\(compact.dropFirst(2))"
         }
 
-        // Local Egypt mobile format (01xxxxxxxxx) -> +20xxxxxxxxxx
         if compact.count == 11, compact.hasPrefix("01") {
             return "+20\(compact.dropFirst())"
         }

@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct AuthView: View {
     @ObservedObject var viewModel: AuthViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         ZStack {
@@ -88,9 +90,32 @@ struct AuthView: View {
         case .phoneEntry:
             inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
 
-        case .otpVerify:
-            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
-            inputField(title: "OTP code", text: $viewModel.otpCode, keyboard: .numberPad)
+        case .signupAuthenticator:
+            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad, disabled: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Authenticator key")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+
+                Text(viewModel.signupSecret)
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+                    .foregroundStyle(PingyTheme.primaryStrong)
+
+                HStack(spacing: 10) {
+                    secondaryButton(title: "Open app") {
+                        guard let url = URL(string: viewModel.signupOtpAuthUrl) else { return }
+                        openURL(url)
+                    }
+
+                    secondaryButton(title: "Copy key") {
+                        UIPasteboard.general.string = viewModel.signupSecret
+                    }
+                }
+            }
+
+            inputField(title: "Authenticator code", text: $viewModel.signupCode, keyboard: .numberPad)
 
         case .registerProfile:
             inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad, disabled: true)
@@ -109,22 +134,13 @@ struct AuthView: View {
                     Text("Account")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textSecondary)
-                    Text("\(userHint.username) • \(userHint.phoneMasked)")
+                    Text("\(userHint.username) - \(userHint.phoneMasked)")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                 }
             }
             inputField(title: "Authenticator code", text: $viewModel.totpCode, keyboard: .numberPad)
             inputField(title: "Recovery code (optional)", text: $viewModel.totpRecoveryCode, keyboard: .default)
-
-        case .forgotPasswordRequest:
-            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
-
-        case .forgotPasswordConfirm:
-            inputField(title: "Phone number", text: $viewModel.phoneNumber, keyboard: .phonePad)
-            inputField(title: "Reset code", text: $viewModel.resetCode, keyboard: .numberPad)
-            secureInputField(title: "New password", text: $viewModel.newPassword)
-            secureInputField(title: "Confirm password", text: $viewModel.confirmPassword)
         }
     }
 
@@ -138,52 +154,28 @@ struct AuthView: View {
                 }
             }
 
-        case .otpVerify:
-            HStack(spacing: 10) {
-                secondaryButton(title: "Back") {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.resetToPhoneEntry()
-                    }
-                }
-                secondaryButton(title: "Resend code") {
-                    Task {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            viewModel.moveTo(.phoneEntry)
-                        }
-                        await viewModel.submit()
-                    }
+        case .signupAuthenticator:
+            secondaryButton(title: "Back") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.resetToPhoneEntry()
                 }
             }
 
         case .registerProfile:
-            secondaryButton(title: "Back to OTP") {
+            secondaryButton(title: "Back to authenticator") {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    viewModel.moveTo(.otpVerify)
+                    viewModel.moveTo(.signupAuthenticator)
                 }
             }
 
         case .loginPassword:
-            HStack(spacing: 10) {
-                secondaryButton(title: "Use OTP sign up") {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.moveTo(.phoneEntry)
-                    }
-                }
-                secondaryButton(title: "Forgot password") {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        viewModel.moveTo(.forgotPasswordRequest)
-                    }
+            secondaryButton(title: "Create new account") {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.moveTo(.phoneEntry)
                 }
             }
 
         case .loginTotpVerify:
-            secondaryButton(title: "Back to login") {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    viewModel.moveTo(.loginPassword)
-                }
-            }
-
-        case .forgotPasswordRequest, .forgotPasswordConfirm:
             secondaryButton(title: "Back to login") {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     viewModel.moveTo(.loginPassword)
@@ -273,57 +265,45 @@ struct AuthView: View {
     private var title: String {
         switch viewModel.mode {
         case .phoneEntry:
-            return "Enter phone"
-        case .otpVerify:
-            return "Verify OTP"
+            return "Create account"
+        case .signupAuthenticator:
+            return "Link authenticator"
         case .registerProfile:
-            return "Create profile"
+            return "Set profile"
         case .loginPassword:
             return "Login"
         case .loginTotpVerify:
             return "Two-step check"
-        case .forgotPasswordRequest:
-            return "Reset password"
-        case .forgotPasswordConfirm:
-            return "Confirm reset"
         }
     }
 
     private var subtitle: String {
         switch viewModel.mode {
         case .phoneEntry:
-            return "Start with your phone number to continue."
-        case .otpVerify:
-            return "Enter the 6-digit code sent to your phone."
+            return "Enter phone number to start secure signup."
+        case .signupAuthenticator:
+            return "Add key in Authenticator then enter code."
         case .registerProfile:
-            return "Set display info and secure password."
+            return "Create password after authenticator verification."
         case .loginPassword:
-            return "Sign in on this device only."
+            return "Enter phone and password."
         case .loginTotpVerify:
-            return "Enter code from Google Authenticator or your recovery code."
-        case .forgotPasswordRequest:
-            return "Request a reset code to your phone."
-        case .forgotPasswordConfirm:
-            return "Enter code and set a new password."
+            return "Enter your authenticator code to continue."
         }
     }
 
     private var primaryButtonTitle: String {
         switch viewModel.mode {
         case .phoneEntry:
-            return "Send OTP"
-        case .otpVerify:
-            return "Verify code"
+            return "Continue with Authenticator"
+        case .signupAuthenticator:
+            return "Verify Authenticator code"
         case .registerProfile:
             return "Create account"
         case .loginPassword:
-            return "Login"
+            return "Continue login"
         case .loginTotpVerify:
-            return "Verify secure login"
-        case .forgotPasswordRequest:
-            return "Send reset code"
-        case .forgotPasswordConfirm:
-            return "Update password"
+            return "Verify and login"
         }
     }
 }

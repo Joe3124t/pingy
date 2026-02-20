@@ -45,45 +45,64 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         }
     }
 
-    func requestOTP(phoneNumber: String, purpose: String = "register") async throws -> OTPRequestResponse {
+    func startAuthenticatorSignup(phoneNumber: String) async throws -> SignupStartResponse {
         struct Payload: Encodable {
             let phoneNumber: String
-            let purpose: String
         }
 
-        let candidatePaths = [
-            "auth/phone/request-otp",
-            "auth/request-otp",
-            "auth/phone/request",
-            "phone/request-otp",
-            "phone/request"
-        ]
-
-        return try await requestWithPathFallback(
-            candidatePaths: candidatePaths,
-            payload: Payload(phoneNumber: phoneNumber, purpose: purpose)
+        let endpoint = try Endpoint.json(
+            path: "auth/signup/start",
+            method: .post,
+            payload: Payload(phoneNumber: phoneNumber)
         )
+        return try await apiClient.request(endpoint)
     }
 
-    func verifyOTP(phoneNumber: String, code: String, purpose: String = "register") async throws -> OTPVerifyResponse {
+    func verifyAuthenticatorSignup(challengeToken: String, code: String) async throws -> SignupVerifyResponse {
         struct Payload: Encodable {
-            let phoneNumber: String
+            let challengeToken: String
             let code: String
-            let purpose: String
         }
 
-        let candidatePaths = [
-            "auth/phone/verify-otp",
-            "auth/verify-otp",
-            "auth/phone/verify",
-            "phone/verify-otp",
-            "phone/verify"
-        ]
-
-        return try await requestWithPathFallback(
-            candidatePaths: candidatePaths,
-            payload: Payload(phoneNumber: phoneNumber, code: code, purpose: purpose)
+        let endpoint = try Endpoint.json(
+            path: "auth/signup/verify",
+            method: .post,
+            payload: Payload(
+                challengeToken: challengeToken,
+                code: code.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         )
+        return try await apiClient.request(endpoint)
+    }
+
+    func completeAuthenticatorSignup(
+        registrationToken: String,
+        displayName: String,
+        password: String,
+        bio: String = ""
+    ) async throws -> User {
+        struct Payload: Encodable {
+            let registrationToken: String
+            let displayName: String
+            let bio: String
+            let password: String
+            let deviceId: String
+        }
+
+        let endpoint = try Endpoint.json(
+            path: "auth/signup/complete",
+            method: .post,
+            payload: Payload(
+                registrationToken: registrationToken,
+                displayName: displayName,
+                bio: bio,
+                password: password,
+                deviceId: deviceIdentity.currentDeviceID()
+            )
+        )
+        let response: AuthResponse = try await apiClient.request(endpoint)
+        sessionStore.update(user: response.user, tokens: response.tokens)
+        return response.user
     }
 
     func login(phoneNumber: String, password: String) async throws -> LoginFlowResult {

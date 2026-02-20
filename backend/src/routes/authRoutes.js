@@ -2,6 +2,9 @@ const express = require('express');
 const {
   requestOtp,
   verifyOtp,
+  signupStart,
+  signupVerify,
+  signupComplete,
   register,
   login,
   verifyTotpLoginController,
@@ -22,6 +25,9 @@ const {
   verifyOtpSchema,
   registerSchema,
   loginSchema,
+  signupStartSchema,
+  signupVerifySchema,
+  signupCompleteSchema,
   refreshSchema,
   logoutSchema,
   forgotPasswordRequestSchema,
@@ -40,6 +46,9 @@ router.post('/request-otp', validateRequest(requestOtpSchema), requestOtp);
 router.post('/verify-otp', validateRequest(verifyOtpSchema), verifyOtp);
 router.post('/phone/request', validateRequest(requestOtpSchema), requestOtp);
 router.post('/phone/verify', validateRequest(verifyOtpSchema), verifyOtp);
+router.post('/signup/start', validateRequest(signupStartSchema), signupStart);
+router.post('/signup/verify', validateRequest(signupVerifySchema), signupVerify);
+router.post('/signup/complete', validateRequest(signupCompleteSchema), signupComplete);
 router.post('/register', validateRequest(registerSchema), register);
 router.post('/login', validateRequest(loginSchema), login);
 router.post('/totp/login/verify', validateRequest(verifyTotpLoginSchema), verifyTotpLoginController);

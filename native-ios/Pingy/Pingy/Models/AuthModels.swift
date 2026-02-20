@@ -18,13 +18,18 @@ struct GenericMessageResponse: Codable {
     let message: String
 }
 
-struct OTPRequestResponse: Codable {
+struct SignupStartResponse: Codable {
     let message: String
+    let challengeToken: String
+    let secret: String
+    let otpAuthUrl: String
+    let issuer: String
+    let accountName: String
 }
 
-struct OTPVerifyResponse: Codable {
-    let verificationToken: String
-    let isRegistered: Bool
+struct SignupVerifyResponse: Codable {
+    let message: String
+    let registrationToken: String
 }
 
 struct AuthUserHint: Codable, Equatable {

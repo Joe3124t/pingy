@@ -118,6 +118,77 @@ const createOtpVerificationToken = ({ phoneNumber, purpose }) =>
     },
   );
 
+const getTotpSignupTokenSecret = () =>
+  String(env.TOTP_CHALLENGE_SECRET || env.OTP_VERIFICATION_SECRET || env.REFRESH_TOKEN_SECRET);
+
+const createTotpSignupChallengeToken = ({ phoneNumber, encryptedSecret }) =>
+  jwt.sign(
+    {
+      phoneNumber,
+      encryptedSecret,
+      purpose: 'totp-signup-challenge',
+    },
+    getTotpSignupTokenSecret(),
+    {
+      expiresIn: `${env.TOTP_SETUP_TTL_MINUTES || 15}m`,
+    },
+  );
+
+const parseTotpSignupChallengeToken = (challengeToken) => {
+  try {
+    const payload = jwt.verify(challengeToken, getTotpSignupTokenSecret());
+
+    if (
+      payload?.purpose !== 'totp-signup-challenge' ||
+      !payload?.phoneNumber ||
+      !payload?.encryptedSecret
+    ) {
+      throw new Error('Invalid signup challenge payload');
+    }
+
+    return {
+      phoneNumber: String(payload.phoneNumber),
+      encryptedSecret: String(payload.encryptedSecret),
+    };
+  } catch {
+    throw new HttpError(401, 'Authenticator setup token is invalid or expired');
+  }
+};
+
+const createTotpSignupRegistrationToken = ({ phoneNumber, encryptedSecret }) =>
+  jwt.sign(
+    {
+      phoneNumber,
+      encryptedSecret,
+      purpose: 'totp-signup-verified',
+    },
+    getTotpSignupTokenSecret(),
+    {
+      expiresIn: env.TOTP_CHALLENGE_TTL || '10m',
+    },
+  );
+
+const parseTotpSignupRegistrationToken = (registrationToken) => {
+  try {
+    const payload = jwt.verify(registrationToken, getTotpSignupTokenSecret());
+
+    if (
+      payload?.purpose !== 'totp-signup-verified' ||
+      !payload?.phoneNumber ||
+      !payload?.encryptedSecret
+    ) {
+      throw new Error('Invalid signup registration payload');
+    }
+
+    return {
+      phoneNumber: String(payload.phoneNumber),
+      encryptedSecret: String(payload.encryptedSecret),
+    };
+  } catch {
+    throw new HttpError(401, 'Authenticator registration token is invalid or expired');
+  }
+};
+
 const buildDisplayNameFromPhone = (phoneNumber) => {
   const suffix = String(phoneNumber || '').slice(-4);
   return `Pingy ${suffix}`.trim();
@@ -409,6 +480,113 @@ const verifyPhoneOtp = async ({ phoneNumber, code, purpose = 'register' }) => {
   };
 };
 
+const startAuthenticatorSignup = async ({ phoneNumber }) => {
+  if (!env.TOTP_ENABLED) {
+    throw new HttpError(400, 'Authenticator signup is disabled on server');
+  }
+
+  const normalizedPhone = normalizePhoneNumber(phoneNumber);
+  const existing = await findUserByPhoneWithPassword(normalizedPhone);
+
+  if (existing) {
+    throw new HttpError(409, 'An account already exists for this phone number');
+  }
+
+  const secret = generateBase32Secret();
+  const encryptedSecret = encryptTotpSecret(secret);
+
+  return {
+    message: 'Authenticator setup generated. Add it in your Authenticator app.',
+    challengeToken: createTotpSignupChallengeToken({
+      phoneNumber: normalizedPhone,
+      encryptedSecret,
+    }),
+    secret,
+    otpAuthUrl: createOtpAuthUrl({
+      secret,
+      accountName: normalizedPhone,
+      issuer: env.TOTP_ISSUER,
+    }),
+    issuer: env.TOTP_ISSUER,
+    accountName: normalizedPhone,
+  };
+};
+
+const verifyAuthenticatorSignup = async ({ challengeToken, code }) => {
+  const signupChallenge = parseTotpSignupChallengeToken(challengeToken);
+  const secret = decryptTotpSecret(signupChallenge.encryptedSecret);
+  const isValid = verifyTotpCode({
+    secret,
+    code,
+  });
+
+  if (!isValid) {
+    throw new HttpError(400, 'Invalid authenticator code');
+  }
+
+  return {
+    message: 'Authenticator verified successfully. Continue to set your password.',
+    registrationToken: createTotpSignupRegistrationToken({
+      phoneNumber: signupChallenge.phoneNumber,
+      encryptedSecret: signupChallenge.encryptedSecret,
+    }),
+  };
+};
+
+const completeAuthenticatorSignup = async ({
+  registrationToken,
+  password,
+  displayName,
+  bio,
+  deviceId,
+}) => {
+  const payload = parseTotpSignupRegistrationToken(registrationToken);
+  const normalizedPhone = normalizePhoneNumber(payload.phoneNumber);
+  const existing = await findUserByPhoneWithPassword(normalizedPhone);
+
+  if (existing) {
+    throw new HttpError(409, 'An account already exists for this phone number');
+  }
+
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  const username = String(displayName || '').trim() || buildDisplayNameFromPhone(normalizedPhone);
+
+  const user = await createUser({
+    id: uuidv4(),
+    username,
+    phoneNumber: normalizedPhone,
+    passwordHash,
+    deviceId,
+    bio: String(bio || '').trim(),
+  });
+
+  await activateUserTotpSecret({
+    userId: user.id,
+    encryptedSecret: payload.encryptedSecret,
+  });
+
+  const recoveryCodes = generateRecoveryCodes(env.TOTP_RECOVERY_CODES_COUNT);
+  const recoveryHashes = recoveryCodes.map((recoveryCode) =>
+    hashRecoveryCode(normalizeRecoveryCode(recoveryCode)),
+  );
+
+  await replaceUserRecoveryCodeHashes({
+    userId: user.id,
+    hashes: recoveryHashes,
+  });
+
+  const auth = await issueAuthTokens({
+    userId: user.id,
+    deviceId,
+    rotateKeys: true,
+  });
+
+  return {
+    ...auth,
+    recoveryCodes,
+  };
+};
+
 const registerUser = async ({ verificationToken, password, displayName, bio, deviceId }) => {
   const otpPayload = parseOtpVerificationToken(verificationToken);
 
@@ -506,10 +684,7 @@ const loginUser = async ({ phoneNumber, password, deviceId }) => {
     throw new HttpError(401, 'Invalid credentials');
   }
 
-  const isTotpRequired =
-    env.TOTP_ENABLED && userWithPassword.totpEnabled && Boolean(userWithPassword.totpSecretEnc);
-
-  if (isTotpRequired) {
+  if (env.TOTP_ENABLED && userWithPassword.totpEnabled && Boolean(userWithPassword.totpSecretEnc)) {
     return {
       requiresTotp: true,
       challengeToken: createTotpChallengeToken({
@@ -522,6 +697,13 @@ const loginUser = async ({ phoneNumber, password, deviceId }) => {
         phoneMasked: maskPhoneNumber(userWithPassword.phoneNumber),
       },
     };
+  }
+
+  if (env.TOTP_ENABLED) {
+    throw new HttpError(
+      403,
+      'Authenticator is required for this account. Enable two-step verification before login.',
+    );
   }
 
   const auth = await issueAuthTokens({
@@ -876,6 +1058,9 @@ const resetPasswordWithCode = async ({ phoneNumber, code, newPassword, deviceId 
 module.exports = {
   requestPhoneOtp,
   verifyPhoneOtp,
+  startAuthenticatorSignup,
+  verifyAuthenticatorSignup,
+  completeAuthenticatorSignup,
   registerUser,
   loginUser,
   verifyTotpLogin,

@@ -1,7 +1,8 @@
 const { asyncHandler } = require('../utils/asyncHandler');
 const {
-  requestPhoneOtp,
-  verifyPhoneOtp,
+  startAuthenticatorSignup,
+  verifyAuthenticatorSignup,
+  completeAuthenticatorSignup,
   registerUser,
   loginUser,
   verifyTotpLogin,
@@ -17,17 +18,50 @@ const {
 const { signMediaUrlsInUser } = require('../services/mediaAccessService');
 
 const requestOtp = asyncHandler(async (req, res) => {
-  const { phoneNumber, purpose = 'register' } = req.body;
-  const result = await requestPhoneOtp({ phoneNumber, purpose });
-
-  res.status(200).json(result);
+  res.status(410).json({
+    message: 'SMS OTP is disabled. Use Authenticator setup instead.',
+  });
 });
 
 const verifyOtp = asyncHandler(async (req, res) => {
-  const { phoneNumber, code, purpose = 'register' } = req.body;
-  const result = await verifyPhoneOtp({ phoneNumber, code, purpose });
+  res.status(410).json({
+    message: 'SMS OTP is disabled. Use Authenticator setup instead.',
+  });
+});
 
+const signupStart = asyncHandler(async (req, res) => {
+  const { phoneNumber } = req.body;
+  const result = await startAuthenticatorSignup({ phoneNumber });
   res.status(200).json(result);
+});
+
+const signupVerify = asyncHandler(async (req, res) => {
+  const { challengeToken, code } = req.body;
+  const result = await verifyAuthenticatorSignup({
+    challengeToken,
+    code,
+  });
+  res.status(200).json(result);
+});
+
+const signupComplete = asyncHandler(async (req, res) => {
+  const { registrationToken, displayName, bio, password, deviceId } = req.body;
+  const auth = await completeAuthenticatorSignup({
+    registrationToken,
+    displayName,
+    bio,
+    password,
+    deviceId,
+  });
+
+  res.status(201).json({
+    user: signMediaUrlsInUser(auth.user),
+    tokens: {
+      accessToken: auth.accessToken,
+      refreshToken: auth.refreshToken,
+    },
+    recoveryCodes: auth.recoveryCodes,
+  });
 });
 
 const register = asyncHandler(async (req, res) => {
@@ -180,6 +214,9 @@ const disableTotpController = asyncHandler(async (req, res) => {
 module.exports = {
   requestOtp,
   verifyOtp,
+  signupStart,
+  signupVerify,
+  signupComplete,
   register,
   login,
   verifyTotpLoginController,

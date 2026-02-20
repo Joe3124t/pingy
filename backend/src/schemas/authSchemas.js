@@ -31,6 +31,23 @@ const loginSchema = z.object({
   deviceId: deviceIdSchema,
 });
 
+const signupStartSchema = z.object({
+  phoneNumber: phoneNumberSchema,
+});
+
+const signupVerifySchema = z.object({
+  challengeToken: z.string().trim().min(30).max(4000),
+  code: z.string().trim().regex(/^\d{6}$/, 'Code must be 6 digits'),
+});
+
+const signupCompleteSchema = z.object({
+  registrationToken: z.string().trim().min(30).max(4000),
+  displayName: z.string().trim().min(2).max(40),
+  bio: z.string().trim().max(160).optional(),
+  password: passwordSchema,
+  deviceId: deviceIdSchema,
+});
+
 const requestOtpSchema = z.object({
   phoneNumber: phoneNumberSchema,
   purpose: otpPurposeSchema.default('register').optional(),
@@ -123,6 +140,9 @@ module.exports = {
   verifyOtpSchema,
   registerSchema,
   loginSchema,
+  signupStartSchema,
+  signupVerifySchema,
+  signupCompleteSchema,
   refreshSchema,
   logoutSchema,
   forgotPasswordRequestSchema,
