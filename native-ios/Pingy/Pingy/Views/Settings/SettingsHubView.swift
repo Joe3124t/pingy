@@ -97,15 +97,19 @@ struct SettingsHubView: View {
                 showPhoneChangeInfo = true
             }
 
-            Picker("App language", selection: $appLanguage) {
-                Text("System").tag("System")
-                Text("English").tag("English")
-                Text("Arabic").tag("Arabic")
+            NavigationLink {
+                LanguageSelectionView()
+            } label: {
+                settingsRowLabel(
+                    icon: "globe",
+                    title: "App language",
+                    subtitle: localizedLanguageName(appLanguage)
+                )
             }
-            .pickerStyle(.segmented)
+            .buttonStyle(.plain)
 
             NavigationLink {
-                SettingsView(viewModel: messengerViewModel)
+                SettingsView(viewModel: messengerViewModel, mode: .twoStep, showsCloseButton: false)
             } label: {
                 settingsRowLabel(icon: "checkmark.shield", title: "Two-step verification", subtitle: "Authenticator & recovery codes")
             }
@@ -222,7 +226,7 @@ struct SettingsHubView: View {
             }
 
             NavigationLink {
-                SettingsView(viewModel: messengerViewModel)
+                SettingsView(viewModel: messengerViewModel, mode: .chat, showsCloseButton: false)
             } label: {
                 settingsRowLabel(icon: "paintbrush.pointed", title: "Wallpaper & advanced chat settings", subtitle: "Default and per-chat customization")
             }
@@ -308,10 +312,10 @@ struct SettingsHubView: View {
                 .foregroundStyle(PingyTheme.primaryStrong)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle))
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
@@ -325,7 +329,7 @@ struct SettingsHubView: View {
 
     private func settingsMetricRow(title: String, value: String) -> some View {
         HStack {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
             Spacer()
@@ -336,9 +340,20 @@ struct SettingsHubView: View {
     }
 
     private func sectionTitle(_ title: String) -> some View {
-        Text(title)
+        Text(LocalizedStringKey(title))
             .font(.system(size: 19, weight: .bold, design: .rounded))
             .foregroundStyle(PingyTheme.textPrimary)
+    }
+
+    private func localizedLanguageName(_ value: String) -> String {
+        switch value {
+        case "Arabic":
+            return String(localized: "Arabic")
+        case "English":
+            return String(localized: "English")
+        default:
+            return String(localized: "System")
+        }
     }
 
     private func formatBytes(_ bytes: Int) -> String {

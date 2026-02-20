@@ -104,7 +104,7 @@ struct PingyTabShellView: View {
             VStack(spacing: 4) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 15, weight: .bold))
-                Text(tab.title)
+                Text(LocalizedStringKey(tab.title))
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .lineLimit(1)
             }

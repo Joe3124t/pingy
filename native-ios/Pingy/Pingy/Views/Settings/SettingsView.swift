@@ -3,8 +3,16 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
+enum SettingsViewMode {
+    case full
+    case chat
+    case twoStep
+}
+
 struct SettingsView: View {
     @ObservedObject var viewModel: MessengerViewModel
+    var mode: SettingsViewMode = .full
+    var showsCloseButton = true
     @EnvironmentObject private var appEnvironment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -26,28 +34,40 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: PingySpacing.md) {
-                chatCard
-                blockedUsersCard
-                notificationsCard
-                twoStepCard
-                accountCard
+                if mode == .full || mode == .chat {
+                    chatCard
+                }
+                if mode == .full {
+                    blockedUsersCard
+                    notificationsCard
+                }
+                if mode == .full || mode == .twoStep {
+                    twoStepCard
+                }
+                if mode == .full {
+                    accountCard
+                }
             }
             .padding(PingySpacing.md)
         }
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Settings")
+        .navigationTitle(screenTitle)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Close") {
-                    dismiss()
+            if showsCloseButton {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
                 }
-                .buttonStyle(PingyPressableButtonStyle())
             }
         }
         .onAppear {
             defaultWallpaperURL = viewModel.currentUserSettings?.defaultWallpaperUrl ?? ""
             appearanceMode = appEnvironment.themeManager.appearanceMode
-            Task { await reloadTotpStatus() }
+            if mode == .full || mode == .twoStep {
+                Task { await reloadTotpStatus() }
+            }
         }
         .onChange(of: wallpaperItem) { newValue in
             guard let newValue else { return }
@@ -75,6 +95,17 @@ struct SettingsView: View {
                 Task { await viewModel.deleteMyAccount() }
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var screenTitle: String {
+        switch mode {
+        case .full:
+            return String(localized: "Settings")
+        case .chat:
+            return String(localized: "Chat preferences")
+        case .twoStep:
+            return String(localized: "Two-step verification")
         }
     }
 
