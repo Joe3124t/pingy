@@ -60,6 +60,8 @@
   <string>Pingy needs photo library access to send media files in chat.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>
   <string>Pingy may save media for sharing and previews.</string>
+  <key>NSContactsUsageDescription</key>
+  <string>Pingy uses contacts to securely find which friends are already on Pingy.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Pingy needs microphone access to record voice messages.</string>
 </dict>

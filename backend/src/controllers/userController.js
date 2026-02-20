@@ -1,8 +1,10 @@
+const crypto = require('node:crypto');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { HttpError } = require('../utils/httpError');
 const { uploadBuffer } = require('../services/storageService');
 const {
   findUserById,
+  listUsersVisibleToViewer,
   isUsernameAvailable,
   updateUserProfile,
   setUserAvatar,
@@ -21,11 +23,14 @@ const {
   getBlockedUsersForUser,
 } = require('../services/blockService');
 const { signMediaUrl, signMediaUrlsInUser } = require('../services/mediaAccessService');
+const { normalizePhoneNumber } = require('../utils/phone');
 const {
   isWebPushConfigured,
   isPushDeliveryConfigured,
   getWebPushPublicKey,
 } = require('../services/pushService');
+
+const sha256Hex = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
 const emitProfileUpdateToContacts = async (req, user) => {
   const io = req.app?.locals?.io;
@@ -230,6 +235,69 @@ const listBlockedUsersController = asyncHandler(async (req, res) => {
   });
 });
 
+const syncContactsController = asyncHandler(async (req, res) => {
+  const contacts = req.body?.contacts || [];
+  const labelByHash = new Map();
+
+  contacts.forEach((entry) => {
+    const hash = String(entry.hash || '').toLowerCase();
+    const label = String(entry.label || '').trim();
+    if (!hash || !label) {
+      return;
+    }
+    if (!labelByHash.has(hash)) {
+      labelByHash.set(hash, label);
+    }
+  });
+
+  if (labelByHash.size === 0) {
+    res.status(200).json({ matches: [] });
+    return;
+  }
+
+  const users = await listUsersVisibleToViewer({
+    viewerUserId: req.user.id,
+    limit: 5000,
+  });
+
+  const matches = [];
+
+  users.forEach((user) => {
+    if (!user?.phoneNumber) {
+      return;
+    }
+
+    let normalizedPhone;
+    try {
+      normalizedPhone = normalizePhoneNumber(user.phoneNumber);
+    } catch {
+      return;
+    }
+
+    const hash = sha256Hex(normalizedPhone);
+    const contactName = labelByHash.get(hash);
+    if (!contactName) {
+      return;
+    }
+
+    const signedUser = signMediaUrlsInUser(user);
+    matches.push({
+      hash,
+      contactName,
+      user: {
+        id: signedUser.id,
+        username: signedUser.username,
+        avatarUrl: signedUser.avatarUrl || null,
+        bio: signedUser.bio || null,
+        isOnline: Boolean(signedUser.isOnline),
+        lastSeen: signedUser.lastSeen || null,
+      },
+    });
+  });
+
+  res.status(200).json({ matches });
+});
+
 const deleteMyAccount = asyncHandler(async (req, res) => {
   const deleted = await deleteUserById(req.user.id);
 
@@ -291,6 +359,7 @@ module.exports = {
   blockUserController,
   unblockUserController,
   listBlockedUsersController,
+  syncContactsController,
   deleteMyAccount,
   getPushPublicKeyController,
   saveMyPushSubscriptionController,

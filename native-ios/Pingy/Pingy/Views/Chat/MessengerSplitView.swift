@@ -81,22 +81,10 @@ private struct MessengerCompactContainer: View {
                     }
                 }
             )
-            .navigationTitle("Pingy")
+            .navigationTitle("Chats")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        viewModel.isProfilePresented = true
-                    } label: {
-                        Image(systemName: "person.crop.circle")
-                    }
-                    .buttonStyle(PingyPressableButtonStyle())
-
-                    Button {
-                        viewModel.isSettingsPresented = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .buttonStyle(PingyPressableButtonStyle())
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProfileToolbarAvatarButton(viewModel: viewModel)
                 }
             }
             .navigationDestination(for: String.self) { conversationID in
@@ -127,39 +115,15 @@ private struct MessengerRegularContainer: View {
                     }
                 }
             )
-            .navigationTitle("Pingy")
+            .navigationTitle("Chats")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        viewModel.isProfilePresented = true
-                    } label: {
-                        Image(systemName: "person.crop.circle")
-                    }
-                    .buttonStyle(PingyPressableButtonStyle())
-
-                    Button {
-                        viewModel.isSettingsPresented = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .buttonStyle(PingyPressableButtonStyle())
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProfileToolbarAvatarButton(viewModel: viewModel)
                 }
             }
         } detail: {
             if let conversation = viewModel.selectedConversation {
                 ChatDetailView(viewModel: viewModel, conversation: conversation)
-                    .navigationTitle(conversation.participantUsername)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                viewModel.isChatSettingsPresented = true
-                            } label: {
-                                Image(systemName: "slider.horizontal.3")
-                            }
-                            .buttonStyle(PingyPressableButtonStyle())
-                        }
-                    }
             } else {
                 NoConversationView()
             }
@@ -174,32 +138,51 @@ private struct ConversationListContent: View {
 
     var body: some View {
         VStack(spacing: PingySpacing.md) {
-            profileHeader
             searchField
 
-            if !viewModel.searchResults.isEmpty {
-                List(viewModel.searchResults) { user in
-                    Button {
-                        onSelectSearchUser(user)
-                    } label: {
-                        HStack(spacing: PingySpacing.sm) {
-                            AvatarView(url: user.avatarUrl, fallback: user.username)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(user.username)
-                                    .font(.system(.headline, design: .rounded))
-                                    .foregroundStyle(PingyTheme.textPrimary)
-                                Text(user.phoneNumber ?? "")
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(PingyTheme.textSecondary)
+            if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if viewModel.isSyncingContacts {
+                    ProgressView("Syncing contacts...")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, PingySpacing.sm)
+                        .padding(.top, PingySpacing.sm)
+                } else if let hint = viewModel.contactSearchHint {
+                    contactSyncHintView(hint)
+                } else if !viewModel.contactSearchResults.isEmpty {
+                    List(viewModel.contactSearchResults) { result in
+                        Button {
+                            onSelectSearchUser(result.user)
+                        } label: {
+                            HStack(spacing: PingySpacing.sm) {
+                                AvatarView(url: result.user.avatarUrl, fallback: result.contactName, size: 48, cornerRadius: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(result.contactName)
+                                        .font(.system(.headline, design: .rounded))
+                                        .foregroundStyle(PingyTheme.textPrimary)
+                                    Text(result.user.username)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(PingyTheme.textSecondary)
+                                }
+                                Spacer()
                             }
-                            Spacer()
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
+                        .buttonStyle(.plain)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                     }
-                    .buttonStyle(.plain)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                } else {
+                    Text("No matching contacts found on Pingy.")
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, PingySpacing.sm)
+                        .padding(.top, PingySpacing.sm)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             } else {
                 List(viewModel.conversations) { conversation in
                     Button {
@@ -235,41 +218,16 @@ private struct ConversationListContent: View {
         .background(PingyTheme.background.ignoresSafeArea())
     }
 
-    private var profileHeader: some View {
-        HStack(spacing: PingySpacing.sm) {
-            Image("LaunchLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 34, height: 34)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Pingy")
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    .foregroundStyle(PingyTheme.primaryStrong)
-                Text("v2.0 - Native Secure Messaging")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(PingyTheme.textSecondary)
-            }
-
-            Spacer()
-        }
-        .pingyCard()
-        .onTapGesture {
-            viewModel.isProfilePresented = true
-        }
-    }
-
     private var searchField: some View {
         HStack(spacing: PingySpacing.sm) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            TextField("Search by full phone number", text: $viewModel.searchQuery)
+            TextField("Search contacts", text: $viewModel.searchQuery)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .onSubmit {
+                .onChange(of: viewModel.searchQuery) { _ in
                     Task { await viewModel.searchUsers() }
                 }
 
@@ -277,6 +235,8 @@ private struct ConversationListContent: View {
                 Button {
                     viewModel.searchQuery = ""
                     viewModel.searchResults = []
+                    viewModel.contactSearchResults = []
+                    viewModel.contactSearchHint = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(PingyTheme.textSecondary)
@@ -288,6 +248,32 @@ private struct ConversationListContent: View {
         .padding(.vertical, PingySpacing.sm)
         .pingyCard()
     }
+
+    private func contactSyncHintView(_ hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(hint)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+
+            if hint.lowercased().contains("enable contact access") {
+                Button("Enable contacts") {
+                    Task {
+                        await viewModel.requestContactAccessAndSync()
+                    }
+                }
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(PingyTheme.primary)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(PingyPressableButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, PingySpacing.sm)
+        .padding(.top, PingySpacing.sm)
+    }
 }
 
 private struct ConversationDetailHost: View {
@@ -298,16 +284,6 @@ private struct ConversationDetailHost: View {
         Group {
             if let conversation = viewModel.conversations.first(where: { $0.conversationId == conversationID }) {
                 ChatDetailView(viewModel: viewModel, conversation: conversation)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                viewModel.isChatSettingsPresented = true
-                            } label: {
-                                Image(systemName: "slider.horizontal.3")
-                            }
-                            .buttonStyle(PingyPressableButtonStyle())
-                        }
-                    }
             } else if viewModel.isLoadingConversations {
                 ProgressView("Loading chat...")
                     .font(.system(.body, design: .rounded))
@@ -466,5 +442,27 @@ private extension JSONValue {
         }
 
         return object["ciphertext"] != nil && object["iv"] != nil
+    }
+}
+
+private struct ProfileToolbarAvatarButton: View {
+    @ObservedObject var viewModel: MessengerViewModel
+
+    var body: some View {
+        Button {
+            viewModel.isProfilePresented = true
+        } label: {
+            AvatarView(
+                url: viewModel.currentUserSettings?.avatarUrl,
+                fallback: viewModel.currentUserSettings?.username ?? "U",
+                size: 36,
+                cornerRadius: 18
+            )
+            .overlay(
+                Circle()
+                    .stroke(PingyTheme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(PingyPressableButtonStyle())
     }
 }

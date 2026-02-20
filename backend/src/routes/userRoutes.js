@@ -10,6 +10,7 @@ const {
   blockUserController,
   unblockUserController,
   listBlockedUsersController,
+  syncContactsController,
   deleteMyAccount,
   getPushPublicKeyController,
   saveMyPushSubscriptionController,
@@ -24,6 +25,7 @@ const {
   userIdParamsSchema,
   savePushSubscriptionSchema,
   deletePushSubscriptionSchema,
+  syncContactsSchema,
 } = require('../schemas/userSchemas');
 const { avatarUpload } = require('../middleware/avatarUploadMiddleware');
 const { wallpaperUpload } = require('../middleware/wallpaperUploadMiddleware');
@@ -32,6 +34,7 @@ const router = express.Router();
 
 router.get('/', validateRequest(conversationSearchSchema, 'query'), searchUsersController);
 router.get('/me/settings', getMySettings);
+router.post('/contact-sync', validateRequest(syncContactsSchema), syncContactsController);
 router.patch('/me/profile', validateRequest(updateProfileSchema), updateProfileSettings);
 router.post('/me/avatar', avatarUpload.single('avatar'), uploadAvatar);
 router.post('/me/chat/wallpaper', wallpaperUpload.single('wallpaper'), uploadDefaultWallpaper);

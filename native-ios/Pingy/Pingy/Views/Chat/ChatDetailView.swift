@@ -75,14 +75,6 @@ struct ChatDetailView: View {
             }
 
             Spacer()
-
-            Text("E2EE")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.primary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(PingyTheme.primarySoft)
-                .clipShape(Capsule())
         }
         .padding(.horizontal, PingySpacing.md)
         .padding(.vertical, PingySpacing.sm)

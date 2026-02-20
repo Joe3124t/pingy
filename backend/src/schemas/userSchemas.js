@@ -77,6 +77,19 @@ const deletePushSubscriptionSchema = z.object({
   endpoint: pushEndpointSchema,
 });
 
+const contactHashItemSchema = z.object({
+  hash: z
+    .string()
+    .trim()
+    .regex(/^[a-fA-F0-9]{64}$/, 'hash must be a valid SHA-256 hex string')
+    .transform((value) => value.toLowerCase()),
+  label: z.string().trim().min(1).max(120),
+});
+
+const syncContactsSchema = z.object({
+  contacts: z.array(contactHashItemSchema).min(1).max(5000),
+});
+
 module.exports = {
   updateProfileSchema,
   updatePrivacySchema,
@@ -84,4 +97,5 @@ module.exports = {
   userIdParamsSchema,
   savePushSubscriptionSchema,
   deletePushSubscriptionSchema,
+  syncContactsSchema,
 };

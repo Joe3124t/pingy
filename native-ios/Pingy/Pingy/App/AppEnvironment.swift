@@ -11,6 +11,7 @@ final class AppEnvironment: ObservableObject {
     let conversationService: ConversationService
     let messageService: MessageService
     let settingsService: SettingsService
+    let contactSyncService: ContactSyncService
     let socketManager: SocketIOWebSocketManager
     let pushManager: PushNotificationManager
     let authViewModel: AuthViewModel
@@ -22,6 +23,7 @@ final class AppEnvironment: ObservableObject {
         conversationService = ConversationService(apiClient: apiClient, authService: authService)
         messageService = MessageService(apiClient: apiClient, authService: authService)
         settingsService = SettingsService(apiClient: apiClient, authService: authService)
+        contactSyncService = ContactSyncService(apiClient: apiClient, authService: authService)
         socketManager = SocketIOWebSocketManager(
             webSocketURL: configuration.webSocketURL,
             authService: authService
@@ -37,6 +39,7 @@ final class AppEnvironment: ObservableObject {
             conversationService: conversationService,
             messageService: messageService,
             settingsService: settingsService,
+            contactSyncService: contactSyncService,
             socketManager: socketManager,
             cryptoService: cryptoService
         )

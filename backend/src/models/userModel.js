@@ -170,6 +170,27 @@ const searchUsers = async ({ currentUserId, phoneNumber, limit = 15 }) => {
   return result.rows;
 };
 
+const listUsersVisibleToViewer = async ({ viewerUserId, limit = 5000 }) => {
+  const result = await query(
+    `
+      SELECT ${USER_PUBLIC_COLUMNS}
+      FROM users
+      WHERE id <> $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM user_blocks b
+          WHERE (b.blocker_id = $1 AND b.blocked_id = users.id)
+             OR (b.blocker_id = users.id AND b.blocked_id = $1)
+        )
+      ORDER BY is_online DESC, username ASC, created_at DESC
+      LIMIT $2
+    `,
+    [viewerUserId, limit],
+  );
+
+  return result.rows;
+};
+
 const setUserOnlineStatus = async ({ userId, isOnline }) => {
   const result = await query(
     `
@@ -345,6 +366,7 @@ module.exports = {
   findUserByPhoneWithPassword,
   findUserByPhone,
   searchUsers,
+  listUsersVisibleToViewer,
   setUserOnlineStatus,
   updateUserProfile,
   setUserAvatar,

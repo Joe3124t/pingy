@@ -12,6 +12,9 @@ final class MessengerViewModel: ObservableObject {
     @Published var isLoadingMessages = false
     @Published var searchQuery = ""
     @Published var searchResults: [User] = []
+    @Published var contactSearchResults: [ContactSearchResult] = []
+    @Published var contactSearchHint: String?
+    @Published var isSyncingContacts = false
     @Published var blockedUsers: [User] = []
     @Published var currentUserSettings: User?
     @Published var activeError: String?
@@ -28,6 +31,7 @@ final class MessengerViewModel: ObservableObject {
     private let conversationService: ConversationService
     private let messageService: MessageService
     private let settingsService: SettingsService
+    private let contactSyncService: ContactSyncService
     private let socketManager: SocketIOWebSocketManager
     private let cryptoService: E2EECryptoService
     private var notificationObserver: NSObjectProtocol?
@@ -36,6 +40,7 @@ final class MessengerViewModel: ObservableObject {
     private var pendingTextQueue: [PendingTextMessage] = []
     private var isProcessingTextQueue = false
     private var openConversationTasks: [String: Task<Void, Never>] = [:]
+    private var syncedContactMatches: [ContactSearchResult] = []
 
     private struct PendingTextMessage {
         let conversationId: String
@@ -50,6 +55,7 @@ final class MessengerViewModel: ObservableObject {
         conversationService: ConversationService,
         messageService: MessageService,
         settingsService: SettingsService,
+        contactSyncService: ContactSyncService,
         socketManager: SocketIOWebSocketManager,
         cryptoService: E2EECryptoService
     ) {
@@ -57,6 +63,7 @@ final class MessengerViewModel: ObservableObject {
         self.conversationService = conversationService
         self.messageService = messageService
         self.settingsService = settingsService
+        self.contactSyncService = contactSyncService
         self.socketManager = socketManager
         self.cryptoService = cryptoService
 
@@ -123,6 +130,7 @@ final class MessengerViewModel: ObservableObject {
     func reloadAll() async {
         await loadConversations()
         await loadSettings()
+        await refreshContactSync(promptForPermission: false)
     }
 
     func loadConversations() async {
@@ -184,13 +192,44 @@ final class MessengerViewModel: ObservableObject {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             searchResults = []
+            contactSearchResults = []
+            contactSearchHint = nil
             return
         }
 
-        do {
-            searchResults = try await conversationService.searchUsers(query: query)
-        } catch {
-            setError(from: error)
+        if syncedContactMatches.isEmpty, !isSyncingContacts {
+            await refreshContactSync(promptForPermission: false)
+        }
+
+        guard !syncedContactMatches.isEmpty else {
+            searchResults = []
+            contactSearchResults = []
+            if contactSearchHint == nil {
+                contactSearchHint = "Enable contact access to find friends."
+            }
+            return
+        }
+
+        let lowered = query.lowercased()
+        let filtered = syncedContactMatches.filter { item in
+            item.contactName.lowercased().contains(lowered) ||
+                item.user.username.lowercased().contains(lowered)
+        }
+
+        contactSearchResults = filtered
+        searchResults = filtered.map(\.user)
+
+        if filtered.isEmpty {
+            contactSearchHint = "No matching contacts found on Pingy."
+        } else {
+            contactSearchHint = nil
+        }
+    }
+
+    func requestContactAccessAndSync() async {
+        await refreshContactSync(promptForPermission: true)
+        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await searchUsers()
         }
     }
 
@@ -766,6 +805,36 @@ final class MessengerViewModel: ObservableObject {
         for index in conversations.indices where conversations[index].conversationId == event.conversationId {
             conversations[index].wallpaperUrl = event.wallpaperUrl
             conversations[index].blurIntensity = event.blurIntensity
+        }
+    }
+
+    private func refreshContactSync(promptForPermission: Bool) async {
+        isSyncingContacts = true
+        defer { isSyncingContacts = false }
+
+        do {
+            let matches = try await contactSyncService.syncContacts(promptForPermission: promptForPermission)
+            syncedContactMatches = matches
+            contactSearchResults = []
+            if matches.isEmpty {
+                contactSearchHint = "No contacts from your address book are on Pingy yet."
+            } else {
+                contactSearchHint = nil
+            }
+        } catch let contactError as ContactSyncError {
+            syncedContactMatches = []
+            contactSearchResults = []
+            switch contactError {
+            case .permissionDenied, .permissionRequired:
+                contactSearchHint = "Enable contact access to find friends."
+            case .noContacts:
+                contactSearchHint = "No contacts found on this device."
+            }
+        } catch {
+            syncedContactMatches = []
+            contactSearchResults = []
+            contactSearchHint = "Couldn't sync contacts right now. Please try again."
+            AppLogger.error("Contact sync failed: \(error.localizedDescription)")
         }
     }
 
