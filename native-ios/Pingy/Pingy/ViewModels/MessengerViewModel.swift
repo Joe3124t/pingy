@@ -819,11 +819,19 @@ final class MessengerViewModel: ObservableObject {
                     activeError = "You cannot message this user due to privacy settings."
                     return
                 }
+                if statusCode == 413 || lowered.contains("file too large") || lowered.contains("too large") {
+                    activeError = "Profile photo is too large. Choose a smaller image."
+                    return
+                }
+                if lowered.contains("unsupported") && lowered.contains("mime") {
+                    activeError = "Unsupported image format. Please choose JPG or PNG."
+                    return
+                }
                 if statusCode >= 500 {
                     activeError = fallback ?? "Server is temporarily busy. Please try again."
                     return
                 }
-                activeError = fallback ?? message
+                activeError = message.isEmpty ? (fallback ?? "Request failed. Please try again.") : message
             }
             return
         }

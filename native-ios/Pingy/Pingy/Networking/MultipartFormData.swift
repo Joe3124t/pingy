@@ -1,6 +1,7 @@
 import Foundation
 
 struct MultipartFormData {
+    private let crlf = "\r\n"
     let boundary: String
     private(set) var data = Data()
 
@@ -10,10 +11,10 @@ struct MultipartFormData {
 
     mutating func appendField(name: String, value: String) {
         let part = """
-        --\(boundary)\r
-        Content-Disposition: form-data; name="\(name)"\r
-        \r
-        \(value)\r
+        --\(boundary)\(crlf)\
+        Content-Disposition: form-data; name="\(name)"\(crlf)\
+        \(crlf)\
+        \(value)\(crlf)
         """
         data.append(part.data(using: .utf8) ?? Data())
     }
@@ -25,17 +26,17 @@ struct MultipartFormData {
         fileData: Data
     ) {
         let header = """
-        --\(boundary)\r
-        Content-Disposition: form-data; name="\(fieldName)"; filename="\(fileName)"\r
-        Content-Type: \(mimeType)\r
-        \r
+        --\(boundary)\(crlf)\
+        Content-Disposition: form-data; name="\(fieldName)"; filename="\(fileName)"\(crlf)\
+        Content-Type: \(mimeType)\(crlf)\
+        \(crlf)
         """
         data.append(header.data(using: .utf8) ?? Data())
         data.append(fileData)
-        data.append("\r".data(using: .utf8) ?? Data())
+        data.append(crlf.data(using: .utf8) ?? Data())
     }
 
     mutating func finalize() {
-        data.append("--\(boundary)--\r".data(using: .utf8) ?? Data())
+        data.append("--\(boundary)--\(crlf)".data(using: .utf8) ?? Data())
     }
 }

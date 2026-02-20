@@ -1,6 +1,6 @@
 import PhotosUI
 import SwiftUI
-import UniformTypeIdentifiers
+import UIKit
 
 struct ProfileView: View {
     @ObservedObject var viewModel: MessengerViewModel
@@ -44,15 +44,12 @@ struct ProfileView: View {
         .onChange(of: avatarItem) { newItem in
             guard let newItem else { return }
             Task {
-                let contentType = newItem.supportedContentTypes.first
-                let extensionPart = contentType?.preferredFilenameExtension ?? "jpg"
-                let mimeType = contentType?.preferredMIMEType ?? "image/jpeg"
-
                 if let data = try? await newItem.loadTransferable(type: Data.self) {
+                    let optimizedData = prepareAvatarUploadData(from: data)
                     let success = await viewModel.uploadAvatar(
-                        data,
-                        fileName: "avatar-\(UUID().uuidString).\(extensionPart)",
-                        mimeType: mimeType
+                        optimizedData,
+                        fileName: "avatar-\(UUID().uuidString).jpg",
+                        mimeType: "image/jpeg"
                     )
                     if success {
                         showSuccessBadge()
@@ -283,6 +280,29 @@ struct ProfileView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func prepareAvatarUploadData(from sourceData: Data) -> Data {
+        let maxUploadBytes = 4_800_000
+        guard let originalImage = UIImage(data: sourceData) else {
+            return sourceData
+        }
+
+        var resizedImage = originalImage.scaledDown(maxDimension: 1600)
+        let qualities: [CGFloat] = [0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44]
+
+        for _ in 0 ..< 4 {
+            for quality in qualities {
+                if let jpegData = resizedImage.jpegData(compressionQuality: quality), jpegData.count <= maxUploadBytes {
+                    return jpegData
+                }
+            }
+            resizedImage = resizedImage.scaledDown(
+                maxDimension: max(900, max(resizedImage.size.width, resizedImage.size.height) * 0.82)
+            )
+        }
+
+        return resizedImage.jpegData(compressionQuality: 0.35) ?? sourceData
+    }
+
     private func showSuccessBadge() {
         PingyHaptics.success()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
@@ -294,6 +314,25 @@ struct ProfileView: View {
             withAnimation(.easeOut(duration: 0.25)) {
                 showSavedBadge = false
             }
+        }
+    }
+}
+
+private extension UIImage {
+    func scaledDown(maxDimension: CGFloat) -> UIImage {
+        let currentMaxDimension = max(size.width, size.height)
+        guard currentMaxDimension > maxDimension else {
+            return self
+        }
+
+        let scaleRatio = maxDimension / currentMaxDimension
+        let targetSize = CGSize(width: size.width * scaleRatio, height: size.height * scaleRatio)
+        let rendererFormat = UIGraphicsImageRendererFormat.default()
+        rendererFormat.scale = 1
+        rendererFormat.opaque = false
+
+        return UIGraphicsImageRenderer(size: targetSize, format: rendererFormat).image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }
