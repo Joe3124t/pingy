@@ -142,6 +142,24 @@ final class MessengerViewModel: ObservableObject {
         return messagesByConversation[selectedConversationID] ?? []
     }
 
+    func contactDisplayName(for conversation: Conversation) -> String {
+        contactDisplayName(for: conversation.participantId, fallback: conversation.participantUsername)
+    }
+
+    func contactDisplayName(for participantId: String, fallback: String) -> String {
+        let normalizedFallback = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackValue = normalizedFallback.isEmpty ? "Pingy User" : normalizedFallback
+        return contactNameByUserId[participantId] ?? fallbackValue
+    }
+
+    func contactPhoneNumber(for participantId: String) -> String? {
+        contactPhoneByUserId[participantId]
+    }
+
+    func messages(for conversationId: String) -> [Message] {
+        messagesByConversation[conversationId] ?? []
+    }
+
     func bindSocket() {
         guard !isSocketBound else {
             socketManager.connectIfNeeded()
@@ -645,6 +663,32 @@ final class MessengerViewModel: ObservableObject {
             applyConversationWallpaperEvent(event)
         } catch {
             setError(from: error, fallback: "Couldn't update chat wallpaper on this device.")
+        }
+    }
+
+    func updateConversationWallpaperBlur(_ blurIntensity: Int) async {
+        guard let conversationID = selectedConversationID else { return }
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else { return }
+        guard let wallpaperURL = conversation.wallpaperUrl, !wallpaperURL.isEmpty else {
+            applyConversationWallpaperEvent(
+                ConversationWallpaperEvent(
+                    conversationId: conversationID,
+                    wallpaperUrl: nil,
+                    blurIntensity: 0
+                )
+            )
+            return
+        }
+
+        do {
+            let event = try await conversationService.updateConversationWallpaper(
+                conversationID: conversationID,
+                wallpaperURL: wallpaperURL,
+                blurIntensity: max(0, min(20, blurIntensity))
+            )
+            applyConversationWallpaperEvent(event)
+        } catch {
+            setError(from: error, fallback: "Couldn't update wallpaper blur.")
         }
     }
 
@@ -1180,6 +1224,33 @@ final class MessengerViewModel: ObservableObject {
         userDefaults.removeObject(forKey: CacheKeys.messages(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.pendingQueue(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.contactMatches(userID: userID))
+    }
+
+    private var contactNameByUserId: [String: String] {
+        var mapping: [String: String] = [:]
+        for match in syncedContactMatches {
+            let normalized = match.contactName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.isEmpty { continue }
+            if mapping[match.user.id] == nil {
+                mapping[match.user.id] = normalized
+            }
+        }
+        return mapping
+    }
+
+    private var contactPhoneByUserId: [String: String] {
+        var mapping: [String: String] = [:]
+        for match in syncedContactMatches {
+            guard let phone = match.user.phoneNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !phone.isEmpty
+            else {
+                continue
+            }
+            if mapping[match.user.id] == nil {
+                mapping[match.user.id] = phone
+            }
+        }
+        return mapping
     }
 
     private func shouldAutoRetryQueue(after error: Error) -> Bool {

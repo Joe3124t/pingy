@@ -8,6 +8,7 @@ struct ChatSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var blurIntensity: Double = 0
+    @State private var isBlurEnabled = false
     @State private var wallpaperItem: PhotosPickerItem?
     @State private var showDeleteForEveryoneConfirmation = false
     @State private var showDeleteForMeConfirmation = false
@@ -34,6 +35,7 @@ struct ChatSettingsView: View {
         }
         .onAppear {
             blurIntensity = Double(conversation.blurIntensity)
+            isBlurEnabled = conversation.blurIntensity > 0
         }
         .onChange(of: wallpaperItem) { newValue in
             guard let newValue else { return }
@@ -47,7 +49,7 @@ struct ChatSettingsView: View {
                         imageData: data,
                         fileName: "chat-wallpaper-\(UUID().uuidString).\(extensionPart)",
                         mimeType: mimeType,
-                        blurIntensity: Int(blurIntensity)
+                        blurIntensity: isBlurEnabled ? Int(blurIntensity) : 0
                     )
                 }
                 wallpaperItem = nil
@@ -101,12 +103,32 @@ struct ChatSettingsView: View {
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            Slider(value: $blurIntensity, in: 0 ... 20, step: 1)
+            Toggle("Blur wallpaper", isOn: $isBlurEnabled)
                 .tint(PingyTheme.primary)
 
-            Text("Blur intensity: \(Int(blurIntensity))")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(PingyTheme.textSecondary)
+            if isBlurEnabled {
+                Slider(value: $blurIntensity, in: 1 ... 20, step: 1)
+                    .tint(PingyTheme.primary)
+
+                Text("Blur intensity: \(Int(blurIntensity))")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+            } else {
+                Text("Wallpaper blur is off.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+            }
+
+            Button("Apply blur setting") {
+                Task {
+                    await viewModel.updateConversationWallpaperBlur(
+                        isBlurEnabled ? Int(blurIntensity) : 0
+                    )
+                }
+            }
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .buttonStyle(PingyPressableButtonStyle())
+            .foregroundStyle(PingyTheme.primaryStrong)
 
             PhotosPicker(selection: $wallpaperItem, matching: .images) {
                 Label("Upload wallpaper", systemImage: "photo")

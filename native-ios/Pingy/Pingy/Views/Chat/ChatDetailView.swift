@@ -1,32 +1,51 @@
-import AVFoundation
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ChatDetailView: View {
     @ObservedObject var viewModel: MessengerViewModel
     let conversation: Conversation
+
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @FocusState private var isComposerFocused: Bool
 
     @StateObject private var voiceRecorder = VoiceRecorderService()
+    @StateObject private var keyboardObserver = KeyboardObserver()
+
     @State private var draft = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var quickCameraItem: PhotosPickerItem?
     @State private var isFileImporterPresented = false
+    @State private var composerHeight: CGFloat = 84
+    @State private var isContactInfoPresented = false
+    @State private var isMicGestureActive = false
 
     var body: some View {
-        ZStack {
-            chatWallpaper
+        GeometryReader { proxy in
+            ZStack(alignment: .bottom) {
+                chatWallpaper
 
-            VStack(spacing: 0) {
-                topBar
-                Divider().overlay(PingyTheme.border.opacity(0.4))
-                messagesList
+                VStack(spacing: 0) {
+                    topBar
+                    Divider().overlay(PingyTheme.border.opacity(0.4))
+                    messagesList(bottomInset: composerHeight + 12)
+                }
+
+                composer
+                    .padding(.bottom, composerBottomPadding(safeAreaBottom: proxy.safeAreaInsets.bottom))
+                    .background(
+                        GeometryReader { geometry in
+                            Color.clear
+                                .onAppear { composerHeight = geometry.size.height }
+                                .onChange(of: geometry.size.height) { composerHeight = $0 }
+                        }
+                    )
             }
-        }
-        .safeAreaInset(edge: .bottom) {
-            composer
-                .background(PingyTheme.surface)
-                .overlay(Rectangle().fill(PingyTheme.border.opacity(0.35)).frame(height: 1), alignment: .top)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .background(PingyTheme.background)
         }
         .onAppear {
             draft = ""
@@ -42,6 +61,13 @@ struct ChatDetailView: View {
                 selectedPhotoItem = nil
             }
         }
+        .onChange(of: quickCameraItem) { newValue in
+            guard let newValue else { return }
+            Task {
+                await sendPickedPhoto(item: newValue)
+                quickCameraItem = nil
+            }
+        }
         .fileImporter(
             isPresented: $isFileImporterPresented,
             allowedContentTypes: [.image, .movie, .pdf, .data],
@@ -52,46 +78,90 @@ struct ChatDetailView: View {
                 await sendPickedFile(url: url)
             }
         }
+        .sheet(isPresented: $isContactInfoPresented) {
+            NavigationStack {
+                ContactInfoView(viewModel: viewModel, conversation: conversation)
+            }
+        }
         .toolbar(.hidden, for: .tabBar)
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     private var topBar: some View {
         HStack(spacing: PingySpacing.sm) {
-            AvatarView(url: conversation.participantAvatarUrl, fallback: conversation.participantUsername)
+            if horizontalSizeClass == .compact {
+                Button {
+                    viewModel.isCompactChatDetailPresented = false
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(PingyTheme.primaryStrong)
+                        .frame(width: 34, height: 34)
+                        .background(PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+            }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(conversation.participantUsername)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(PingyTheme.textPrimary)
+            Button {
+                isContactInfoPresented = true
+            } label: {
+                HStack(spacing: 10) {
+                    AvatarView(
+                        url: conversation.participantAvatarUrl,
+                        fallback: participantDisplayName,
+                        size: 38,
+                        cornerRadius: 19
+                    )
 
-                if conversation.participantIsOnline {
-                    Label("Online", systemImage: "circle.fill")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(PingyTheme.success)
-                } else {
-                    Text(lastSeenText)
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(PingyTheme.textSecondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(participantDisplayName)
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textPrimary)
+                            .lineLimit(1)
+
+                        Text(headerStatusText)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(headerStatusIsTyping ? PingyTheme.primaryStrong : PingyTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
             }
+            .buttonStyle(.plain)
 
             Spacer()
 
             Button {
+                viewModel.activeError = "Voice calls are coming soon."
+            } label: {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(PingyTheme.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(PingyTheme.surfaceElevated)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Button {
                 viewModel.isChatSettingsPresented = true
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 20, weight: .semibold))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(PingyTheme.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(PingyTheme.surfaceElevated)
+                    .clipShape(Circle())
             }
             .buttonStyle(PingyPressableButtonStyle())
         }
         .padding(.horizontal, PingySpacing.md)
-        .padding(.vertical, PingySpacing.sm)
+        .padding(.vertical, 10)
         .background(PingyTheme.surface)
     }
 
-    private var messagesList: some View {
+    private func messagesList(bottomInset: CGFloat) -> some View {
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(spacing: 6) {
@@ -124,48 +194,47 @@ struct ChatDetailView: View {
                         )
                         .id(message.id)
                     }
-
-                    if let typingText = viewModel.typingByConversation[conversation.conversationId] {
-                        HStack(spacing: 8) {
-                            TypingIndicatorView()
-                            Text("\(typingText) is typing")
-                                .font(.system(size: 14, weight: .medium, design: .rounded))
-                                .foregroundStyle(PingyTheme.textSecondary)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 6)
-                    }
                 }
                 .padding(.horizontal, PingySpacing.sm)
-                .padding(.vertical, PingySpacing.md)
+                .padding(.top, PingySpacing.md)
+                .padding(.bottom, bottomInset)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
             .refreshable {
                 await viewModel.loadMessages(conversationID: conversation.conversationId, force: true)
             }
+            .onTapGesture {
+                isComposerFocused = false
+            }
             .onChange(of: viewModel.activeMessages.count) { _ in
                 if let id = viewModel.activeMessages.last?.id {
-                    withAnimation(.easeOut(duration: 0.25)) {
+                    withAnimation(.easeOut(duration: 0.2)) {
                         reader.scrollTo(id, anchor: .bottom)
                     }
                 }
                 Task { await viewModel.markCurrentAsSeen() }
             }
+            .onChange(of: isComposerFocused) { focused in
+                if focused, let id = viewModel.activeMessages.last?.id {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        reader.scrollTo(id, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 
     private var composer: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             if let reply = viewModel.pendingReplyMessage {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Replying to \(reply.senderUsername ?? "message")")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(PingyTheme.primaryStrong)
 
                         Text(reply.body?.stringValue ?? reply.mediaName ?? "Message")
-                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                            .font(.system(size: 13, weight: .regular, design: .rounded))
                             .foregroundStyle(PingyTheme.textSecondary)
                             .lineLimit(1)
                     }
@@ -176,18 +245,21 @@ struct ChatDetailView: View {
                         viewModel.setReplyTarget(nil)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
+                            .font(.system(size: 19))
                             .foregroundStyle(PingyTheme.textSecondary)
                     }
                     .buttonStyle(PingyPressableButtonStyle())
                 }
                 .padding(.horizontal, PingySpacing.md)
-                .padding(.top, 4)
             }
 
-            HStack(alignment: .bottom, spacing: PingySpacing.sm) {
+            HStack(alignment: .bottom, spacing: 8) {
                 Menu {
-                    PhotosPicker(selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]), photoLibrary: .shared()) {
+                    PhotosPicker(
+                        selection: $selectedPhotoItem,
+                        matching: .any(of: [.images, .videos]),
+                        photoLibrary: .shared()
+                    ) {
                         Label("Photo or video", systemImage: "photo")
                     }
                     Button {
@@ -197,85 +269,95 @@ struct ChatDetailView: View {
                     }
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 21, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(PingyTheme.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(PingyTheme.primaryStrong)
+                        .frame(width: 40, height: 40)
+                        .background(PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
                 }
                 .buttonStyle(PingyPressableButtonStyle())
 
-                TextField("Write a message...", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 18, weight: .regular, design: .rounded))
-                    .lineLimit(1 ... 4)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-                    .background(PingyTheme.inputBackground)
-                    .foregroundStyle(PingyTheme.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: PingyRadius.input, style: .continuous)
-                            .stroke(PingyTheme.border, lineWidth: 1)
-                    )
-                    .onChange(of: draft) { newValue in
-                        viewModel.sendTyping(!newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Write a message...", text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16, weight: .regular, design: .rounded))
+                        .lineLimit(1 ... 5)
+                        .focused($isComposerFocused)
+                        .onChange(of: draft) { newValue in
+                            viewModel.sendTyping(!newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                    PhotosPicker(selection: $quickCameraItem, matching: .images, photoLibrary: .shared()) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(PingyTheme.textSecondary)
                     }
-
-                Button {
-                    Task { await toggleVoiceRecord() }
-                } label: {
-                    Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(voiceRecorder.isRecording ? PingyTheme.danger : PingyTheme.primaryStrong)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .buttonStyle(PingyPressableButtonStyle())
                 }
-                .buttonStyle(PingyPressableButtonStyle())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(PingyTheme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(PingyTheme.border, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
-                Button {
-                    let textToSend = draft
-                    draft = ""
-                    viewModel.sendTyping(false)
-                    PingyHaptics.softTap()
-                    Task { await viewModel.sendText(textToSend) }
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(PingyTheme.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                if hasTextToSend {
+                    Button {
+                        let textToSend = draft
+                        draft = ""
+                        isComposerFocused = true
+                        viewModel.sendTyping(false)
+                        PingyHaptics.softTap()
+                        Task { await viewModel.sendText(textToSend) }
+                    } label: {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(PingyTheme.primary)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                } else {
+                    Button {} label: {
+                        Image(systemName: voiceRecorder.isRecording ? "stop.fill" : "mic.fill")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(voiceRecorder.isRecording ? PingyTheme.danger : PingyTheme.primaryStrong)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                    .onLongPressGesture(minimumDuration: 0.12, pressing: { isPressing in
+                        Task { await handleMicPressing(isPressing) }
+                    }, perform: {})
                 }
-                .buttonStyle(PingyPressableButtonStyle())
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isSendingMessage)
-                .opacity(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.55 : 1)
             }
             .padding(.horizontal, PingySpacing.sm)
             .padding(.bottom, 8)
         }
         .padding(.top, 8)
+        .background(PingyTheme.surface)
+        .overlay(Rectangle().fill(PingyTheme.border.opacity(0.35)).frame(height: 1), alignment: .top)
     }
 
     private var chatWallpaper: some View {
         ZStack {
             PingyTheme.wallpaperFallback(for: colorScheme)
 
-            if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl)
-            {
-                if url.isFileURL,
-                   let image = UIImage(contentsOfFile: url.path)
-                {
+            if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl) {
+                if url.isFileURL, let image = UIImage(contentsOfFile: url.path) {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
-                        .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
+                        .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
                         .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                        .saturation(colorScheme == .dark ? 0.88 : 1.0)
-                        .opacity(colorScheme == .dark ? 0.86 : 0.95)
+                        .saturation(colorScheme == .dark ? 0.9 : 1.0)
+                        .opacity(colorScheme == .dark ? 0.9 : 0.96)
                 } else {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -287,10 +369,10 @@ struct ChatDetailView: View {
                                 .scaledToFill()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .clipped()
-                                .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
+                                .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
                                 .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                                .saturation(colorScheme == .dark ? 0.88 : 1.0)
-                                .opacity(colorScheme == .dark ? 0.86 : 0.95)
+                                .saturation(colorScheme == .dark ? 0.9 : 1.0)
+                                .opacity(colorScheme == .dark ? 0.9 : 0.96)
                         case .failure:
                             EmptyView()
                         @unknown default:
@@ -301,6 +383,28 @@ struct ChatDetailView: View {
             }
         }
         .ignoresSafeArea()
+    }
+
+    private var participantDisplayName: String {
+        viewModel.contactDisplayName(for: conversation)
+    }
+
+    private var headerStatusIsTyping: Bool {
+        viewModel.typingByConversation[conversation.conversationId] != nil
+    }
+
+    private var headerStatusText: String {
+        if headerStatusIsTyping {
+            return "typing..."
+        }
+        if conversation.participantIsOnline {
+            return "Online"
+        }
+        return lastSeenText
+    }
+
+    private var hasTextToSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var lastSeenText: String {
@@ -318,6 +422,13 @@ struct ChatDetailView: View {
 
     private var renderedMessages: [Message] {
         viewModel.activeMessages
+    }
+
+    private func composerBottomPadding(safeAreaBottom: CGFloat) -> CGFloat {
+        if keyboardObserver.height > 0 {
+            return max(8, keyboardObserver.height - safeAreaBottom + 6)
+        }
+        return max(8, safeAreaBottom + 4)
     }
 
     private func isGrouped(index: Int, messages: [Message]) -> Bool {
@@ -414,45 +525,82 @@ struct ChatDetailView: View {
         return .file
     }
 
-    private func toggleVoiceRecord() async {
-        if voiceRecorder.isRecording {
-            do {
-                let result = try voiceRecorder.stopRecording()
-                await viewModel.sendVoice(url: result.url, durationMs: result.durationMs)
-            } catch {
-                viewModel.activeError = error.localizedDescription
-            }
-        } else {
+    private func handleMicPressing(_ isPressing: Bool) async {
+        if isPressing {
+            guard !isMicGestureActive else { return }
+            isMicGestureActive = true
             do {
                 try await voiceRecorder.startRecording()
             } catch {
+                isMicGestureActive = false
                 viewModel.activeError = error.localizedDescription
             }
+            return
+        }
+
+        guard isMicGestureActive else { return }
+        isMicGestureActive = false
+
+        guard voiceRecorder.isRecording else { return }
+
+        do {
+            let result = try voiceRecorder.stopRecording()
+            if result.durationMs > 200 {
+                await viewModel.sendVoice(url: result.url, durationMs: result.durationMs)
+            }
+        } catch {
+            viewModel.activeError = error.localizedDescription
         }
     }
 }
 
-private struct TypingIndicatorView: View {
-    @State private var phase: CGFloat = 0
+@MainActor
+private final class KeyboardObserver: ObservableObject {
+    @Published var height: CGFloat = 0
+    private var observers: [NSObjectProtocol] = []
 
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0 ..< 3, id: \.self) { index in
-                Circle()
-                    .fill(PingyTheme.primary)
-                    .frame(width: 6, height: 6)
-                    .scaleEffect(dotScale(for: index))
+    init() {
+        let center = NotificationCenter.default
+
+        observers.append(
+            center.addObserver(
+                forName: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                self?.handleKeyboard(note)
             }
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                phase = 1
+        )
+
+        observers.append(
+            center.addObserver(
+                forName: UIResponder.keyboardWillHideNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    self?.height = 0
+                }
             }
+        )
+    }
+
+    deinit {
+        let center = NotificationCenter.default
+        for observer in observers {
+            center.removeObserver(observer)
         }
     }
 
-    private func dotScale(for index: Int) -> CGFloat {
-        let base = phase + CGFloat(index) * 0.2
-        return 0.7 + (sin(base * .pi) + 1) * 0.25
+    private func handleKeyboard(_ notification: Notification) {
+        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+
+        let screenHeight = UIScreen.main.bounds.height
+        let newHeight = max(0, screenHeight - frameValue.minY)
+        withAnimation(.easeOut(duration: 0.2)) {
+            height = newHeight
+        }
     }
 }

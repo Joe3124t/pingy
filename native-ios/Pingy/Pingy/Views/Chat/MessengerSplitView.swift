@@ -301,6 +301,7 @@ private struct ConversationListContent: View {
     }
 
     private func conversationRow(_ conversation: Conversation) -> some View {
+        let displayName = viewModel.contactDisplayName(for: conversation)
         Button {
             onSelectConversation(conversation)
             if conversation.unreadCount > 0 {
@@ -309,6 +310,7 @@ private struct ConversationListContent: View {
         } label: {
             ConversationRowView(
                 conversation: conversation,
+                displayName: displayName,
                 isSelected: conversation.conversationId == viewModel.selectedConversationID,
                 isPinned: viewModel.isConversationPinned(conversation.conversationId)
             )
@@ -459,6 +461,7 @@ private struct NoConversationView: View {
 
 struct ConversationRowView: View {
     let conversation: Conversation
+    let displayName: String
     let isSelected: Bool
     let isPinned: Bool
 
@@ -474,7 +477,8 @@ struct ConversationRowView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(conversation.participantUsername)
+                    Text(displayName)
+                        .lineLimit(1)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(isSelected ? .white : PingyTheme.textPrimary)
 
