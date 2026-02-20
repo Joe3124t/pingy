@@ -28,6 +28,33 @@ final class SettingsService {
         return response.user
     }
 
+    func changePhoneNumber(
+        newPhoneNumber: String,
+        currentPassword: String,
+        totpCode: String?,
+        recoveryCode: String?
+    ) async throws -> ChangePhoneResponse {
+        struct Payload: Encodable {
+            let newPhoneNumber: String
+            let currentPassword: String
+            let totpCode: String?
+            let recoveryCode: String?
+        }
+
+        let endpoint = try Endpoint.json(
+            path: "users/me/phone",
+            method: .patch,
+            payload: Payload(
+                newPhoneNumber: newPhoneNumber,
+                currentPassword: currentPassword,
+                totpCode: totpCode,
+                recoveryCode: recoveryCode
+            )
+        )
+
+        return try await authService.authorizedRequest(endpoint, as: ChangePhoneResponse.self)
+    }
+
     func uploadAvatar(
         imageData: Data,
         filename: String = "avatar.jpg",

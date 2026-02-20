@@ -283,6 +283,22 @@ const updateUserChatSettings = async ({
   return result.rows[0] || null;
 };
 
+const updateUserPhoneNumber = async ({ userId, phoneNumber }) => {
+  const result = await query(
+    `
+      UPDATE users
+      SET
+        phone_number = $2,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING ${USER_PUBLIC_COLUMNS}
+    `,
+    [userId, phoneNumber],
+  );
+
+  return result.rows[0] || null;
+};
+
 const updateUserPasswordHash = async ({ userId, passwordHash }) => {
   const result = await query(
     `
@@ -372,6 +388,7 @@ module.exports = {
   setUserAvatar,
   updateUserPrivacySettings,
   updateUserChatSettings,
+  updateUserPhoneNumber,
   updateUserPasswordHash,
   updateUserDeviceBinding,
   deleteUserById,

@@ -1,12 +1,17 @@
 const crypto = require('node:crypto');
+const bcrypt = require('bcrypt');
 const { asyncHandler } = require('../utils/asyncHandler');
 const { HttpError } = require('../utils/httpError');
 const { uploadBuffer } = require('../services/storageService');
+const { env } = require('../config/env');
 const {
   findUserById,
+  findUserAuthById,
+  findUserByPhoneWithPassword,
   listUsersVisibleToViewer,
   isUsernameAvailable,
   updateUserProfile,
+  updateUserPhoneNumber,
   setUserAvatar,
   updateUserPrivacySettings,
   updateUserChatSettings,
@@ -22,6 +27,8 @@ const {
   unblockTargetUser,
   getBlockedUsersForUser,
 } = require('../services/blockService');
+const { consumeRecoveryCodeHash } = require('../models/userTotpModel');
+const { verifyTotpCode, decryptTotpSecret, hashRecoveryCode } = require('../crypto/totp');
 const { signMediaUrl, signMediaUrlsInUser } = require('../services/mediaAccessService');
 const { normalizePhoneNumber } = require('../utils/phone');
 const {
@@ -95,6 +102,87 @@ const updateProfileSettings = asyncHandler(async (req, res) => {
       ...signMediaUrlsInUser(user),
       deviceId: req.auth?.deviceId || null,
     },
+  });
+});
+
+const normalizeRecoveryCode = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase();
+
+const changePhoneNumberController = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const normalizedPhone = normalizePhoneNumber(req.body?.newPhoneNumber);
+  const currentPassword = String(req.body?.currentPassword || '');
+  const totpCode = req.body?.totpCode ? String(req.body.totpCode).trim() : '';
+  const recoveryCode = req.body?.recoveryCode ? String(req.body.recoveryCode).trim() : '';
+
+  const userAuth = await findUserAuthById(userId);
+  if (!userAuth) {
+    throw new HttpError(404, 'User not found');
+  }
+
+  if (String(userAuth.phoneNumber || '') === normalizedPhone) {
+    throw new HttpError(400, 'New phone number must be different from current number');
+  }
+
+  const currentPasswordMatches = await bcrypt.compare(currentPassword, userAuth.passwordHash);
+  if (!currentPasswordMatches) {
+    throw new HttpError(401, 'Current password is incorrect');
+  }
+
+  if (env.TOTP_ENABLED && userAuth.totpEnabled && userAuth.totpSecretEnc) {
+    if (!totpCode && !recoveryCode) {
+      throw new HttpError(401, 'Authenticator code or recovery code is required');
+    }
+
+    let verified = false;
+
+    if (totpCode) {
+      const secret = decryptTotpSecret(userAuth.totpSecretEnc);
+      verified = verifyTotpCode({ secret, code: totpCode });
+    } else if (recoveryCode) {
+      verified = await consumeRecoveryCodeHash({
+        userId,
+        codeHash: hashRecoveryCode(normalizeRecoveryCode(recoveryCode)),
+      });
+    }
+
+    if (!verified) {
+      throw new HttpError(401, 'Invalid authenticator code');
+    }
+  }
+
+  const existing = await findUserByPhoneWithPassword(normalizedPhone);
+  if (existing && existing.id !== userId) {
+    throw new HttpError(409, 'Phone number is already in use');
+  }
+
+  let updatedUser;
+  try {
+    updatedUser = await updateUserPhoneNumber({
+      userId,
+      phoneNumber: normalizedPhone,
+    });
+  } catch (error) {
+    if (error?.code === '23505') {
+      throw new HttpError(409, 'Phone number is already in use');
+    }
+    throw error;
+  }
+
+  if (!updatedUser) {
+    throw new HttpError(404, 'User not found');
+  }
+
+  await emitProfileUpdateToContacts(req, updatedUser);
+
+  res.status(200).json({
+    user: {
+      ...signMediaUrlsInUser(updatedUser),
+      deviceId: req.auth?.deviceId || null,
+    },
+    message: 'Phone number updated successfully',
   });
 });
 
@@ -352,6 +440,7 @@ const deleteMyPushSubscriptionController = asyncHandler(async (req, res) => {
 module.exports = {
   getMySettings,
   updateProfileSettings,
+  changePhoneNumberController,
   uploadAvatar,
   uploadDefaultWallpaper,
   updatePrivacySettings,

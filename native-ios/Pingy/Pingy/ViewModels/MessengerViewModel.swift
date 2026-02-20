@@ -1,6 +1,14 @@
+import Combine
 import Foundation
 import Network
 import UIKit
+
+enum NetworkBannerState: Equatable {
+    case hidden
+    case waitingForInternet
+    case connecting
+    case updating
+}
 
 @MainActor
 final class MessengerViewModel: ObservableObject {
@@ -30,6 +38,9 @@ final class MessengerViewModel: ObservableObject {
     @Published var isProfilePresented = false
     @Published var isChatSettingsPresented = false
     @Published var isCompactChatDetailPresented = false
+    @Published private(set) var networkBannerState: NetworkBannerState = .hidden
+    @Published private(set) var isInternetReachable = true
+    @Published private(set) var isSocketConnected = false
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -38,11 +49,15 @@ final class MessengerViewModel: ObservableObject {
     private let contactSyncService: ContactSyncService
     private let socketManager: SocketIOWebSocketManager
     private let cryptoService: E2EECryptoService
+    private let localCache = LocalDatabaseCache.shared
     private let userDefaults = UserDefaults.standard
     private let networkMonitor = NWPathMonitor()
     private let networkMonitorQueue = DispatchQueue(label: "pingy.network.monitor")
     private var notificationObserver: NSObjectProtocol?
+    private var socketConnectionObserver: AnyCancellable?
     private var isSocketBound = false
+    private var isSyncingAfterReconnect = false
+    private var reconnectSyncRetryTask: Task<Void, Never>?
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
     private var pendingTextQueue: [PendingTextMessage] = []
     private var isProcessingTextQueue = false
@@ -80,6 +95,10 @@ final class MessengerViewModel: ObservableObject {
         static func contactMatches(userID: String) -> String {
             "pingy.cache.contactMatches.\(userID)"
         }
+
+        static func settings(userID: String) -> String {
+            "pingy.cache.settings.\(userID)"
+        }
     }
 
     init(
@@ -116,6 +135,14 @@ final class MessengerViewModel: ObservableObject {
             }
         }
 
+        isSocketConnected = socketManager.isConnected
+        socketConnectionObserver = socketManager.$isConnected
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isConnected in
+                guard let self else { return }
+                self.handleSocketConnectionUpdate(isConnected: isConnected)
+            }
+
         startNetworkMonitoring()
     }
 
@@ -123,6 +150,8 @@ final class MessengerViewModel: ObservableObject {
         if let notificationObserver {
             NotificationCenter.default.removeObserver(notificationObserver)
         }
+        socketConnectionObserver?.cancel()
+        reconnectSyncRetryTask?.cancel()
         networkMonitor.cancel()
     }
 
@@ -164,6 +193,7 @@ final class MessengerViewModel: ObservableObject {
     func bindSocket() {
         guard !isSocketBound else {
             socketManager.connectIfNeeded()
+            updateNetworkBannerState()
             return
         }
 
@@ -173,38 +203,50 @@ final class MessengerViewModel: ObservableObject {
             self.handleSocketEvent(event)
         }
         socketManager.connectIfNeeded()
+        updateNetworkBannerState()
     }
 
     func disconnectSocket() {
         isSocketBound = false
         socketManager.onEvent = nil
         socketManager.disconnect()
+        isSocketConnected = false
+        updateNetworkBannerState()
     }
 
     func reloadAll() async {
+        await restoreCachedStateFromDatabase()
         restoreCachedState()
         await loadConversationListState()
-        await loadConversations()
-        await loadSettings()
+        await loadConversations(silent: true)
+        await loadSettings(silent: true)
         await refreshContactSync(promptForPermission: false)
         if !pendingTextQueue.isEmpty {
             await processPendingTextQueue()
         }
+        updateNetworkBannerState()
     }
 
-    func loadConversations() async {
+    @discardableResult
+    func loadConversations(silent: Bool = false) async -> Bool {
         isLoadingConversations = true
         defer { isLoadingConversations = false }
 
         do {
             conversations = try await conversationService.listConversations()
             persistConversationsCache()
+            return true
         } catch {
             if isTransientNetworkError(error) {
                 AppLogger.debug("Skipping conversations refresh error while offline.")
-                return
+                return false
             }
-            setError(from: error)
+            if !silent {
+                setError(from: error)
+            } else {
+                AppLogger.error("Silent conversations refresh failed: \(error.localizedDescription)")
+            }
+            return false
         }
     }
 
@@ -259,13 +301,25 @@ final class MessengerViewModel: ObservableObject {
         conversations[index].unreadCount = 0
     }
 
-    func loadSettings() async {
+    @discardableResult
+    func loadSettings(silent: Bool = false) async -> Bool {
         do {
             let settings = try await settingsService.getMySettings()
             currentUserSettings = settings.user
             blockedUsers = settings.blockedUsers
+            persistSettingsCache()
+            return true
         } catch {
-            setError(from: error)
+            if isTransientNetworkError(error) {
+                AppLogger.debug("Keeping cached settings while offline.")
+                return false
+            }
+            if !silent {
+                setError(from: error)
+            } else {
+                AppLogger.error("Silent settings refresh failed: \(error.localizedDescription)")
+            }
+            return false
         }
     }
 
@@ -285,14 +339,15 @@ final class MessengerViewModel: ObservableObject {
         await loadMessages(conversationID: conversationID)
     }
 
+    @discardableResult
     func loadMessages(
         conversationID: String,
         force: Bool = false,
         suppressNetworkAlert: Bool = false
-    ) async {
+    ) async -> Bool {
         if !force, messagesByConversation[conversationID] != nil {
             await markCurrentAsSeen()
-            return
+            return true
         }
 
         isLoadingMessages = true
@@ -303,15 +358,17 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation[conversationID] = messages.sorted(by: { $0.createdAt < $1.createdAt })
             persistMessagesCache()
             await markCurrentAsSeen()
+            return true
         } catch {
             if isTransientNetworkError(error) || (suppressNetworkAlert && isLikelyOfflineError(error)) {
                 AppLogger.debug("Keeping cached messages for \(conversationID) due offline refresh.")
                 if messagesByConversation[conversationID] == nil {
                     messagesByConversation[conversationID] = []
                 }
-                return
+                return false
             }
             setError(from: error)
+            return false
         }
     }
 
@@ -357,8 +414,10 @@ final class MessengerViewModel: ObservableObject {
         }
 
         guard !syncedContactMatches.isEmpty else {
-            searchResults = []
-            contactSearchResults = []
+            let localFallback = localConversationSearchResults(query: query)
+            contactSearchResults = localFallback
+            searchResults = localFallback.map(\.user)
+            contactSearchHint = localFallback.isEmpty ? contactSearchHint : nil
             return
         }
 
@@ -372,7 +431,14 @@ final class MessengerViewModel: ObservableObject {
         searchResults = filtered.map(\.user)
 
         if filtered.isEmpty {
-            contactSearchHint = "No matching contacts found on Pingy."
+            let localFallback = localConversationSearchResults(query: query)
+            if localFallback.isEmpty {
+                contactSearchHint = "No matching contacts found on Pingy."
+            } else {
+                contactSearchResults = localFallback
+                searchResults = localFallback.map(\.user)
+                contactSearchHint = nil
+            }
         } else {
             contactSearchHint = nil
         }
@@ -588,7 +654,55 @@ final class MessengerViewModel: ObservableObject {
                 )
                 authService.sessionStore.update(user: me, tokens: tokens)
             }
+            persistSettingsCache()
             profileSaveToken = UUID()
+            return true
+        } catch {
+            setError(from: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func changePhoneNumber(
+        newPhoneNumber: String,
+        currentPassword: String,
+        totpCode: String?,
+        recoveryCode: String?
+    ) async -> Bool {
+        let normalizedPhone = newPhoneNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPassword = currentPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedTotp = totpCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRecovery = recoveryCode?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalizedPhone.isEmpty else {
+            activeError = "Enter a new phone number."
+            return false
+        }
+
+        guard !normalizedPassword.isEmpty else {
+            activeError = "Enter your current password."
+            return false
+        }
+
+        do {
+            let response = try await settingsService.changePhoneNumber(
+                newPhoneNumber: normalizedPhone,
+                currentPassword: normalizedPassword,
+                totpCode: normalizedTotp,
+                recoveryCode: normalizedRecovery
+            )
+            currentUserSettings = response.user
+            if let accessToken = authService.sessionStore.accessToken,
+               let refreshToken = authService.sessionStore.refreshToken
+            {
+                authService.sessionStore.update(
+                    user: response.user,
+                    tokens: AuthTokens(accessToken: accessToken, refreshToken: refreshToken)
+                )
+            }
+            persistSettingsCache()
+            activeError = nil
             return true
         } catch {
             setError(from: error)
@@ -602,6 +716,7 @@ final class MessengerViewModel: ObservableObject {
                 showOnlineStatus: showOnline,
                 readReceiptsEnabled: readReceipts
             )
+            persistSettingsCache()
         } catch {
             setError(from: error)
         }
@@ -613,6 +728,7 @@ final class MessengerViewModel: ObservableObject {
                 themeMode: themeMode,
                 defaultWallpaperURL: defaultWallpaperURL
             )
+            persistSettingsCache()
         } catch {
             setError(from: error)
         }
@@ -629,6 +745,7 @@ final class MessengerViewModel: ObservableObject {
                 filename: fileName,
                 mimeType: mimeType
             )
+            persistSettingsCache()
             await loadConversations()
             profileSaveToken = UUID()
             return true
@@ -779,6 +896,10 @@ final class MessengerViewModel: ObservableObject {
         guard authService.sessionStore.currentUser != nil else {
             pendingTextQueue.removeAll()
             persistPendingQueue()
+            return
+        }
+        guard isInternetReachable else {
+            updateNetworkBannerState()
             return
         }
 
@@ -1103,14 +1224,118 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func handleNetworkPathUpdate(isReachable: Bool) {
-        guard isReachable else { return }
+        let wasReachable = isInternetReachable
+        isInternetReachable = isReachable
+
+        updateNetworkBannerState()
+
         guard authService.sessionStore.currentUser != nil else { return }
+
+        if !isReachable {
+            return
+        }
+
+        if !wasReachable {
+            socketManager.connectIfNeeded()
+        }
 
         Task { [weak self] in
             guard let self else { return }
-            if !self.pendingTextQueue.isEmpty {
-                await self.processPendingTextQueue()
+            await self.startReconnectSyncIfNeeded()
+        }
+    }
+
+    private func handleSocketConnectionUpdate(isConnected: Bool) {
+        isSocketConnected = isConnected
+        updateNetworkBannerState()
+        if isConnected, isInternetReachable {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.startReconnectSyncIfNeeded()
             }
+        }
+    }
+
+    private func updateNetworkBannerState() {
+        let nextState: NetworkBannerState
+
+        if !isInternetReachable {
+            nextState = .waitingForInternet
+        } else if isSocketBound && authService.sessionStore.currentUser != nil && !isSocketConnected {
+            nextState = .connecting
+        } else if isSyncingAfterReconnect {
+            nextState = .updating
+        } else {
+            nextState = .hidden
+        }
+
+        if nextState != networkBannerState {
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                networkBannerState = nextState
+            }
+        }
+    }
+
+    private func startReconnectSyncIfNeeded() async {
+        guard isInternetReachable else { return }
+        guard authService.sessionStore.currentUser != nil else { return }
+        guard isSocketConnected else {
+            updateNetworkBannerState()
+            return
+        }
+        guard !isSyncingAfterReconnect else { return }
+
+        reconnectSyncRetryTask?.cancel()
+        isSyncingAfterReconnect = true
+        updateNetworkBannerState()
+
+        let success = await performReconnectSync()
+        if success {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            isSyncingAfterReconnect = false
+            updateNetworkBannerState()
+            return
+        }
+
+        isSyncingAfterReconnect = false
+        updateNetworkBannerState()
+        scheduleReconnectSyncRetry()
+    }
+
+    private func performReconnectSync() async -> Bool {
+        let conversationsSynced = await loadConversations(silent: true)
+        let settingsSynced = await loadSettings(silent: true)
+
+        var messagesSynced = true
+        if let selectedConversationID {
+            messagesSynced = await loadMessages(
+                conversationID: selectedConversationID,
+                force: true,
+                suppressNetworkAlert: true
+            )
+        }
+
+        var queueSynced = true
+        if !pendingTextQueue.isEmpty {
+            await processPendingTextQueue()
+            queueSynced = pendingTextQueue.isEmpty
+        }
+
+        return conversationsSynced
+            && settingsSynced
+            && messagesSynced
+            && queueSynced
+            && isInternetReachable
+            && isSocketConnected
+    }
+
+    private func scheduleReconnectSyncRetry() {
+        reconnectSyncRetryTask?.cancel()
+        reconnectSyncRetryTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self.startReconnectSyncIfNeeded()
         }
     }
 
@@ -1153,6 +1378,38 @@ final class MessengerViewModel: ObservableObject {
         upsertMessage(localMessage)
     }
 
+    private func restoreCachedStateFromDatabase() async {
+        guard let userID = currentUserID else { return }
+
+        if conversations.isEmpty,
+           let data = await localCache.loadData(for: CacheKeys.conversations(userID: userID), userID: userID),
+           let decoded = try? JSONDecoder().decode([Conversation].self, from: data)
+        {
+            conversations = decoded
+        }
+
+        if messagesByConversation.isEmpty,
+           let data = await localCache.loadData(for: CacheKeys.messages(userID: userID), userID: userID),
+           let decoded = try? JSONDecoder().decode([String: [Message]].self, from: data)
+        {
+            messagesByConversation = decoded
+        }
+
+        if pendingTextQueue.isEmpty,
+           let data = await localCache.loadData(for: CacheKeys.pendingQueue(userID: userID), userID: userID),
+           let decoded = try? JSONDecoder().decode([PendingTextMessage].self, from: data)
+        {
+            pendingTextQueue = decoded
+        }
+
+        if currentUserSettings == nil,
+           let data = await localCache.loadData(for: CacheKeys.settings(userID: userID), userID: userID),
+           let decoded = try? JSONDecoder().decode(User.self, from: data)
+        {
+            currentUserSettings = decoded
+        }
+    }
+
     private func restoreCachedState() {
         guard let userID = currentUserID else { return }
 
@@ -1177,6 +1434,13 @@ final class MessengerViewModel: ObservableObject {
             pendingTextQueue = decoded
         }
 
+        if currentUserSettings == nil,
+           let data = userDefaults.data(forKey: CacheKeys.settings(userID: userID)),
+           let decoded = try? JSONDecoder().decode(User.self, from: data)
+        {
+            currentUserSettings = decoded
+        }
+
         if syncedContactMatches.isEmpty {
             syncedContactMatches = loadCachedContactMatches()
         }
@@ -1186,18 +1450,36 @@ final class MessengerViewModel: ObservableObject {
         guard let userID = currentUserID else { return }
         guard let data = try? JSONEncoder().encode(conversations) else { return }
         userDefaults.set(data, forKey: CacheKeys.conversations(userID: userID))
+        Task { [localCache] in
+            await localCache.saveData(data, for: CacheKeys.conversations(userID: userID), userID: userID)
+        }
     }
 
     private func persistMessagesCache() {
         guard let userID = currentUserID else { return }
         guard let data = try? JSONEncoder().encode(messagesByConversation) else { return }
         userDefaults.set(data, forKey: CacheKeys.messages(userID: userID))
+        Task { [localCache] in
+            await localCache.saveData(data, for: CacheKeys.messages(userID: userID), userID: userID)
+        }
     }
 
     private func persistPendingQueue() {
         guard let userID = currentUserID else { return }
         guard let data = try? JSONEncoder().encode(pendingTextQueue) else { return }
         userDefaults.set(data, forKey: CacheKeys.pendingQueue(userID: userID))
+        Task { [localCache] in
+            await localCache.saveData(data, for: CacheKeys.pendingQueue(userID: userID), userID: userID)
+        }
+    }
+
+    private func persistSettingsCache() {
+        guard let userID = currentUserID, let currentUserSettings else { return }
+        guard let data = try? JSONEncoder().encode(currentUserSettings) else { return }
+        userDefaults.set(data, forKey: CacheKeys.settings(userID: userID))
+        Task { [localCache] in
+            await localCache.saveData(data, for: CacheKeys.settings(userID: userID), userID: userID)
+        }
     }
 
     private func persistContactMatchesCache() {
@@ -1229,6 +1511,10 @@ final class MessengerViewModel: ObservableObject {
         userDefaults.removeObject(forKey: CacheKeys.messages(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.pendingQueue(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.contactMatches(userID: userID))
+        userDefaults.removeObject(forKey: CacheKeys.settings(userID: userID))
+        Task { [localCache] in
+            await localCache.removeUserData(userID: userID)
+        }
     }
 
     private var contactNameByUserId: [String: String] {
@@ -1256,6 +1542,58 @@ final class MessengerViewModel: ObservableObject {
             }
         }
         return mapping
+    }
+
+    private func localConversationSearchResults(query: String) -> [ContactSearchResult] {
+        let lowered = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lowered.isEmpty else { return [] }
+
+        var seen = Set<String>()
+        var results: [ContactSearchResult] = []
+
+        for conversation in conversations {
+            let displayName = contactDisplayName(for: conversation).trimmingCharacters(in: .whitespacesAndNewlines)
+            let username = conversation.participantUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            let phone = contactPhoneNumber(for: conversation.participantId)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let matches =
+                displayName.lowercased().contains(lowered) ||
+                username.lowercased().contains(lowered) ||
+                (phone?.lowercased().contains(lowered) ?? false)
+
+            guard matches else { continue }
+            guard seen.insert(conversation.participantId).inserted else { continue }
+
+            let user = User(
+                id: conversation.participantId,
+                username: username.isEmpty ? displayName : username,
+                phoneNumber: phone,
+                email: nil,
+                avatarUrl: conversation.participantAvatarUrl,
+                bio: nil,
+                isOnline: conversation.participantIsOnline,
+                lastSeen: conversation.participantLastSeen,
+                lastLoginAt: nil,
+                deviceId: nil,
+                showOnlineStatus: nil,
+                readReceiptsEnabled: nil,
+                themeMode: nil,
+                defaultWallpaperUrl: nil,
+                totpEnabled: nil
+            )
+
+            results.append(
+                ContactSearchResult(
+                    id: user.id,
+                    user: user,
+                    contactName: displayName.isEmpty ? user.username : displayName
+                )
+            )
+        }
+
+        return results.sorted {
+            $0.contactName.localizedCaseInsensitiveCompare($1.contactName) == .orderedAscending
+        }
     }
 
     private func shouldAutoRetryQueue(after error: Error) -> Bool {

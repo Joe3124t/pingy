@@ -17,7 +17,7 @@ final class APIClient {
         _ endpoint: Endpoint,
         accessToken: String? = nil
     ) async throws -> T {
-        let (data, response) = try await execute(endpoint, accessToken: accessToken)
+        let (data, _) = try await execute(endpoint, accessToken: accessToken)
 
         if data.isEmpty {
             throw APIError.decodingError
@@ -111,6 +111,11 @@ final class APIClient {
 
         do {
             let (data, response) = try await urlSession.data(for: request)
+            let uploadedBytes = Int64(request.httpBody?.count ?? 0)
+            let downloadedBytes = Int64(data.count)
+            Task { @MainActor in
+                NetworkUsageStore.shared.track(uploaded: uploadedBytes, downloaded: downloadedBytes)
+            }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse

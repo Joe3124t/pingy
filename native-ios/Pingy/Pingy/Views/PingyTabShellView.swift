@@ -65,6 +65,18 @@ struct PingyTabShellView: View {
             .tag(PingyRootTab.settings)
         }
         .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if messengerViewModel.networkBannerState != .hidden {
+                NetworkStateBannerView(state: messengerViewModel.networkBannerState)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 2)
+                    .padding(.bottom, 4)
+                    .transition(
+                        .move(edge: .top)
+                            .combined(with: .opacity)
+                    )
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if shouldShowBottomBar {
                 bottomGlassBar
@@ -134,5 +146,86 @@ struct PingyTabShellView: View {
             .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isSelected)
         }
         .buttonStyle(PingyPressableButtonStyle())
+    }
+}
+
+private struct NetworkStateBannerView: View {
+    let state: NetworkBannerState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .tint(PingyTheme.textPrimary)
+                    .controlSize(.small)
+            } else {
+                Image(systemName: iconName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(PingyTheme.textPrimary)
+            }
+
+            Text(title)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 36)
+        .background(.ultraThinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(backgroundTint)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(PingyTheme.border.opacity(0.45), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
+    }
+
+    private var title: String {
+        switch state {
+        case .connecting:
+            return "Connecting..."
+        case .waitingForInternet:
+            return "Waiting for internet..."
+        case .updating:
+            return "Updating..."
+        case .hidden:
+            return ""
+        }
+    }
+
+    private var iconName: String {
+        switch state {
+        case .waitingForInternet:
+            return "wifi.slash"
+        case .connecting:
+            return "bolt.horizontal.circle"
+        case .updating:
+            return "arrow.triangle.2.circlepath"
+        case .hidden:
+            return ""
+        }
+    }
+
+    private var showsProgress: Bool {
+        state == .connecting || state == .updating
+    }
+
+    private var backgroundTint: Color {
+        switch state {
+        case .waitingForInternet:
+            return Color.orange.opacity(0.16)
+        case .connecting:
+            return Color.yellow.opacity(0.12)
+        case .updating:
+            return PingyTheme.primarySoft.opacity(0.34)
+        case .hidden:
+            return .clear
+        }
     }
 }

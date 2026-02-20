@@ -31,6 +31,30 @@ const updateProfileSchema = z.object({
   bio: z.string().trim().max(160).optional(),
 });
 
+const changePhoneSchema = z
+  .object({
+    newPhoneNumber: z
+      .string()
+      .trim()
+      .regex(/^\+?[1-9]\d{7,14}$/, 'Phone number must be a valid international format'),
+    currentPassword: z.string().min(1).max(128),
+    totpCode: z
+      .string()
+      .trim()
+      .regex(/^\d{6}$/, 'Code must be 6 digits')
+      .optional(),
+    recoveryCode: z.string().trim().min(8).max(30).optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.totpCode && value.recoveryCode) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Use code or recoveryCode, not both',
+        path: ['recoveryCode'],
+      });
+    }
+  });
+
 const updatePrivacySchema = z.object({
   showOnlineStatus: z.boolean().optional(),
   readReceiptsEnabled: z.boolean().optional(),
@@ -92,6 +116,7 @@ const syncContactsSchema = z.object({
 
 module.exports = {
   updateProfileSchema,
+  changePhoneSchema,
   updatePrivacySchema,
   updateChatSchema,
   userIdParamsSchema,

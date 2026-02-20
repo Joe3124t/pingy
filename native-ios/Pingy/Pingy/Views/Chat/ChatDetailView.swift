@@ -356,39 +356,34 @@ struct ChatDetailView: View {
     }
 
     private var chatWallpaper: some View {
-        ZStack {
-            PingyTheme.wallpaperFallback(for: colorScheme)
+        GeometryReader { geometry in
+            ZStack {
+                PingyTheme.wallpaperFallback(for: colorScheme)
 
-            if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl) {
-                if url.isFileURL, let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                        .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
-                        .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                } else {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            EmptyView()
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .clipped()
-                                .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
-                                .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                        case .failure:
-                            EmptyView()
-                        @unknown default:
-                            EmptyView()
+                if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl) {
+                    if url.isFileURL, let image = UIImage(contentsOfFile: url.path) {
+                        wallpaperImage(
+                            Image(uiImage: image),
+                            canvasSize: geometry.size
+                        )
+                    } else {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .empty:
+                                EmptyView()
+                            case .success(let image):
+                                wallpaperImage(image, canvasSize: geometry.size)
+                            case .failure:
+                                EmptyView()
+                            @unknown default:
+                                EmptyView()
+                            }
                         }
                     }
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
         .ignoresSafeArea()
     }
@@ -559,6 +554,17 @@ struct ChatDetailView: View {
         } catch {
             viewModel.activeError = error.localizedDescription
         }
+    }
+
+    @ViewBuilder
+    private func wallpaperImage(_ image: Image, canvasSize: CGSize) -> some View {
+        image
+            .resizable()
+            .scaledToFill()
+            .frame(width: canvasSize.width, height: canvasSize.height)
+            .clipped()
+            .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
+            .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
     }
 }
 

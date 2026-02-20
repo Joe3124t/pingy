@@ -8,8 +8,8 @@ struct ProfileView: View {
 
     @State private var username = ""
     @State private var bio = ""
-    @State private var showOnline = true
-    @State private var readReceipts = true
+    @State private var websiteLink = ""
+    @State private var socialLink = ""
     @State private var avatarItem: PhotosPickerItem?
     @State private var showSavedBadge = false
 
@@ -17,11 +17,7 @@ struct ProfileView: View {
         ScrollView {
             VStack(spacing: PingySpacing.md) {
                 profileHeader
-                profileCard
-                privacyCard
-                securityCard
-                blockedUsersCard
-                accountCard
+                identityCard
             }
             .padding(PingySpacing.md)
         }
@@ -38,8 +34,7 @@ struct ProfileView: View {
         .onAppear {
             username = viewModel.currentUserSettings?.username ?? ""
             bio = viewModel.currentUserSettings?.bio ?? ""
-            showOnline = viewModel.currentUserSettings?.showOnlineStatus ?? true
-            readReceipts = viewModel.currentUserSettings?.readReceiptsEnabled ?? true
+            restoreLinks()
         }
         .onChange(of: avatarItem) { newItem in
             guard let newItem else { return }
@@ -61,55 +56,60 @@ struct ProfileView: View {
     }
 
     private var profileHeader: some View {
-        HStack(spacing: PingySpacing.md) {
-            ZStack {
-                AvatarView(
-                    url: viewModel.currentUserSettings?.avatarUrl,
-                    fallback: viewModel.currentUserSettings?.username ?? "U",
-                    size: 92,
-                    cornerRadius: 28
-                )
+        VStack(spacing: 12) {
+            ZStack(alignment: .bottomTrailing) {
+                ZStack {
+                    AvatarView(
+                        url: viewModel.currentUserSettings?.avatarUrl,
+                        fallback: viewModel.currentUserSettings?.username ?? "U",
+                        size: 112,
+                        cornerRadius: 36
+                    )
 
-                if viewModel.isUploadingAvatar {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.black.opacity(0.35))
-                        .frame(width: 92, height: 92)
-                    ProgressView()
-                        .tint(.white)
+                    if viewModel.isUploadingAvatar {
+                        RoundedRectangle(cornerRadius: 36, style: .continuous)
+                            .fill(Color.black.opacity(0.35))
+                            .frame(width: 112, height: 112)
+                        ProgressView()
+                            .tint(.white)
+                    }
                 }
+
+                PhotosPicker(selection: $avatarItem, matching: .images) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(PingyTheme.primaryStrong)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle().stroke(PingyTheme.surface, lineWidth: 3)
+                        )
+                }
+                .buttonStyle(PingyPressableButtonStyle())
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(spacing: 4) {
                 Text(viewModel.currentUserSettings?.username ?? "Pingy user")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .font(.system(size: 27, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
                 Text(viewModel.currentUserSettings?.phoneNumber ?? "")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
-
-            Spacer()
-
-            PhotosPicker(selection: $avatarItem, matching: .images) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(PingyTheme.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(PingyPressableButtonStyle())
         }
         .pingyCard()
     }
 
-    private var profileCard: some View {
+    private var identityCard: some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
             Text("Profile")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
             labeledTextField("Username", text: $username)
+
+            infoRow(title: "Phone number", value: viewModel.currentUserSettings?.phoneNumber ?? "-")
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Bio")
@@ -127,10 +127,14 @@ struct ProfileView: View {
                     )
             }
 
+            labeledTextField("Website", text: $websiteLink, placeholder: "https://...")
+            labeledTextField("Links", text: $socialLink, placeholder: "@username / profile link")
+
             Button {
                 Task {
                     let success = await viewModel.saveProfile(username: username, bio: bio)
                     if success {
+                        persistLinks()
                         showSuccessBadge()
                     }
                 }
@@ -164,98 +168,12 @@ struct ProfileView: View {
         .pingyCard()
     }
 
-    private var privacyCard: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Privacy")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            Toggle("Show online status", isOn: $showOnline)
-                .tint(PingyTheme.primary)
-            Toggle("Read receipts", isOn: $readReceipts)
-                .tint(PingyTheme.primary)
-
-            Button("Save privacy") {
-                PingyHaptics.softTap()
-                Task { await viewModel.savePrivacy(showOnline: showOnline, readReceipts: readReceipts) }
-            }
-            .font(.system(size: 16, weight: .semibold, design: .rounded))
-            .buttonStyle(PingyPressableButtonStyle())
-            .foregroundStyle(PingyTheme.primaryStrong)
-        }
-        .pingyCard()
-    }
-
-    private var blockedUsersCard: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Blocked users")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            if viewModel.blockedUsers.isEmpty {
-                Text("No blocked users.")
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
-                    .foregroundStyle(PingyTheme.textSecondary)
-            } else {
-                ForEach(viewModel.blockedUsers) { blocked in
-                    HStack {
-                        AvatarView(url: blocked.avatarUrl, fallback: blocked.username, size: 40, cornerRadius: 12)
-                        Text(blocked.username)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .foregroundStyle(PingyTheme.textPrimary)
-                        Spacer()
-                        Button("Unblock") {
-                            Task { await viewModel.unblockUser(blocked.id) }
-                        }
-                        .buttonStyle(PingyPressableButtonStyle())
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    }
-                }
-            }
-        }
-        .pingyCard()
-    }
-
-    private var securityCard: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Security")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            infoRow(title: "Device ID", value: viewModel.currentUserSettings?.deviceId ?? "This device")
-            infoRow(title: "Last login", value: viewModel.currentUserSettings?.lastLoginAt ?? "Unknown")
-        }
-        .pingyCard()
-    }
-
-    private var accountCard: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Account")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            Button {
-                Task { await viewModel.logout() }
-            } label: {
-                Text("Logout")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(PingyTheme.primarySoft)
-                    .foregroundStyle(PingyTheme.primaryStrong)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(PingyPressableButtonStyle())
-        }
-        .pingyCard()
-    }
-
-    private func labeledTextField(_ title: String, text: Binding<String>) -> some View {
+    private func labeledTextField(_ title: String, text: Binding<String>, placeholder: String = "") -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
-            TextField("", text: text)
+            TextField(placeholder, text: text)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .padding(12)
                 .background(PingyTheme.inputBackground)
@@ -278,6 +196,23 @@ struct ProfileView: View {
                 .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func linksStorageKey(_ suffix: String) -> String {
+        let userID = viewModel.currentUserSettings?.id ?? "default"
+        return "pingy.profile.\(userID).\(suffix)"
+    }
+
+    private func restoreLinks() {
+        let defaults = UserDefaults.standard
+        websiteLink = defaults.string(forKey: linksStorageKey("website")) ?? ""
+        socialLink = defaults.string(forKey: linksStorageKey("social")) ?? ""
+    }
+
+    private func persistLinks() {
+        let defaults = UserDefaults.standard
+        defaults.set(websiteLink.trimmingCharacters(in: .whitespacesAndNewlines), forKey: linksStorageKey("website"))
+        defaults.set(socialLink.trimmingCharacters(in: .whitespacesAndNewlines), forKey: linksStorageKey("social"))
     }
 
     private func prepareAvatarUploadData(from sourceData: Data) -> Data {

@@ -13,6 +13,11 @@ struct UserResponse: Codable {
     let user: User
 }
 
+struct ChangePhoneResponse: Codable {
+    let user: User
+    let message: String?
+}
+
 struct PushPublicKeyResponse: Codable {
     let enabled: Bool
     let publicKey: String?

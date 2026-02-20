@@ -101,9 +101,6 @@ private struct MessengerCompactContainer: View {
         .onChange(of: path) { newPath in
             viewModel.isCompactChatDetailPresented = !newPath.isEmpty
         }
-        .onDisappear {
-            viewModel.isCompactChatDetailPresented = false
-        }
     }
 }
 

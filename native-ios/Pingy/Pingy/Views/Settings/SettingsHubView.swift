@@ -4,6 +4,7 @@ struct SettingsHubView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
     @ObservedObject var themeManager: ThemeManager
     @EnvironmentObject private var appEnvironment: AppEnvironment
+    @ObservedObject private var networkUsage = NetworkUsageStore.shared
 
     @AppStorage("pingy.v3.language") private var appLanguage = "System"
     @AppStorage("pingy.v3.lastSeenVisibility") private var lastSeenVisibility = "Contacts"
@@ -15,34 +16,25 @@ struct SettingsHubView: View {
     @AppStorage("pingy.v3.chat.enterToSend") private var enterToSend = true
     @AppStorage("pingy.v3.notifications.messages") private var messageNotifications = true
     @AppStorage("pingy.v3.notifications.groups") private var groupNotifications = true
-    @AppStorage("pingy.v3.notifications.inAppSounds") private var inAppSounds = true
-    @AppStorage("pingy.v3.notifications.badges") private var badgeEnabled = true
     @AppStorage("pingy.v3.notifications.preview") private var previewEnabled = true
-    @AppStorage("pingy.v3.calls.customSound") private var customCallSound = "Default"
+    @AppStorage("pingy.v3.notifications.sound") private var selectedNotificationSound = "Default"
 
     @State private var showDeleteAccountConfirmation = false
-    @State private var showPhoneChangeInfo = false
     @State private var showPrivacySaved = false
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: PingySpacing.md) {
-                profileSection
-                accountSection
-                privacySection
-                chatsSection
-                notificationsSection
-                storageSection
-            }
-            .padding(PingySpacing.md)
+        List {
+            profileSection
+            accountSection
+            privacySection
+            chatsSection
+            notificationsSection
+            storageSection
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle("Settings")
-        .alert("Update", isPresented: $showPhoneChangeInfo) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Phone number change flow will be available in an upcoming secure update.")
-        }
         .confirmationDialog(
             "Delete your account permanently?",
             isPresented: $showDeleteAccountConfirmation,
@@ -56,94 +48,101 @@ struct SettingsHubView: View {
     }
 
     private var profileSection: some View {
-        NavigationLink {
-            ProfileView(viewModel: messengerViewModel)
-        } label: {
-            HStack(spacing: PingySpacing.md) {
-                AvatarView(
-                    url: messengerViewModel.currentUserSettings?.avatarUrl,
-                    fallback: messengerViewModel.currentUserSettings?.username ?? "U",
-                    size: 72,
-                    cornerRadius: 36
-                )
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(messengerViewModel.currentUserSettings?.username ?? "Pingy User")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundStyle(PingyTheme.textPrimary)
-                    Text(messengerViewModel.currentUserSettings?.phoneNumber ?? "")
-                        .font(.system(size: 15, weight: .medium, design: .rounded))
-                        .foregroundStyle(PingyTheme.textSecondary)
-                    Text(messengerViewModel.currentUserSettings?.bio?.isEmpty == false ? messengerViewModel.currentUserSettings?.bio ?? "" : "Tap to edit profile")
-                        .font(.system(size: 14, weight: .regular, design: .rounded))
-                        .foregroundStyle(PingyTheme.textSecondary)
-                        .lineLimit(1)
+        Section {
+            NavigationLink {
+                ProfileView(viewModel: messengerViewModel)
+            } label: {
+                HStack(spacing: PingySpacing.md) {
+                    AvatarView(
+                        url: messengerViewModel.currentUserSettings?.avatarUrl,
+                        fallback: messengerViewModel.currentUserSettings?.username ?? "U",
+                        size: 56,
+                        cornerRadius: 28
+                    )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(messengerViewModel.currentUserSettings?.username ?? "Pingy User")
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textPrimary)
+
+                        Text(messengerViewModel.currentUserSettings?.bio?.isEmpty == false ? messengerViewModel.currentUserSettings?.bio ?? "" : "Tap to open profile")
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundStyle(PingyTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(PingyTheme.textSecondary)
+                .padding(.vertical, 4)
             }
-            .contentShape(Rectangle())
+        } header: {
+            Text("Profile")
         }
-        .buttonStyle(.plain)
-        .pingyCard()
     }
 
     private var accountSection: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            sectionTitle("Account")
+        Section("Account") {
+            NavigationLink {
+                ChangePhoneNumberView(viewModel: messengerViewModel)
+            } label: {
+                settingsLabel(
+                    title: "Change phone number",
+                    subtitle: "Secure verification required",
+                    icon: "phone.arrow.up.right"
+                )
+            }
 
-            settingsRow(icon: "phone.arrow.up.right", title: "Change phone number", subtitle: "Secure migration") {
-                showPhoneChangeInfo = true
+            NavigationLink {
+                SettingsView(viewModel: messengerViewModel, mode: .twoStep, showsCloseButton: false)
+            } label: {
+                settingsLabel(
+                    title: "Security",
+                    subtitle: "Two-step verification & recovery",
+                    icon: "checkmark.shield"
+                )
             }
 
             NavigationLink {
                 LanguageSelectionView()
             } label: {
-                settingsRowLabel(
-                    icon: "globe",
+                settingsLabel(
                     title: "App language",
-                    subtitle: localizedLanguageName(appLanguage)
+                    subtitle: localizedLanguageName(appLanguage),
+                    icon: "globe"
                 )
             }
-            .buttonStyle(.plain)
-
-            NavigationLink {
-                SettingsView(viewModel: messengerViewModel, mode: .twoStep, showsCloseButton: false)
-            } label: {
-                settingsRowLabel(icon: "checkmark.shield", title: "Two-step verification", subtitle: "Authenticator & recovery codes")
-            }
-            .buttonStyle(.plain)
 
             Button {
                 Task { await messengerViewModel.logout() }
             } label: {
-                settingsRowLabel(icon: "rectangle.portrait.and.arrow.right", title: "Logout", subtitle: "Sign out from this device")
+                settingsLabel(
+                    title: "Logout",
+                    subtitle: "Sign out from this device",
+                    icon: "rectangle.portrait.and.arrow.right"
+                )
             }
             .buttonStyle(.plain)
 
             Button(role: .destructive) {
                 showDeleteAccountConfirmation = true
             } label: {
-                settingsRowLabel(icon: "trash", title: "Delete account", subtitle: "Remove account and data")
+                settingsLabel(
+                    title: "Delete account",
+                    subtitle: "Remove account and data",
+                    icon: "trash"
+                )
             }
             .buttonStyle(.plain)
         }
-        .pingyCard()
     }
 
     private var privacySection: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            sectionTitle("Privacy")
-
+        Section("Privacy") {
             Picker("Last seen", selection: $lastSeenVisibility) {
                 Text("Everyone").tag("Everyone")
                 Text("Contacts").tag("Contacts")
                 Text("Nobody").tag("Nobody")
             }
-            .pickerStyle(.segmented)
 
-            Toggle("Show online status", isOn: Binding(
+            Toggle("Online status", isOn: Binding(
                 get: { messengerViewModel.currentUserSettings?.showOnlineStatus ?? true },
                 set: { newValue in
                     var settings = messengerViewModel.currentUserSettings
@@ -168,42 +167,47 @@ struct SettingsHubView: View {
                 Text("Contacts").tag("Contacts")
                 Text("Nobody").tag("Nobody")
             }
-            .pickerStyle(.menu)
 
             Picker("Status privacy", selection: $statusPrivacy) {
                 Text("My contacts").tag("Contacts")
                 Text("Custom").tag("Custom")
             }
-            .pickerStyle(.menu)
 
-            Button {
-                PingyHaptics.softTap()
-                showPrivacySaved = true
+            NavigationLink {
+                BlockedUsersListView(viewModel: messengerViewModel)
+            } label: {
+                HStack {
+                    Text("Blocked users")
+                    Spacer()
+                    Text("\(messengerViewModel.blockedUsers.count)")
+                        .foregroundStyle(PingyTheme.textSecondary)
+                }
+            }
+
+            Button(showPrivacySaved ? "Privacy saved" : "Save privacy settings") {
                 Task {
                     await messengerViewModel.savePrivacy(
                         showOnline: messengerViewModel.currentUserSettings?.showOnlineStatus ?? true,
                         readReceipts: messengerViewModel.currentUserSettings?.readReceiptsEnabled ?? true
                     )
+                    PingyHaptics.softTap()
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showPrivacySaved = true
+                    }
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showPrivacySaved = false
+                    }
                 }
-            } label: {
-                Text(showPrivacySaved ? "Saved" : "Save privacy settings")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(PingyTheme.primarySoft)
-                    .foregroundStyle(PingyTheme.primaryStrong)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(PingyPressableButtonStyle())
+            .buttonStyle(.plain)
+            .foregroundStyle(PingyTheme.primaryStrong)
         }
-        .pingyCard()
     }
 
     private var chatsSection: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            sectionTitle("Chats")
-
-            Picker("Appearance", selection: $themeManager.appearanceMode) {
+        Section("Chats") {
+            Picker("Theme", selection: $themeManager.appearanceMode) {
                 ForEach(ThemeMode.allCases) { mode in
                     Text(mode.displayName).tag(mode)
                 }
@@ -212,12 +216,14 @@ struct SettingsHubView: View {
 
             Toggle("Chat backup", isOn: $chatBackupEnabled)
                 .tint(PingyTheme.primary)
+
             Toggle("Auto-download media", isOn: $autoDownloadMedia)
                 .tint(PingyTheme.primary)
+
             Toggle("Enter to send", isOn: $enterToSend)
                 .tint(PingyTheme.primary)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("Font size")
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
@@ -228,121 +234,84 @@ struct SettingsHubView: View {
             NavigationLink {
                 SettingsView(viewModel: messengerViewModel, mode: .chat, showsCloseButton: false)
             } label: {
-                settingsRowLabel(icon: "paintbrush.pointed", title: "Wallpaper & advanced chat settings", subtitle: "Default and per-chat customization")
+                settingsLabel(
+                    title: "Wallpaper & advanced chat settings",
+                    subtitle: "Default and per-chat customization",
+                    icon: "paintbrush.pointed"
+                )
             }
-            .buttonStyle(.plain)
         }
-        .pingyCard()
     }
 
     private var notificationsSection: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            sectionTitle("Notifications")
-
+        Section("Notifications") {
             Toggle("Message notifications", isOn: $messageNotifications)
                 .tint(PingyTheme.primary)
             Toggle("Group notifications", isOn: $groupNotifications)
                 .tint(PingyTheme.primary)
-            Toggle("In-app sounds", isOn: $inAppSounds)
-                .tint(PingyTheme.primary)
-            Toggle("Badge count", isOn: $badgeEnabled)
-                .tint(PingyTheme.primary)
             Toggle("Preview message", isOn: $previewEnabled)
                 .tint(PingyTheme.primary)
 
-            Picker("Call sound", selection: $customCallSound) {
+            Picker("Sound", selection: $selectedNotificationSound) {
                 Text("Default").tag("Default")
                 Text("Ripple").tag("Ripple")
                 Text("Echo").tag("Echo")
             }
-            .pickerStyle(.menu)
 
-            Button {
+            Button("Configure iOS notification permission") {
                 Task { await appEnvironment.pushManager.requestPermission() }
-            } label: {
-                Text("Configure iOS notification permission")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(PingyTheme.primary)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(PingyPressableButtonStyle())
+            .foregroundStyle(PingyTheme.primaryStrong)
         }
-        .pingyCard()
     }
 
     private var storageSection: some View {
-        VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            sectionTitle("Storage & Data")
+        Section("Storage & Data") {
+            metricsRow(title: "Image cache", value: formatBytes(URLCache.shared.currentDiskUsage))
+            metricsRow(title: "Memory cache", value: formatBytes(URLCache.shared.currentMemoryUsage))
+            metricsRow(title: "Uploaded", value: formatBytes(networkUsage.uploadedBytes))
+            metricsRow(title: "Downloaded", value: formatBytes(networkUsage.downloadedBytes))
+            metricsRow(title: "Total network usage", value: formatBytes(networkUsage.totalBytes))
+            metricsRow(title: "Conversations", value: "\(messengerViewModel.conversations.count)")
 
-            settingsMetricRow(title: "Image cache", value: formatBytes(URLCache.shared.currentDiskUsage))
-            settingsMetricRow(title: "Memory cache", value: formatBytes(URLCache.shared.currentMemoryUsage))
-            settingsMetricRow(title: "Blocked users", value: "\(messengerViewModel.blockedUsers.count)")
-            settingsMetricRow(title: "Conversations", value: "\(messengerViewModel.conversations.count)")
-
-            Button {
+            Button("Clear cache") {
                 URLCache.shared.removeAllCachedResponses()
-            } label: {
-                Text("Clear cache")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(PingyTheme.surfaceElevated)
-                    .foregroundStyle(PingyTheme.textPrimary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .buttonStyle(PingyPressableButtonStyle())
+
+            Button("Reset network usage") {
+                networkUsage.reset()
+            }
+            .foregroundStyle(PingyTheme.primaryStrong)
         }
-        .pingyCard()
     }
 
-    private func settingsRow(icon: String, title: String, subtitle: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            settingsRowLabel(icon: icon, title: title, subtitle: subtitle)
-        }
-        .buttonStyle(PingyPressableButtonStyle())
-    }
-
-    private func settingsRowLabel(icon: String, title: String, subtitle: String) -> some View {
+    private func settingsLabel(title: String, subtitle: String, icon: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .bold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(PingyTheme.primaryStrong)
                 .frame(width: 24)
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(LocalizedStringKey(title))
+                Text(title)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
-                Text(LocalizedStringKey(subtitle))
+                Text(subtitle)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(PingyTheme.textSecondary)
         }
-        .padding(.vertical, 4)
     }
 
-    private func settingsMetricRow(title: String, value: String) -> some View {
+    private func metricsRow(title: String, value: String) -> some View {
         HStack {
-            Text(LocalizedStringKey(title))
-                .font(.system(size: 14, weight: .medium, design: .rounded))
+            Text(title)
                 .foregroundStyle(PingyTheme.textSecondary)
             Spacer()
             Text(value)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
         }
-    }
-
-    private func sectionTitle(_ title: String) -> some View {
-        Text(LocalizedStringKey(title))
-            .font(.system(size: 19, weight: .bold, design: .rounded))
-            .foregroundStyle(PingyTheme.textPrimary)
+        .font(.system(size: 14, weight: .semibold, design: .rounded))
     }
 
     private func localizedLanguageName(_ value: String) -> String {
@@ -356,9 +325,9 @@ struct SettingsHubView: View {
         }
     }
 
-    private func formatBytes(_ bytes: Int) -> String {
+    private func formatBytes(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
+        return formatter.string(fromByteCount: bytes)
     }
 }

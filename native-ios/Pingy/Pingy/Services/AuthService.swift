@@ -28,7 +28,7 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         defer { isRestoringSession = false }
 
         do {
-            _ = try await validAccessToken(forceRefresh: true)
+            _ = try await validAccessToken()
             let me: MeResponse = try await authorizedRequest(
                 Endpoint(path: "auth/me", method: .get),
                 as: MeResponse.self
@@ -299,11 +299,12 @@ final class AuthService: ObservableObject, AuthorizedRequester {
     }
 
     func validAccessToken(forceRefresh: Bool = false) async throws -> String {
-        guard let currentAccess = sessionStore.accessToken, !currentAccess.isEmpty else {
-            throw APIError.unauthorized
-        }
-        if !forceRefresh && !JWTUtilities.isExpiringSoon(token: currentAccess) {
-            return currentAccess
+        if let currentAccess = sessionStore.accessToken,
+           !currentAccess.isEmpty
+        {
+            if !forceRefresh && !JWTUtilities.isExpiringSoon(token: currentAccess) {
+                return currentAccess
+            }
         }
 
         guard let refreshToken = sessionStore.refreshToken else {

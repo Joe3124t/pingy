@@ -3,6 +3,7 @@ const { searchUsersController } = require('../controllers/conversationController
 const {
   getMySettings,
   updateProfileSettings,
+  changePhoneNumberController,
   uploadAvatar,
   uploadDefaultWallpaper,
   updatePrivacySettings,
@@ -20,6 +21,7 @@ const { validateRequest } = require('../middleware/validateRequest');
 const { conversationSearchSchema } = require('../schemas/conversationSchemas');
 const {
   updateProfileSchema,
+  changePhoneSchema,
   updatePrivacySchema,
   updateChatSchema,
   userIdParamsSchema,
@@ -36,6 +38,7 @@ router.get('/', validateRequest(conversationSearchSchema, 'query'), searchUsersC
 router.get('/me/settings', getMySettings);
 router.post('/contact-sync', validateRequest(syncContactsSchema), syncContactsController);
 router.patch('/me/profile', validateRequest(updateProfileSchema), updateProfileSettings);
+router.patch('/me/phone', validateRequest(changePhoneSchema), changePhoneNumberController);
 router.post('/me/avatar', avatarUpload.single('avatar'), uploadAvatar);
 router.post('/me/chat/wallpaper', wallpaperUpload.single('wallpaper'), uploadDefaultWallpaper);
 router.patch('/me/privacy', validateRequest(updatePrivacySchema), updatePrivacySettings);

@@ -34,8 +34,9 @@ struct ChatSettingsView: View {
             }
         }
         .onAppear {
-            blurIntensity = Double(conversation.blurIntensity)
-            isBlurEnabled = conversation.blurIntensity > 0
+            blurIntensity = max(1, Double(conversation.blurIntensity == 0 ? 6 : conversation.blurIntensity))
+            // Blur is opt-in; new wallpaper uploads default to non-blurred unless user enables it.
+            isBlurEnabled = false
         }
         .onChange(of: wallpaperItem) { newValue in
             guard let newValue else { return }

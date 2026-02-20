@@ -6,10 +6,33 @@ enum PingyTheme {
     static let primaryStrong = Color("AccentColorStrong")
     static let primarySoft = Color("AccentColorSoft")
 
-    static let background = Color(uiColor: .systemGroupedBackground)
-    static let surface = Color(uiColor: .secondarySystemGroupedBackground)
-    static let surfaceElevated = Color(uiColor: .tertiarySystemGroupedBackground)
-    static let inputBackground = Color(uiColor: .systemBackground)
+    static let background = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor.black
+        }
+        return UIColor.systemGroupedBackground
+    })
+
+    static let surface = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1.0)
+        }
+        return UIColor.secondarySystemGroupedBackground
+    })
+
+    static let surfaceElevated = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 0.13, green: 0.14, blue: 0.16, alpha: 1.0)
+        }
+        return UIColor.tertiarySystemGroupedBackground
+    })
+
+    static let inputBackground = Color(uiColor: UIColor { traitCollection in
+        if traitCollection.userInterfaceStyle == .dark {
+            return UIColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1.0)
+        }
+        return UIColor.systemBackground
+    })
 
     static let textPrimary = Color(uiColor: .label)
     static let textSecondary = Color(uiColor: .secondaryLabel)
@@ -59,7 +82,7 @@ enum PingyTheme {
     }
 
     static func wallpaperOverlay(for colorScheme: ColorScheme) -> Color {
-        colorScheme == .dark ? Color.black.opacity(0.42) : Color.white.opacity(0.24)
+        colorScheme == .dark ? Color.black.opacity(0.27) : Color.white.opacity(0.14)
     }
 
     static func shadowColor(for colorScheme: ColorScheme) -> Color {

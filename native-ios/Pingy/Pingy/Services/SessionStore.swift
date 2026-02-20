@@ -7,7 +7,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var refreshToken: String?
 
     var isAuthenticated: Bool {
-        currentUser != nil && !(accessToken ?? "").isEmpty
+        currentUser != nil && (!((accessToken ?? "").isEmpty) || !((refreshToken ?? "").isEmpty))
     }
 
     private let userDefaults = UserDefaults.standard

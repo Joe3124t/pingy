@@ -25,7 +25,7 @@ Workflow file:
 - `.github/workflows/build-native-ios-ipa.yml`
 
 It produces:
-- Unsigned IPA artifact (`Pingy-unsigned.ipa`) on every push to `main`.
+- Unsigned IPA artifact (`Pingy-native-v3.3-unsigned-ipa`) on every push to `main`.
 - Optional signed IPA artifact when signing secrets are configured.
 
 ## Optional signing secrets
