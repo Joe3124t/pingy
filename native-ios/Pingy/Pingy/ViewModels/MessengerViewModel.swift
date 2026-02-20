@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import UIKit
 
 @MainActor
@@ -36,6 +37,9 @@ final class MessengerViewModel: ObservableObject {
     private let contactSyncService: ContactSyncService
     private let socketManager: SocketIOWebSocketManager
     private let cryptoService: E2EECryptoService
+    private let userDefaults = UserDefaults.standard
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "pingy.network.monitor")
     private var notificationObserver: NSObjectProtocol?
     private var isSocketBound = false
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
@@ -45,12 +49,36 @@ final class MessengerViewModel: ObservableObject {
     private var syncedContactMatches: [ContactSearchResult] = []
     private let conversationListStateStore = ConversationListStateStore.shared
 
-    private struct PendingTextMessage {
+    private struct PendingTextMessage: Codable {
         let conversationId: String
         let participantId: String
         let plainText: String
         let replyToMessageId: String?
         let clientId: String
+        let createdAtISO: String
+    }
+
+    private struct CachedContactMatch: Codable {
+        let user: User
+        let contactName: String
+    }
+
+    private enum CacheKeys {
+        static func conversations(userID: String) -> String {
+            "pingy.cache.conversations.\(userID)"
+        }
+
+        static func messages(userID: String) -> String {
+            "pingy.cache.messages.\(userID)"
+        }
+
+        static func pendingQueue(userID: String) -> String {
+            "pingy.cache.pendingQueue.\(userID)"
+        }
+
+        static func contactMatches(userID: String) -> String {
+            "pingy.cache.contactMatches.\(userID)"
+        }
     }
 
     init(
@@ -85,12 +113,15 @@ final class MessengerViewModel: ObservableObject {
                 }
             }
         }
+
+        startNetworkMonitoring()
     }
 
     deinit {
         if let notificationObserver {
             NotificationCenter.default.removeObserver(notificationObserver)
         }
+        networkMonitor.cancel()
     }
 
     var selectedConversation: Conversation? {
@@ -131,10 +162,14 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func reloadAll() async {
+        restoreCachedState()
         await loadConversationListState()
         await loadConversations()
         await loadSettings()
         await refreshContactSync(promptForPermission: false)
+        if !pendingTextQueue.isEmpty {
+            await processPendingTextQueue()
+        }
     }
 
     func loadConversations() async {
@@ -143,6 +178,7 @@ final class MessengerViewModel: ObservableObject {
 
         do {
             conversations = try await conversationService.listConversations()
+            persistConversationsCache()
         } catch {
             setError(from: error)
         }
@@ -237,6 +273,7 @@ final class MessengerViewModel: ObservableObject {
         do {
             let messages = try await messageService.listMessages(conversationID: conversationID)
             messagesByConversation[conversationID] = messages.sorted(by: { $0.createdAt < $1.createdAt })
+            persistMessagesCache()
             await markCurrentAsSeen()
         } catch {
             setError(from: error)
@@ -256,12 +293,37 @@ final class MessengerViewModel: ObservableObject {
             await refreshContactSync(promptForPermission: false)
         }
 
+        if syncedContactMatches.isEmpty {
+            do {
+                let fallbackMatches = try await contactSyncService.searchRegisteredUsersByContactName(
+                    query: query,
+                    limit: 20
+                )
+                if !fallbackMatches.isEmpty {
+                    syncedContactMatches = fallbackMatches
+                    persistContactMatchesCache()
+                }
+            } catch let contactError as ContactSyncError {
+                if contactSearchHint == nil {
+                    switch contactError {
+                    case .permissionDenied, .permissionRequired:
+                        contactSearchHint = "Enable contact access to find friends."
+                    case .noContacts:
+                        contactSearchHint = "No contacts found on this device."
+                    case .routeUnavailable:
+                        contactSearchHint = "Contact sync isn't available on this server yet."
+                    }
+                }
+            } catch {
+                if contactSearchHint == nil {
+                    contactSearchHint = "Couldn't sync contacts right now. Please try again."
+                }
+            }
+        }
+
         guard !syncedContactMatches.isEmpty else {
             searchResults = []
             contactSearchResults = []
-            if contactSearchHint == nil {
-                contactSearchHint = "Enable contact access to find friends."
-            }
             return
         }
 
@@ -328,6 +390,7 @@ final class MessengerViewModel: ObservableObject {
 
     func sendText(_ text: String) async {
         guard let conversation = selectedConversation else { return }
+        guard let me = authService.sessionStore.currentUser else { return }
         let plain = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !plain.isEmpty else { return }
         let queued = PendingTextMessage(
@@ -335,10 +398,13 @@ final class MessengerViewModel: ObservableObject {
             participantId: conversation.participantId,
             plainText: plain,
             replyToMessageId: pendingReplyMessage?.id,
-            clientId: "ios-\(UUID().uuidString)"
+            clientId: "ios-\(UUID().uuidString)",
+            createdAtISO: ISO8601DateFormatter().string(from: Date())
         )
+        insertLocalPendingMessage(queued, conversation: conversation, sender: me)
         pendingReplyMessage = nil
         pendingTextQueue.append(queued)
+        persistPendingQueue()
         await processPendingTextQueue()
     }
 
@@ -442,6 +508,8 @@ final class MessengerViewModel: ObservableObject {
             pinnedConversationIDs.remove(conversationID)
             archivedConversationIDs.remove(conversationID)
             persistConversationListState()
+            persistConversationsCache()
+            persistMessagesCache()
             selectedConversationID = nil
         } catch {
             setError(from: error)
@@ -587,10 +655,12 @@ final class MessengerViewModel: ObservableObject {
             await authService.logout()
             if let userID {
                 await conversationListStateStore.clear(for: userID)
+                clearCachedState(for: userID)
             }
             disconnectSocket()
             conversations = []
             messagesByConversation = [:]
+            pendingTextQueue = []
             pinnedConversationIDs = []
             archivedConversationIDs = []
             selectedConversationID = nil
@@ -605,9 +675,11 @@ final class MessengerViewModel: ObservableObject {
         await authService.logout()
         if let userID {
             await conversationListStateStore.clear(for: userID)
+            clearCachedState(for: userID)
         }
         conversations = []
         messagesByConversation = [:]
+        pendingTextQueue = []
         pinnedConversationIDs = []
         archivedConversationIDs = []
         selectedConversationID = nil
@@ -645,6 +717,7 @@ final class MessengerViewModel: ObservableObject {
         guard !isProcessingTextQueue else { return }
         guard authService.sessionStore.currentUser != nil else {
             pendingTextQueue.removeAll()
+            persistPendingQueue()
             return
         }
 
@@ -657,20 +730,28 @@ final class MessengerViewModel: ObservableObject {
 
         while !pendingTextQueue.isEmpty {
             let item = pendingTextQueue.removeFirst()
+            persistPendingQueue()
             do {
                 let sent = try await sendPendingTextMessage(item)
                 upsertMessage(sent)
             } catch {
                 pendingTextQueue.insert(item, at: 0)
-                setError(from: error, fallback: "Couldn't send this message. Please try again.")
+                persistPendingQueue()
                 if shouldAutoRetryQueue(after: error) {
+                    AppLogger.debug("Keeping message queued until network is back: \(item.clientId)")
                     Task { [weak self] in
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
                         await self?.processPendingTextQueue()
                     }
+                } else {
+                    setError(from: error, fallback: "Couldn't send this message. Please try again.")
                 }
                 break
             }
+        }
+
+        if pendingTextQueue.isEmpty {
+            persistPendingQueue()
         }
     }
 
@@ -805,11 +886,16 @@ final class MessengerViewModel: ObservableObject {
         var current = messagesByConversation[message.conversationId] ?? []
         if let index = current.firstIndex(where: { $0.id == message.id }) {
             current[index] = message
+        } else if let clientId = message.clientId,
+                  let pendingIndex = current.firstIndex(where: { $0.clientId == clientId })
+        {
+            current[pendingIndex] = message
         } else {
             current.append(message)
             current.sort(by: { $0.createdAt < $1.createdAt })
         }
         messagesByConversation[message.conversationId] = current
+        persistMessagesCache()
 
         if let conversationIndex = conversations.firstIndex(where: { $0.conversationId == message.conversationId }) {
             conversations[conversationIndex].lastMessageId = message.id
@@ -827,6 +913,7 @@ final class MessengerViewModel: ObservableObject {
         }
 
         conversations.sort(by: { ($0.lastMessageCreatedAt ?? "") > ($1.lastMessageCreatedAt ?? "") })
+        persistConversationsCache()
     }
 
     private func patchLifecycle(_ update: MessageLifecycleUpdate, kind: LifecycleKind) {
@@ -910,6 +997,7 @@ final class MessengerViewModel: ObservableObject {
         do {
             let matches = try await contactSyncService.syncContacts(promptForPermission: promptForPermission)
             syncedContactMatches = matches
+            persistContactMatchesCache()
             contactSearchResults = []
             if matches.isEmpty {
                 contactSearchHint = "No contacts from your address book are on Pingy yet."
@@ -917,20 +1005,169 @@ final class MessengerViewModel: ObservableObject {
                 contactSearchHint = nil
             }
         } catch let contactError as ContactSyncError {
-            syncedContactMatches = []
+            if syncedContactMatches.isEmpty {
+                syncedContactMatches = loadCachedContactMatches()
+            }
             contactSearchResults = []
             switch contactError {
             case .permissionDenied, .permissionRequired:
                 contactSearchHint = "Enable contact access to find friends."
             case .noContacts:
                 contactSearchHint = "No contacts found on this device."
+            case .routeUnavailable:
+                contactSearchHint = "Contact sync isn't available on this server yet."
             }
         } catch {
-            syncedContactMatches = []
+            if syncedContactMatches.isEmpty {
+                syncedContactMatches = loadCachedContactMatches()
+            }
             contactSearchResults = []
-            contactSearchHint = "Couldn't sync contacts right now. Please try again."
+            if syncedContactMatches.isEmpty {
+                contactSearchHint = "Couldn't sync contacts right now. Please try again."
+            } else {
+                contactSearchHint = nil
+            }
             AppLogger.error("Contact sync failed: \(error.localizedDescription)")
         }
+    }
+
+    private func startNetworkMonitoring() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleNetworkPathUpdate(isReachable: path.status == .satisfied)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
+    }
+
+    private func handleNetworkPathUpdate(isReachable: Bool) {
+        guard isReachable else { return }
+        guard authService.sessionStore.currentUser != nil else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            if !self.pendingTextQueue.isEmpty {
+                await self.processPendingTextQueue()
+            }
+        }
+    }
+
+    private func insertLocalPendingMessage(_ queued: PendingTextMessage, conversation: Conversation, sender: User) {
+        let localMessage = Message(
+            id: "local-\(queued.clientId)",
+            conversationId: queued.conversationId,
+            senderId: sender.id,
+            senderUsername: sender.username,
+            senderAvatarUrl: sender.avatarUrl,
+            recipientId: conversation.participantId,
+            replyToMessageId: queued.replyToMessageId,
+            type: .text,
+            body: .string(queued.plainText),
+            isEncrypted: false,
+            mediaUrl: nil,
+            mediaName: nil,
+            mediaMime: nil,
+            mediaSize: nil,
+            voiceDurationMs: nil,
+            clientId: queued.clientId,
+            createdAt: queued.createdAtISO,
+            deliveredAt: nil,
+            seenAt: nil,
+            replyTo: pendingReplyMessage.map { source in
+                MessageReply(
+                    id: source.id,
+                    senderId: source.senderId,
+                    senderUsername: source.senderUsername,
+                    type: source.type,
+                    body: source.body,
+                    isEncrypted: source.isEncrypted,
+                    mediaName: source.mediaName,
+                    createdAt: source.createdAt
+                )
+            },
+            reactions: []
+        )
+
+        upsertMessage(localMessage)
+    }
+
+    private func restoreCachedState() {
+        guard let userID = currentUserID else { return }
+
+        if conversations.isEmpty,
+           let data = userDefaults.data(forKey: CacheKeys.conversations(userID: userID)),
+           let decoded = try? JSONDecoder().decode([Conversation].self, from: data)
+        {
+            conversations = decoded
+        }
+
+        if messagesByConversation.isEmpty,
+           let data = userDefaults.data(forKey: CacheKeys.messages(userID: userID)),
+           let decoded = try? JSONDecoder().decode([String: [Message]].self, from: data)
+        {
+            messagesByConversation = decoded
+        }
+
+        if pendingTextQueue.isEmpty,
+           let data = userDefaults.data(forKey: CacheKeys.pendingQueue(userID: userID)),
+           let decoded = try? JSONDecoder().decode([PendingTextMessage].self, from: data)
+        {
+            pendingTextQueue = decoded
+        }
+
+        if syncedContactMatches.isEmpty {
+            syncedContactMatches = loadCachedContactMatches()
+        }
+    }
+
+    private func persistConversationsCache() {
+        guard let userID = currentUserID else { return }
+        guard let data = try? JSONEncoder().encode(conversations) else { return }
+        userDefaults.set(data, forKey: CacheKeys.conversations(userID: userID))
+    }
+
+    private func persistMessagesCache() {
+        guard let userID = currentUserID else { return }
+        guard let data = try? JSONEncoder().encode(messagesByConversation) else { return }
+        userDefaults.set(data, forKey: CacheKeys.messages(userID: userID))
+    }
+
+    private func persistPendingQueue() {
+        guard let userID = currentUserID else { return }
+        guard let data = try? JSONEncoder().encode(pendingTextQueue) else { return }
+        userDefaults.set(data, forKey: CacheKeys.pendingQueue(userID: userID))
+    }
+
+    private func persistContactMatchesCache() {
+        guard let userID = currentUserID else { return }
+        let snapshot = syncedContactMatches.map { CachedContactMatch(user: $0.user, contactName: $0.contactName) }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        userDefaults.set(data, forKey: CacheKeys.contactMatches(userID: userID))
+    }
+
+    private func loadCachedContactMatches() -> [ContactSearchResult] {
+        guard let userID = currentUserID else { return [] }
+        guard let data = userDefaults.data(forKey: CacheKeys.contactMatches(userID: userID)),
+              let snapshot = try? JSONDecoder().decode([CachedContactMatch].self, from: data)
+        else {
+            return []
+        }
+
+        return snapshot.map { item in
+            ContactSearchResult(
+                id: item.user.id,
+                user: item.user,
+                contactName: item.contactName
+            )
+        }
+    }
+
+    private func clearCachedState(for userID: String) {
+        userDefaults.removeObject(forKey: CacheKeys.conversations(userID: userID))
+        userDefaults.removeObject(forKey: CacheKeys.messages(userID: userID))
+        userDefaults.removeObject(forKey: CacheKeys.pendingQueue(userID: userID))
+        userDefaults.removeObject(forKey: CacheKeys.contactMatches(userID: userID))
     }
 
     private func shouldAutoRetryQueue(after error: Error) -> Bool {

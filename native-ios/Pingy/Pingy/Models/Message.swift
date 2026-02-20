@@ -104,6 +104,52 @@ struct Message: Codable, Identifiable, Equatable {
         replyTo = try container.decodeIfPresent(MessageReply.self, forKey: .replyTo)
         reactions = try container.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
     }
+
+    init(
+        id: String,
+        conversationId: String,
+        senderId: String,
+        senderUsername: String?,
+        senderAvatarUrl: String?,
+        recipientId: String,
+        replyToMessageId: String?,
+        type: MessageType,
+        body: JSONValue?,
+        isEncrypted: Bool,
+        mediaUrl: String?,
+        mediaName: String?,
+        mediaMime: String?,
+        mediaSize: Int?,
+        voiceDurationMs: Int?,
+        clientId: String?,
+        createdAt: String,
+        deliveredAt: String?,
+        seenAt: String?,
+        replyTo: MessageReply?,
+        reactions: [MessageReaction]
+    ) {
+        self.id = id
+        self.conversationId = conversationId
+        self.senderId = senderId
+        self.senderUsername = senderUsername
+        self.senderAvatarUrl = senderAvatarUrl
+        self.recipientId = recipientId
+        self.replyToMessageId = replyToMessageId
+        self.type = type
+        self.body = body
+        self.isEncrypted = isEncrypted
+        self.mediaUrl = mediaUrl
+        self.mediaName = mediaName
+        self.mediaMime = mediaMime
+        self.mediaSize = mediaSize
+        self.voiceDurationMs = voiceDurationMs
+        self.clientId = clientId
+        self.createdAt = createdAt
+        self.deliveredAt = deliveredAt
+        self.seenAt = seenAt
+        self.replyTo = replyTo
+        self.reactions = reactions
+    }
 }
 
 private extension KeyedDecodingContainer {

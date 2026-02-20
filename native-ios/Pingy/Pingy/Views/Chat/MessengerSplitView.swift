@@ -372,6 +372,7 @@ private struct ConversationListContent: View {
                 .buttonStyle(PingyPressableButtonStyle())
             } else if hint.lowercased().contains("sync contacts")
                 || hint.lowercased().contains("couldn't")
+                || hint.lowercased().contains("isn't available")
             {
                 Button("Retry") {
                     Task {

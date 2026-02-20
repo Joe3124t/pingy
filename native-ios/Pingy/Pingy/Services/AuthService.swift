@@ -41,7 +41,11 @@ final class AuthService: ObservableObject, AuthorizedRequester {
             sessionStore.update(user: me.user, tokens: tokens)
         } catch {
             AppLogger.error("Session restore failed: \(error.localizedDescription)")
-            sessionStore.clear()
+            if shouldInvalidateCachedSession(after: error) {
+                sessionStore.clear()
+            } else {
+                AppLogger.debug("Session restore skipped due temporary connectivity issue. Keeping cached session.")
+            }
         }
     }
 
@@ -382,6 +386,21 @@ final class AuthService: ObservableObject, AuthorizedRequester {
         default:
             return false
         }
+    }
+
+    private func shouldInvalidateCachedSession(after error: Error) -> Bool {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .unauthorized:
+                return true
+            case .server(let statusCode, _):
+                return statusCode == 401 || statusCode == 403
+            case .network, .invalidResponse, .decodingError, .invalidURL:
+                return false
+            }
+        }
+
+        return false
     }
 }
 
