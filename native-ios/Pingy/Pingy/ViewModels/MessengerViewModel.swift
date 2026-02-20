@@ -18,6 +18,8 @@ final class MessengerViewModel: ObservableObject {
     @Published var blockedUsers: [User] = []
     @Published var currentUserSettings: User?
     @Published var activeError: String?
+    @Published var pinnedConversationIDs = Set<String>()
+    @Published var archivedConversationIDs = Set<String>()
     @Published var isSendingMessage = false
     @Published var isUploadingAvatar = false
     @Published var isSavingProfile = false
@@ -41,6 +43,7 @@ final class MessengerViewModel: ObservableObject {
     private var isProcessingTextQueue = false
     private var openConversationTasks: [String: Task<Void, Never>] = [:]
     private var syncedContactMatches: [ContactSearchResult] = []
+    private let conversationListStateStore = ConversationListStateStore.shared
 
     private struct PendingTextMessage {
         let conversationId: String
@@ -128,6 +131,7 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func reloadAll() async {
+        await loadConversationListState()
         await loadConversations()
         await loadSettings()
         await refreshContactSync(promptForPermission: false)
@@ -142,6 +146,57 @@ final class MessengerViewModel: ObservableObject {
         } catch {
             setError(from: error)
         }
+    }
+
+    func isConversationPinned(_ conversationID: String) -> Bool {
+        pinnedConversationIDs.contains(conversationID)
+    }
+
+    func isConversationArchived(_ conversationID: String) -> Bool {
+        archivedConversationIDs.contains(conversationID)
+    }
+
+    func togglePinConversation(_ conversationID: String) {
+        if pinnedConversationIDs.contains(conversationID) {
+            pinnedConversationIDs.remove(conversationID)
+        } else {
+            if pinnedConversationIDs.count >= 5 {
+                activeError = "You can pin up to 5 chats."
+                return
+            }
+            pinnedConversationIDs.insert(conversationID)
+            archivedConversationIDs.remove(conversationID)
+        }
+        persistConversationListState()
+    }
+
+    func archiveConversation(_ conversationID: String) {
+        archivedConversationIDs.insert(conversationID)
+        pinnedConversationIDs.remove(conversationID)
+        persistConversationListState()
+    }
+
+    func unarchiveConversation(_ conversationID: String) {
+        archivedConversationIDs.remove(conversationID)
+        persistConversationListState()
+    }
+
+    func toggleArchiveConversation(_ conversationID: String) {
+        if archivedConversationIDs.contains(conversationID) {
+            unarchiveConversation(conversationID)
+        } else {
+            archiveConversation(conversationID)
+        }
+    }
+
+    func markConversationUnread(_ conversationID: String) {
+        guard let index = conversations.firstIndex(where: { $0.conversationId == conversationID }) else { return }
+        conversations[index].unreadCount = max(conversations[index].unreadCount, 1)
+    }
+
+    func markConversationRead(_ conversationID: String) {
+        guard let index = conversations.firstIndex(where: { $0.conversationId == conversationID }) else { return }
+        conversations[index].unreadCount = 0
     }
 
     func loadSettings() async {
@@ -384,6 +439,9 @@ final class MessengerViewModel: ObservableObject {
             )
             conversations.removeAll { $0.conversationId == conversationID }
             messagesByConversation[conversationID] = []
+            pinnedConversationIDs.remove(conversationID)
+            archivedConversationIDs.remove(conversationID)
+            persistConversationListState()
             selectedConversationID = nil
         } catch {
             setError(from: error)
@@ -524,11 +582,17 @@ final class MessengerViewModel: ObservableObject {
 
     func deleteMyAccount() async {
         do {
+            let userID = currentUserID
             try await settingsService.deleteMyAccount()
             await authService.logout()
+            if let userID {
+                await conversationListStateStore.clear(for: userID)
+            }
             disconnectSocket()
             conversations = []
             messagesByConversation = [:]
+            pinnedConversationIDs = []
+            archivedConversationIDs = []
             selectedConversationID = nil
         } catch {
             setError(from: error)
@@ -536,10 +600,16 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func logout() async {
+        let userID = currentUserID
         disconnectSocket()
         await authService.logout()
+        if let userID {
+            await conversationListStateStore.clear(for: userID)
+        }
         conversations = []
         messagesByConversation = [:]
+        pinnedConversationIDs = []
+        archivedConversationIDs = []
         selectedConversationID = nil
     }
 
@@ -805,6 +875,31 @@ final class MessengerViewModel: ObservableObject {
         for index in conversations.indices where conversations[index].conversationId == event.conversationId {
             conversations[index].wallpaperUrl = event.wallpaperUrl
             conversations[index].blurIntensity = event.blurIntensity
+        }
+    }
+
+    private func loadConversationListState() async {
+        guard let userID = currentUserID else {
+            pinnedConversationIDs = []
+            archivedConversationIDs = []
+            return
+        }
+
+        let state = await conversationListStateStore.load(for: userID)
+        pinnedConversationIDs = state.pinned
+        archivedConversationIDs = state.archived
+    }
+
+    private func persistConversationListState() {
+        guard let userID = currentUserID else { return }
+        let pinned = pinnedConversationIDs
+        let archived = archivedConversationIDs
+        Task {
+            await conversationListStateStore.save(
+                pinned: pinned,
+                archived: archived,
+                for: userID
+            )
         }
     }
 

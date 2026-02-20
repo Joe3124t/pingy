@@ -17,6 +17,7 @@ struct MessageBubbleView: View {
     @State private var decryptionFailed = false
     @State private var didRetryDecryption = false
     @State private var isVisible = false
+    @GestureState private var swipeOffsetX: CGFloat = 0
 
     private var isOwn: Bool {
         message.senderId == currentUserID
@@ -66,6 +67,35 @@ struct MessageBubbleView: View {
             .overlay(
                 RoundedRectangle(cornerRadius: PingyRadius.bubble, style: .continuous)
                     .stroke(isOwn ? Color.clear : PingyTheme.border, lineWidth: 1)
+            )
+            .overlay(alignment: .leading) {
+                if swipeOffsetX > 24 {
+                    Image(systemName: "arrowshape.turn.up.left.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(PingyTheme.primaryStrong)
+                        .padding(.leading, 8)
+                        .transition(.opacity)
+                }
+            }
+            .offset(x: swipeOffsetX * 0.45)
+            .onTapGesture(count: 2) {
+                PingyHaptics.softTap()
+                onReact("\u{2764}\u{FE0F}")
+            }
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 14)
+                    .updating($swipeOffsetX) { value, state, _ in
+                        guard abs(value.translation.width) > abs(value.translation.height) else {
+                            state = 0
+                            return
+                        }
+                        state = max(0, min(90, value.translation.width))
+                    }
+                    .onEnded { value in
+                        guard value.translation.width > 70 else { return }
+                        PingyHaptics.softTap()
+                        onReply()
+                    }
             )
             .contextMenu {
                 if let text = renderedText, !text.isEmpty {

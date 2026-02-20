@@ -11,7 +11,10 @@ struct RootView: View {
     var body: some View {
         Group {
             if sessionStore.isAuthenticated {
-                MessengerSplitView(viewModel: messengerViewModel)
+                PingyTabShellView(
+                    messengerViewModel: messengerViewModel,
+                    themeManager: themeManager
+                )
                     .task(id: sessionStore.currentUser?.id) {
                         if !didBindForCurrentSession {
                             messengerViewModel.bindSocket()

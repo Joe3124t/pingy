@@ -15,11 +15,6 @@ struct MessengerSplitView: View {
         }
         .background(PingyTheme.background.ignoresSafeArea())
         .tint(PingyTheme.primary)
-        .sheet(isPresented: $viewModel.isSettingsPresented) {
-            NavigationStack {
-                SettingsView(viewModel: viewModel)
-            }
-        }
         .sheet(isPresented: $viewModel.isProfilePresented) {
             NavigationStack {
                 ProfileView(viewModel: viewModel)
@@ -82,6 +77,7 @@ private struct MessengerCompactContainer: View {
                 }
             )
             .navigationTitle("Chats")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProfileToolbarAvatarButton(viewModel: viewModel)
@@ -116,6 +112,7 @@ private struct MessengerRegularContainer: View {
                 }
             )
             .navigationTitle("Chats")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProfileToolbarAvatarButton(viewModel: viewModel)
@@ -135,6 +132,7 @@ private struct ConversationListContent: View {
     @ObservedObject var viewModel: MessengerViewModel
     let onSelectConversation: (Conversation) -> Void
     let onSelectSearchUser: (User) -> Void
+    @State private var showArchived = false
 
     var body: some View {
         VStack(spacing: PingySpacing.md) {
@@ -184,28 +182,41 @@ private struct ConversationListContent: View {
                         .padding(.top, PingySpacing.sm)
                 }
             } else {
-                List(viewModel.conversations) { conversation in
-                    Button {
-                        onSelectConversation(conversation)
-                    } label: {
-                        ConversationRowView(
-                            conversation: conversation,
-                            isSelected: conversation.conversationId == viewModel.selectedConversationID
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            Task {
-                                await viewModel.selectConversation(conversation.conversationId)
-                                await viewModel.deleteSelectedConversation(forEveryone: false)
-                            }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+                List {
+                    if !activeConversations.isEmpty {
+                        ForEach(activeConversations) { conversation in
+                            conversationRow(conversation)
                         }
                     }
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+
+                    if !archivedConversations.isEmpty {
+                        Section {
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                    showArchived.toggle()
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
+                                    Text("Archived (\(archivedConversations.count))")
+                                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                    Spacer()
+                                    Image(systemName: showArchived ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 12, weight: .bold))
+                                }
+                                .foregroundStyle(PingyTheme.textSecondary)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+
+                            if showArchived {
+                                ForEach(archivedConversations) { conversation in
+                                    conversationRow(conversation)
+                                }
+                            }
+                        }
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -249,6 +260,97 @@ private struct ConversationListContent: View {
         .pingyCard()
     }
 
+    private var activeConversations: [Conversation] {
+        sortConversations(
+            viewModel.conversations.filter { !viewModel.isConversationArchived($0.conversationId) }
+        )
+    }
+
+    private var archivedConversations: [Conversation] {
+        sortConversations(
+            viewModel.conversations.filter { viewModel.isConversationArchived($0.conversationId) }
+        )
+    }
+
+    private func sortConversations(_ input: [Conversation]) -> [Conversation] {
+        input.sorted { lhs, rhs in
+            let leftPinned = viewModel.isConversationPinned(lhs.conversationId)
+            let rightPinned = viewModel.isConversationPinned(rhs.conversationId)
+            if leftPinned != rightPinned {
+                return leftPinned && !rightPinned
+            }
+
+            let leftDate = lhs.lastMessageCreatedAt ?? lhs.lastMessageAt ?? lhs.updatedAt ?? lhs.createdAt ?? ""
+            let rightDate = rhs.lastMessageCreatedAt ?? rhs.lastMessageAt ?? rhs.updatedAt ?? rhs.createdAt ?? ""
+            return leftDate > rightDate
+        }
+    }
+
+    private func conversationRow(_ conversation: Conversation) -> some View {
+        Button {
+            onSelectConversation(conversation)
+            if conversation.unreadCount > 0 {
+                viewModel.markConversationRead(conversation.conversationId)
+            }
+        } label: {
+            ConversationRowView(
+                conversation: conversation,
+                isSelected: conversation.conversationId == viewModel.selectedConversationID,
+                isPinned: viewModel.isConversationPinned(conversation.conversationId)
+            )
+        }
+        .buttonStyle(.plain)
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if conversation.unreadCount > 0 {
+                Button {
+                    viewModel.markConversationRead(conversation.conversationId)
+                } label: {
+                    Label("Read", systemImage: "envelope.open")
+                }
+                .tint(.green)
+            } else {
+                Button {
+                    viewModel.markConversationUnread(conversation.conversationId)
+                } label: {
+                    Label("Unread", systemImage: "envelope.badge")
+                }
+                .tint(.blue)
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                viewModel.togglePinConversation(conversation.conversationId)
+            } label: {
+                Label(
+                    viewModel.isConversationPinned(conversation.conversationId) ? "Unpin" : "Pin",
+                    systemImage: viewModel.isConversationPinned(conversation.conversationId) ? "pin.slash" : "pin"
+                )
+            }
+            .tint(.orange)
+
+            Button {
+                viewModel.toggleArchiveConversation(conversation.conversationId)
+            } label: {
+                Label(
+                    viewModel.isConversationArchived(conversation.conversationId) ? "Unarchive" : "Archive",
+                    systemImage: viewModel.isConversationArchived(conversation.conversationId) ? "tray.and.arrow.up" : "archivebox"
+                )
+            }
+            .tint(.gray)
+
+            Button(role: .destructive) {
+                Task {
+                    await viewModel.selectConversation(conversation.conversationId)
+                    await viewModel.deleteSelectedConversation(forEveryone: false)
+                }
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
     private func contactSyncHintView(_ hint: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(hint)
@@ -266,6 +368,21 @@ private struct ConversationListContent: View {
                 .padding(.vertical, 9)
                 .background(PingyTheme.primary)
                 .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(PingyPressableButtonStyle())
+            } else if hint.lowercased().contains("sync contacts")
+                || hint.lowercased().contains("couldn't")
+            {
+                Button("Retry") {
+                    Task {
+                        await viewModel.requestContactAccessAndSync()
+                    }
+                }
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(PingyTheme.surfaceElevated)
+                .foregroundStyle(PingyTheme.textPrimary)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .buttonStyle(PingyPressableButtonStyle())
             }
@@ -328,6 +445,7 @@ private struct NoConversationView: View {
 struct ConversationRowView: View {
     let conversation: Conversation
     let isSelected: Bool
+    let isPinned: Bool
 
     var body: some View {
         HStack(spacing: PingySpacing.sm) {
@@ -344,6 +462,12 @@ struct ConversationRowView: View {
                     Text(conversation.participantUsername)
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(isSelected ? .white : PingyTheme.textPrimary)
+
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.86) : PingyTheme.warning)
+                    }
                     Spacer()
 
                     if let lastTime = conversation.lastMessageCreatedAt {
@@ -367,6 +491,8 @@ struct ConversationRowView: View {
                     .background(isSelected ? Color.white.opacity(0.24) : PingyTheme.primaryStrong)
                     .foregroundStyle(.white)
                     .clipShape(Capsule())
+                    .scaleEffect(conversation.unreadCount > 0 ? 1 : 0.85)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.75), value: conversation.unreadCount)
             }
         }
         .padding(12)
