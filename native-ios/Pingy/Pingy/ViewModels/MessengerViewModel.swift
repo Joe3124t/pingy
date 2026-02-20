@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Network
+import SwiftUI
 import UIKit
 
 enum NetworkBannerState: Equatable {

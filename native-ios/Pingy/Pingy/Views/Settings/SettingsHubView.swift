@@ -267,8 +267,8 @@ struct SettingsHubView: View {
 
     private var storageSection: some View {
         Section("Storage & Data") {
-            metricsRow(title: "Image cache", value: formatBytes(URLCache.shared.currentDiskUsage))
-            metricsRow(title: "Memory cache", value: formatBytes(URLCache.shared.currentMemoryUsage))
+            metricsRow(title: "Image cache", value: formatBytes(Int64(URLCache.shared.currentDiskUsage)))
+            metricsRow(title: "Memory cache", value: formatBytes(Int64(URLCache.shared.currentMemoryUsage)))
             metricsRow(title: "Uploaded", value: formatBytes(networkUsage.uploadedBytes))
             metricsRow(title: "Downloaded", value: formatBytes(networkUsage.downloadedBytes))
             metricsRow(title: "Total network usage", value: formatBytes(networkUsage.totalBytes))
