@@ -61,6 +61,10 @@ actor E2EECryptoService {
         let sealed = try AES.GCM.seal(plaintextData, using: key, nonce: nonce)
         let body = sealed.ciphertext + sealed.tag
 
+        AppLogger.debug(
+            "E2EE encrypt success for peer \(peerUserID), ivBytes=\(iv.count), cipherBytes=\(sealed.ciphertext.count), tagBytes=\(sealed.tag.count)"
+        )
+
         return EncryptedPayload(
             iv: Base64.encode(iv),
             ciphertext: Base64.encode(body)
@@ -82,8 +86,10 @@ actor E2EECryptoService {
         guard
             let ivData = Base64.decode(payload.iv),
             let cipherData = Base64.decode(payload.ciphertext),
+            ivData.count == 12,
             cipherData.count > 16
         else {
+            AppLogger.error("E2EE decrypt payload validation failed for peer \(peerUserID)")
             throw CryptoServiceError.invalidEncryptedPayload
         }
 
@@ -103,6 +109,10 @@ actor E2EECryptoService {
             throw CryptoServiceError.invalidEncryptedPayload
         }
 
+        AppLogger.debug(
+            "E2EE decrypt success for peer \(peerUserID), ivBytes=\(ivData.count), cipherBytes=\(ciphertext.count), tagBytes=\(tag.count)"
+        )
+
         return plainText
     }
 
@@ -117,6 +127,11 @@ actor E2EECryptoService {
         try? KeychainStore.shared.delete(agreementPrivateKeyPrefix + binding)
         try? KeychainStore.shared.delete(identityPrivateKeyPrefix + binding)
         clearMemoryCaches()
+    }
+
+    func invalidateConversationKey(userID: String, peerUserID: String) {
+        let prefix = "\(keyBinding(for: userID)):\(peerUserID):"
+        sharedKeyCache = sharedKeyCache.filter { !$0.key.hasPrefix(prefix) }
     }
 
     private func keyBinding(for userID: String) -> String {

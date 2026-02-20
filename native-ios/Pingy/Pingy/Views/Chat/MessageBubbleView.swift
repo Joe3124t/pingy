@@ -7,6 +7,7 @@ struct MessageBubbleView: View {
     let conversation: Conversation
     let currentUserID: String?
     let cryptoService: E2EECryptoService
+    let resolvePeerKey: (_ forceRefresh: Bool) async throws -> PublicKeyJWK
     let isGroupedWithPrevious: Bool
     let onReply: () -> Void
     let onReact: (String) -> Void
@@ -262,7 +263,7 @@ struct MessageBubbleView: View {
         }
 
         do {
-            let peerKey = try await resolvePeerKey()
+            let peerKey = try await resolvePeerKey(false)
             let plain = try await cryptoService.decryptText(
                 payload: payload,
                 userID: currentUserID,
@@ -274,10 +275,11 @@ struct MessageBubbleView: View {
         } catch {
             if !didRetryDecryption {
                 didRetryDecryption = true
-                await cryptoService.clearMemoryCaches()
+                AppLogger.debug("Decrypt failed for message \(message.id). Refreshing conversation key once.")
+                await cryptoService.invalidateConversationKey(userID: currentUserID, peerUserID: conversation.participantId)
 
                 do {
-                    let peerKey = try await resolvePeerKey()
+                    let peerKey = try await resolvePeerKey(true)
                     let plain = try await cryptoService.decryptText(
                         payload: payload,
                         userID: currentUserID,
@@ -288,20 +290,15 @@ struct MessageBubbleView: View {
                     decryptionFailed = false
                     return
                 } catch {
+                    AppLogger.error("Decrypt retry failed for message \(message.id): \(error.localizedDescription)")
                     decryptionFailed = true
                     return
                 }
             }
 
+            AppLogger.error("Decrypt failed for message \(message.id): \(error.localizedDescription)")
             decryptionFailed = true
         }
-    }
-
-    private func resolvePeerKey() async throws -> PublicKeyJWK {
-        if let cached = conversation.participantPublicKeyJwk {
-            return cached
-        }
-        throw CryptoServiceError.invalidPeerPublicKey
     }
 
     private func encryptedPayload(from jsonValue: JSONValue?) -> EncryptedPayload? {

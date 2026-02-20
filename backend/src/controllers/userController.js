@@ -21,7 +21,11 @@ const {
   getBlockedUsersForUser,
 } = require('../services/blockService');
 const { signMediaUrl, signMediaUrlsInUser } = require('../services/mediaAccessService');
-const { isWebPushConfigured, getWebPushPublicKey } = require('../services/pushService');
+const {
+  isWebPushConfigured,
+  isPushDeliveryConfigured,
+  getWebPushPublicKey,
+} = require('../services/pushService');
 
 const emitProfileUpdateToContacts = async (req, user) => {
   const io = req.app?.locals?.io;
@@ -238,13 +242,14 @@ const deleteMyAccount = asyncHandler(async (req, res) => {
 
 const getPushPublicKeyController = asyncHandler(async (req, res) => {
   res.status(200).json({
-    enabled: isWebPushConfigured(),
+    enabled: isPushDeliveryConfigured(),
+    webPushEnabled: isWebPushConfigured(),
     publicKey: getWebPushPublicKey(),
   });
 });
 
 const saveMyPushSubscriptionController = asyncHandler(async (req, res) => {
-  if (!isWebPushConfigured()) {
+  if (!isPushDeliveryConfigured()) {
     throw new HttpError(503, 'Push notifications are not configured on server');
   }
 

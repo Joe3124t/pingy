@@ -45,8 +45,23 @@ const userIdParamsSchema = z.object({
   userId: z.string().uuid(),
 });
 
+const apnsEndpointPattern = /^apns:\/\/[A-Fa-f0-9]{64}$/;
+
+const pushEndpointSchema = z.string().trim().max(2000).refine((value) => {
+  if (apnsEndpointPattern.test(value)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}, 'Push endpoint must be a valid http(s) URL or apns://<device-token>');
+
 const pushSubscriptionSchema = z.object({
-  endpoint: z.string().trim().url().max(2000),
+  endpoint: pushEndpointSchema,
   keys: z.object({
     p256dh: z.string().trim().min(1).max(300),
     auth: z.string().trim().min(1).max(300),
@@ -59,7 +74,7 @@ const savePushSubscriptionSchema = z.object({
 });
 
 const deletePushSubscriptionSchema = z.object({
-  endpoint: z.string().trim().url().max(2000),
+  endpoint: pushEndpointSchema,
 });
 
 module.exports = {

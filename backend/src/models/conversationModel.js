@@ -181,6 +181,11 @@ const listConversationIdsForUser = async (userId) => {
   return result.rows.map((row) => row.conversationId);
 };
 
+const findConversationForUser = async ({ conversationId, userId }) => {
+  const conversations = await listConversationsForUser(userId);
+  return conversations.find((conversation) => conversation.conversationId === conversationId) || null;
+};
+
 const touchConversationActivity = async (conversationId, lastMessageAt) => {
   await query(
     `
@@ -294,4 +299,5 @@ module.exports = {
   setConversationWallpaperSettings,
   resetConversationWallpaperSettings,
   listConversationIdsForUser,
+  findConversationForUser,
 };

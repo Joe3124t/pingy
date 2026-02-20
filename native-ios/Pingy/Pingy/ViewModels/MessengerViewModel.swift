@@ -32,6 +32,18 @@ final class MessengerViewModel: ObservableObject {
     private let cryptoService: E2EECryptoService
     private var notificationObserver: NSObjectProtocol?
     private var isSocketBound = false
+    private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
+    private var pendingTextQueue: [PendingTextMessage] = []
+    private var isProcessingTextQueue = false
+    private var openConversationTasks: [String: Task<Void, Never>] = [:]
+
+    private struct PendingTextMessage {
+        let conversationId: String
+        let participantId: String
+        let plainText: String
+        let replyToMessageId: String?
+        let clientId: String
+    }
 
     init(
         authService: AuthService,
@@ -56,6 +68,9 @@ final class MessengerViewModel: ObservableObject {
             guard let self else { return }
             if let conversationID = note.userInfo?["conversationId"] as? String {
                 Task {
+                    if !self.conversations.contains(where: { $0.conversationId == conversationID }) {
+                        await self.loadConversations()
+                    }
                     await self.selectConversation(conversationID)
                 }
             }
@@ -180,71 +195,57 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func openOrCreateConversation(with user: User) async {
-        do {
-            let conversation = try await conversationService.createDirectConversation(recipientID: user.id)
-            if !conversations.contains(where: { $0.conversationId == conversation.conversationId }) {
-                conversations.insert(conversation, at: 0)
-            }
-            searchResults = []
-            searchQuery = ""
-            await selectConversation(conversation.conversationId)
-        } catch {
-            setError(from: error)
+        if let existingTask = openConversationTasks[user.id] {
+            await existingTask.value
+            return
         }
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let conversation = try await self.conversationService.createDirectConversation(recipientID: user.id)
+                if !self.conversations.contains(where: { $0.conversationId == conversation.conversationId }) {
+                    self.conversations.insert(conversation, at: 0)
+                }
+
+                do {
+                    _ = try await self.resolvePeerPublicKey(
+                        conversationID: conversation.conversationId,
+                        participantID: conversation.participantId,
+                        forceRefresh: conversation.participantPublicKeyJwk == nil
+                    )
+                } catch {
+                    AppLogger.error("Peer key unavailable for \(conversation.participantId): \(error.localizedDescription)")
+                    self.activeError = "Secure key exchange is not ready with this user yet."
+                }
+
+                self.searchResults = []
+                self.searchQuery = ""
+                await self.selectConversation(conversation.conversationId)
+            } catch {
+                self.setError(from: error, fallback: "Couldn't open this chat right now. Try again.")
+            }
+        }
+
+        openConversationTasks[user.id] = task
+        await task.value
+        openConversationTasks.removeValue(forKey: user.id)
     }
 
     func sendText(_ text: String) async {
         guard let conversation = selectedConversation else { return }
         let plain = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !plain.isEmpty else { return }
-        guard let me = authService.sessionStore.currentUser else { return }
-
-        isSendingMessage = true
-        defer { isSendingMessage = false }
-
-        do {
-            let peerKey = try await resolvePeerPublicKey(for: conversation)
-            let encrypted = try await cryptoService.encryptText(
-                plaintext: plain,
-                userID: me.id,
-                peerUserID: conversation.participantId,
-                peerPublicKeyJWK: peerKey
-            )
-
-            let clientID = "ios-\(UUID().uuidString)"
-            let sent: Message
-
-            if socketManager.isConnected {
-                do {
-                    sent = try await socketManager.sendEncryptedMessage(
-                        conversationId: conversation.conversationId,
-                        body: encrypted,
-                        clientId: clientID,
-                        replyToMessageId: pendingReplyMessage?.id
-                    )
-                } catch {
-                    AppLogger.debug("Socket send failed, falling back to REST.")
-                    sent = try await messageService.sendTextMessage(
-                        conversationID: conversation.conversationId,
-                        encryptedBody: encrypted,
-                        clientID: clientID,
-                        replyToMessageID: pendingReplyMessage?.id
-                    )
-                }
-            } else {
-                sent = try await messageService.sendTextMessage(
-                    conversationID: conversation.conversationId,
-                    encryptedBody: encrypted,
-                    clientID: clientID,
-                    replyToMessageID: pendingReplyMessage?.id
-                )
-            }
-
-            upsertMessage(sent)
-            pendingReplyMessage = nil
-        } catch {
-            setError(from: error)
-        }
+        let queued = PendingTextMessage(
+            conversationId: conversation.conversationId,
+            participantId: conversation.participantId,
+            plainText: plain,
+            replyToMessageId: pendingReplyMessage?.id,
+            clientId: "ios-\(UUID().uuidString)"
+        )
+        pendingReplyMessage = nil
+        pendingTextQueue.append(queued)
+        await processPendingTextQueue()
     }
 
     func sendMedia(
@@ -466,7 +467,7 @@ final class MessengerViewModel: ObservableObject {
             )
             applyConversationWallpaperEvent(event)
         } catch {
-            setError(from: error)
+            setError(from: error, fallback: "Couldn't update chat wallpaper on this device.")
         }
     }
 
@@ -478,7 +479,7 @@ final class MessengerViewModel: ObservableObject {
                 ConversationWallpaperEvent(conversationId: conversationID, wallpaperUrl: nil, blurIntensity: 0)
             )
         } catch {
-            setError(from: error)
+            setError(from: error, fallback: "Couldn't reset chat wallpaper.")
         }
     }
 
@@ -503,15 +504,155 @@ final class MessengerViewModel: ObservableObject {
         selectedConversationID = nil
     }
 
-    private func resolvePeerPublicKey(for conversation: Conversation) async throws -> PublicKeyJWK {
-        if let key = conversation.participantPublicKeyJwk {
-            return key
+    func resolvePeerPublicKey(
+        conversationID: String,
+        participantID: String,
+        forceRefresh: Bool = false
+    ) async throws -> PublicKeyJWK {
+        if !forceRefresh,
+           let cached = conversations.first(where: { $0.conversationId == conversationID })?.participantPublicKeyJwk
+        {
+            return cached
         }
-        let fetched = try await settingsService.getPublicKey(for: conversation.participantId)
-        if let index = conversations.firstIndex(where: { $0.conversationId == conversation.conversationId }) {
+
+        if let inflight = keyRefreshTasks[participantID] {
+            return try await inflight.value
+        }
+
+        let refreshTask = Task { [settingsService] in
+            try await settingsService.getPublicKey(for: participantID)
+        }
+        keyRefreshTasks[participantID] = refreshTask
+        defer { keyRefreshTasks[participantID] = nil }
+
+        let fetched = try await refreshTask.value
+        if let index = conversations.firstIndex(where: { $0.conversationId == conversationID }) {
             conversations[index].participantPublicKeyJwk = fetched
         }
         return fetched
+    }
+
+    private func processPendingTextQueue() async {
+        guard !isProcessingTextQueue else { return }
+        guard authService.sessionStore.currentUser != nil else {
+            pendingTextQueue.removeAll()
+            return
+        }
+
+        isProcessingTextQueue = true
+        isSendingMessage = true
+        defer {
+            isProcessingTextQueue = false
+            isSendingMessage = false
+        }
+
+        while !pendingTextQueue.isEmpty {
+            let item = pendingTextQueue.removeFirst()
+            do {
+                let sent = try await sendPendingTextMessage(item)
+                upsertMessage(sent)
+            } catch {
+                pendingTextQueue.insert(item, at: 0)
+                setError(from: error, fallback: "Couldn't send this message. Please try again.")
+                if shouldAutoRetryQueue(after: error) {
+                    Task { [weak self] in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        await self?.processPendingTextQueue()
+                    }
+                }
+                break
+            }
+        }
+    }
+
+    private func sendPendingTextMessage(_ item: PendingTextMessage) async throws -> Message {
+        guard let me = authService.sessionStore.currentUser else {
+            throw APIError.unauthorized
+        }
+
+        guard let conversation = conversations.first(where: { $0.conversationId == item.conversationId }) else {
+            throw APIError.server(statusCode: 404, message: "Conversation not found")
+        }
+
+        let messageOnce = try await encryptAndDeliverPendingMessage(item, me: me, conversation: conversation)
+        return messageOnce
+    }
+
+    private func encryptAndDeliverPendingMessage(
+        _ item: PendingTextMessage,
+        me: User,
+        conversation: Conversation
+    ) async throws -> Message {
+        do {
+            let peerKey = try await resolvePeerPublicKey(
+                conversationID: conversation.conversationId,
+                participantID: item.participantId,
+                forceRefresh: true
+            )
+
+            let encrypted = try await cryptoService.encryptText(
+                plaintext: item.plainText,
+                userID: me.id,
+                peerUserID: item.participantId,
+                peerPublicKeyJWK: peerKey
+            )
+
+            if socketManager.isConnected {
+                do {
+                    return try await socketManager.sendEncryptedMessage(
+                        conversationId: item.conversationId,
+                        body: encrypted,
+                        clientId: item.clientId,
+                        replyToMessageId: item.replyToMessageId
+                    )
+                } catch {
+                    AppLogger.debug("Socket send failed for \(item.clientId), fallback to REST.")
+                }
+            }
+
+            return try await messageService.sendTextMessage(
+                conversationID: item.conversationId,
+                encryptedBody: encrypted,
+                clientID: item.clientId,
+                replyToMessageID: item.replyToMessageId
+            )
+        } catch {
+            AppLogger.error("Send failed for \(item.clientId): \(error.localizedDescription)")
+            // One handshake/key refresh retry before surfacing a corruption/session error.
+            await cryptoService.invalidateConversationKey(userID: me.id, peerUserID: item.participantId)
+            let refreshedKey = try await resolvePeerPublicKey(
+                conversationID: conversation.conversationId,
+                participantID: item.participantId,
+                forceRefresh: true
+            )
+
+            let encryptedRetry = try await cryptoService.encryptText(
+                plaintext: item.plainText,
+                userID: me.id,
+                peerUserID: item.participantId,
+                peerPublicKeyJWK: refreshedKey
+            )
+
+            if socketManager.isConnected {
+                do {
+                    return try await socketManager.sendEncryptedMessage(
+                        conversationId: item.conversationId,
+                        body: encryptedRetry,
+                        clientId: item.clientId,
+                        replyToMessageId: item.replyToMessageId
+                    )
+                } catch {
+                    AppLogger.debug("Socket retry failed for \(item.clientId), fallback to REST.")
+                }
+            }
+
+            return try await messageService.sendTextMessage(
+                conversationID: item.conversationId,
+                encryptedBody: encryptedRetry,
+                clientID: item.clientId,
+                replyToMessageID: item.replyToMessageId
+            )
+        }
     }
 
     private func handleSocketEvent(_ event: SocketEvent) {
@@ -628,17 +769,75 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
-    private func setError(from error: Error, fallback: String? = nil) {
-        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        let lowered = message.lowercased()
+    private func shouldAutoRetryQueue(after error: Error) -> Bool {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .network, .invalidResponse:
+                return true
+            default:
+                return false
+            }
+        }
 
-        if lowered.contains("internal server error") {
-            activeError = fallback ?? "Server is temporarily busy. Please try again."
+        if let socketError = error as? SocketError {
+            switch socketError {
+            case .notConnected, .ackTimeout:
+                return true
+            case .invalidAckPayload:
+                return false
+            }
+        }
+
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("network") || lowered.contains("timeout")
+    }
+
+    private func setError(from error: Error, fallback: String? = nil) {
+        AppLogger.error("MessengerViewModel error: \(error.localizedDescription)")
+
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .unauthorized:
+                activeError = "Session expired. Please log in again."
+            case .decodingError:
+                activeError = "Server response format changed. Please retry in a moment."
+            case .network:
+                activeError = apiError.errorDescription
+            case .invalidURL, .invalidResponse:
+                activeError = fallback ?? apiError.errorDescription
+            case .server(let statusCode, let message):
+                let lowered = message.lowercased()
+                if lowered.contains("route not found") {
+                    activeError = "This feature isn't available on current backend deployment yet."
+                    return
+                }
+                if lowered.contains("public key not found") {
+                    activeError = "Secure key exchange is not ready with this user yet."
+                    return
+                }
+                if lowered.contains("blocked") || lowered.contains("cannot interact") {
+                    activeError = "You cannot message this user due to privacy settings."
+                    return
+                }
+                if statusCode >= 500 {
+                    activeError = fallback ?? "Server is temporarily busy. Please try again."
+                    return
+                }
+                activeError = fallback ?? message
+            }
             return
         }
 
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let lowered = message.lowercased()
+
         if lowered.contains("decode") {
-            activeError = "We couldn't sync latest data. Pull to refresh and retry."
+            activeError = "Server response format changed. Please retry in a moment."
+            return
+        }
+
+        if lowered.contains("internal server error") {
+            activeError = fallback ?? "Server is temporarily busy. Please try again."
             return
         }
 

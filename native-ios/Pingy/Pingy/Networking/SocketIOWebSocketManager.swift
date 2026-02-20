@@ -72,6 +72,7 @@ final class SocketIOWebSocketManager: ObservableObject {
         receiveTask = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        failAllAckHandlers(with: SocketError.notConnected)
         isConnecting = false
         isConnected = false
     }
@@ -211,6 +212,7 @@ final class SocketIOWebSocketManager: ObservableObject {
         webSocketTask = nil
         receiveTask?.cancel()
         receiveTask = nil
+        failAllAckHandlers(with: SocketError.notConnected)
         scheduleReconnect()
     }
 
@@ -385,6 +387,18 @@ final class SocketIOWebSocketManager: ObservableObject {
             return "42\(ackID)\(payloadJSON)"
         }
         return "42\(payloadJSON)"
+    }
+
+    private func failAllAckHandlers(with error: Error) {
+        if ackHandlers.isEmpty {
+            return
+        }
+
+        let handlers = ackHandlers.values
+        ackHandlers.removeAll()
+        handlers.forEach { handler in
+            handler(.failure(error))
+        }
     }
 }
 

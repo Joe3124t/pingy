@@ -105,6 +105,13 @@ struct ChatDetailView: View {
                             conversation: conversation,
                             currentUserID: viewModel.currentUserID,
                             cryptoService: viewModel.cryptoServiceProxy,
+                            resolvePeerKey: { forceRefresh in
+                                try await viewModel.resolvePeerPublicKey(
+                                    conversationID: conversation.conversationId,
+                                    participantID: conversation.participantId,
+                                    forceRefresh: forceRefresh
+                                )
+                            },
                             isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
                             onReply: {
                                 viewModel.setReplyTarget(message)
@@ -256,22 +263,34 @@ struct ChatDetailView: View {
             if let urlString = conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl,
                let url = URL(string: urlString)
             {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        EmptyView()
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
-                            .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
-                            .saturation(colorScheme == .dark ? 0.88 : 1.0)
-                            .opacity(colorScheme == .dark ? 0.86 : 0.95)
-                    case .failure:
-                        EmptyView()
-                    @unknown default:
-                        EmptyView()
+                if url.isFileURL,
+                   let image = UIImage(contentsOfFile: url.path)
+                {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
+                        .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
+                        .saturation(colorScheme == .dark ? 0.88 : 1.0)
+                        .opacity(colorScheme == .dark ? 0.86 : 0.95)
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            EmptyView()
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .blur(radius: CGFloat(conversation.blurIntensity + (colorScheme == .dark ? 3 : 1)))
+                                .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
+                                .saturation(colorScheme == .dark ? 0.88 : 1.0)
+                                .opacity(colorScheme == .dark ? 0.86 : 0.95)
+                        case .failure:
+                            EmptyView()
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                 }
             }

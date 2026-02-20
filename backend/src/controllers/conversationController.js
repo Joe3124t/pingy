@@ -2,6 +2,7 @@ const { asyncHandler } = require('../utils/asyncHandler');
 const {
   createOrGetDirectConversation,
   listConversationsForUser,
+  findConversationForUser,
   softDeleteConversation,
   softDeleteConversationForEveryone,
   isUserInConversation,
@@ -78,8 +79,21 @@ const createDirectConversation = asyncHandler(async (req, res) => {
     recipientId,
   });
 
+  const hydratedConversation = await findConversationForUser({
+    conversationId: conversation.id,
+    userId: req.user.id,
+  });
+
+  if (!hydratedConversation) {
+    throw new HttpError(500, 'Conversation created but hydration failed');
+  }
+
   res.status(201).json({
-    conversation,
+    conversation: {
+      ...hydratedConversation,
+      participantAvatarUrl: signMediaUrl(hydratedConversation.participantAvatarUrl),
+      wallpaperUrl: signMediaUrl(hydratedConversation.wallpaperUrl),
+    },
   });
 });
 

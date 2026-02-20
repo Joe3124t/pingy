@@ -11,6 +11,7 @@ const {
   listMessages,
   markMessagesDelivered,
   markMessagesSeen,
+  countUnreadMessagesForUser,
 } = require('../models/messageModel');
 const { findUserById } = require('../models/userModel');
 const { isUserOnline } = require('./presenceService');
@@ -210,9 +211,12 @@ const sendPushToRecipientIfOffline = async (message) => {
   }
 
   try {
+    const unreadCount = await countUnreadMessagesForUser(message.recipientId);
+
     return await sendMessagePushToUser({
       recipientUserId: message.recipientId,
       message,
+      badgeCount: unreadCount,
     });
   } catch {
     return {

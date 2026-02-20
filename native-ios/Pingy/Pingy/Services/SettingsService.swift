@@ -152,13 +152,12 @@ final class SettingsService {
             let subscription: Subscription
         }
 
-        // Server currently exposes a generic subscription endpoint.
-        // For iOS native we persist APNs token in endpoint to keep a server-side mapping.
-        let endpointURL = "https://apns.pingy.local/device/\(tokenHex)"
+        // APNs endpoint marker consumed by backend push service.
+        let endpointURL = "apns://\(tokenHex)"
         let payload = Payload(
             subscription: .init(
                 endpoint: endpointURL,
-                keys: .init(p256dh: "ios", auth: "apns"),
+                keys: .init(p256dh: "apns", auth: "ios"),
                 expirationTime: nil
             )
         )

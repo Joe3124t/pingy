@@ -2,6 +2,7 @@ import Foundation
 
 final class ConversationService {
     private let authService: AuthorizedRequester
+    private let wallpaperStore = ConversationWallpaperStore.shared
 
     init(apiClient _: APIClient, authService: AuthorizedRequester) {
         self.authService = authService
@@ -12,7 +13,7 @@ final class ConversationService {
             Endpoint(path: "conversations", method: .get),
             as: ConversationListResponse.self
         )
-        return response.conversations
+        return await wallpaperStore.applyOverrides(to: response.conversations)
     }
 
     func searchUsers(query: String, limit: Int = 15) async throws -> [User] {
@@ -62,37 +63,12 @@ final class ConversationService {
         mimeType: String,
         blurIntensity: Int
     ) async throws -> ConversationWallpaperEvent {
-        struct Response: Decodable {
-            struct Settings: Decodable {
-                let conversationId: String
-                let wallpaperUrl: String?
-                let blurIntensity: Int
-            }
-            let settings: Settings
-        }
-
-        var form = MultipartFormData()
-        form.appendField(name: "blurIntensity", value: String(blurIntensity))
-        form.appendFile(
-            fieldName: "wallpaper",
+        _ = mimeType
+        return try await wallpaperStore.saveImage(
+            conversationId: conversationID,
+            imageData: imageData,
             fileName: fileName,
-            mimeType: mimeType,
-            fileData: imageData
-        )
-        form.finalize()
-
-        var endpoint = Endpoint(
-            path: "conversations/\(conversationID)/wallpaper/upload",
-            method: .post,
-            body: form.data
-        )
-        endpoint.headers["Content-Type"] = "multipart/form-data; boundary=\(form.boundary)"
-
-        let response: Response = try await authService.authorizedRequest(endpoint, as: Response.self)
-        return ConversationWallpaperEvent(
-            conversationId: response.settings.conversationId,
-            wallpaperUrl: response.settings.wallpaperUrl,
-            blurIntensity: response.settings.blurIntensity
+            blurIntensity: blurIntensity
         )
     }
 
@@ -101,38 +77,24 @@ final class ConversationService {
         wallpaperURL: String?,
         blurIntensity: Int
     ) async throws -> ConversationWallpaperEvent {
-        struct Payload: Encodable {
-            let wallpaperUrl: String?
-            let blurIntensity: Int
+        let trimmed = wallpaperURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            try await wallpaperStore.reset(conversationId: conversationID)
+            return ConversationWallpaperEvent(
+                conversationId: conversationID,
+                wallpaperUrl: nil,
+                blurIntensity: 0
+            )
         }
 
-        struct Response: Decodable {
-            struct Settings: Decodable {
-                let conversationId: String
-                let wallpaperUrl: String?
-                let blurIntensity: Int
-            }
-            let settings: Settings
-        }
-
-        let endpoint = try Endpoint.json(
-            path: "conversations/\(conversationID)/wallpaper",
-            method: .put,
-            payload: Payload(wallpaperUrl: wallpaperURL, blurIntensity: blurIntensity)
-        )
-        let response: Response = try await authService.authorizedRequest(endpoint, as: Response.self)
-        return ConversationWallpaperEvent(
-            conversationId: response.settings.conversationId,
-            wallpaperUrl: response.settings.wallpaperUrl,
-            blurIntensity: response.settings.blurIntensity
+        return await wallpaperStore.saveRemoteURL(
+            conversationId: conversationID,
+            wallpaperURL: trimmed,
+            blurIntensity: blurIntensity
         )
     }
 
     func resetConversationWallpaper(conversationID: String) async throws {
-        let endpoint = Endpoint(
-            path: "conversations/\(conversationID)/wallpaper",
-            method: .delete
-        )
-        try await authService.authorizedNoContent(endpoint)
+        try await wallpaperStore.reset(conversationId: conversationID)
     }
 }

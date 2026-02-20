@@ -13,6 +13,13 @@ const errorMiddleware = (error, req, res, next) => {
     return next(error);
   }
 
+  if (error?.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      message: 'Invalid JSON request body',
+      code: 'INVALID_JSON',
+    });
+  }
+
   if (error instanceof ZodError) {
     return res.status(400).json({
       message: 'Validation failed',

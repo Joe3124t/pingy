@@ -18,6 +18,10 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         authorizationStatus = await center.notificationSettings().authorizationStatus
+
+        if authorizationStatus == .authorized || authorizationStatus == .provisional || authorizationStatus == .ephemeral {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
     }
 
     func requestPermission() async {
@@ -43,7 +47,11 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     }
 
     func handleRemoteNotification(userInfo: [AnyHashable: Any]) {
-        guard let conversationID = userInfo["conversationId"] as? String else { return }
+        if let badge = extractBadge(from: userInfo) {
+            UIApplication.shared.applicationIconBadgeNumber = badge
+        }
+
+        guard let conversationID = extractConversationId(from: userInfo) else { return }
         NotificationCenter.default.post(
             name: .pingyOpenConversationFromPush,
             object: nil,
@@ -56,7 +64,10 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .list, .sound])
+        if let badge = extractBadge(from: notification.request.content.userInfo) {
+            UIApplication.shared.applicationIconBadgeNumber = badge
+        }
+        completionHandler([.banner, .list, .sound, .badge])
     }
 
     func userNotificationCenter(
@@ -66,5 +77,39 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     ) {
         handleRemoteNotification(userInfo: response.notification.request.content.userInfo)
         completionHandler()
+    }
+
+    private func extractConversationId(from userInfo: [AnyHashable: Any]) -> String? {
+        if let direct = userInfo["conversationId"] as? String, !direct.isEmpty {
+            return direct
+        }
+
+        if let idValue = userInfo["conversationId"] {
+            let stringValue = String(describing: idValue).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !stringValue.isEmpty, stringValue != "<null>" {
+                return stringValue
+            }
+        }
+
+        if let aps = userInfo["aps"] as? [String: Any],
+           let threadID = aps["thread-id"] as? String,
+           !threadID.isEmpty
+        {
+            return threadID
+        }
+
+        return nil
+    }
+
+    private func extractBadge(from userInfo: [AnyHashable: Any]) -> Int? {
+        if let aps = userInfo["aps"] as? [String: Any] {
+            if let badgeInt = aps["badge"] as? Int {
+                return badgeInt
+            }
+            if let badgeString = aps["badge"] as? String, let parsed = Int(badgeString) {
+                return parsed
+            }
+        }
+        return nil
     }
 }

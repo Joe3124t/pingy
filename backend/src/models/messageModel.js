@@ -318,6 +318,21 @@ const markMessagesSeen = async ({ recipientId, conversationId, messageIds = null
   return result.rows;
 };
 
+const countUnreadMessagesForUser = async (recipientId) => {
+  const result = await query(
+    `
+      SELECT COUNT(*)::int AS "unreadCount"
+      FROM messages
+      WHERE recipient_id = $1
+        AND deleted_for_everyone_at IS NULL
+        AND seen_at IS NULL
+    `,
+    [recipientId],
+  );
+
+  return Number(result.rows[0]?.unreadCount || 0);
+};
+
 module.exports = {
   findMessageById,
   findMessageByClientId,
@@ -325,4 +340,5 @@ module.exports = {
   listMessages,
   markMessagesDelivered,
   markMessagesSeen,
+  countUnreadMessagesForUser,
 };
