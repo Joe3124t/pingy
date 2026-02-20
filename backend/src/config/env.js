@@ -48,6 +48,11 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => parseBoolean(value, false)),
+  OTP_SMS_RELAY_URL: z.string().url().optional(),
+  OTP_SMS_RELAY_TOKEN: z.string().min(8).optional(),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().optional(),
   PASSWORD_RESET_SECRET: z.string().min(32).optional(),
   PASSWORD_RESET_CODE_TTL_MINUTES: z.coerce.number().int().min(3).max(60).default(10),
   PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),

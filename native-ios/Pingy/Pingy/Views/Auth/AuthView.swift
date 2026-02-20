@@ -55,14 +55,6 @@ struct AuthView: View {
                 statusView(text: info, color: PingyTheme.success.opacity(0.14), textColor: PingyTheme.success)
             }
 
-            if let debugCode = viewModel.debugCodeHint, !debugCode.isEmpty {
-                statusView(
-                    text: "Debug OTP: \(debugCode)",
-                    color: PingyTheme.primary.opacity(0.12),
-                    textColor: PingyTheme.primaryStrong
-                )
-            }
-
             Button {
                 PingyHaptics.softTap()
                 Task { await viewModel.submit() }

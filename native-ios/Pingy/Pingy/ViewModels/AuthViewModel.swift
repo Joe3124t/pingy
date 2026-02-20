@@ -23,7 +23,6 @@ final class AuthViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var infoMessage: String?
-    @Published var debugCodeHint: String?
 
     private var registrationVerificationToken: String?
     private let authService: AuthService
@@ -52,7 +51,6 @@ final class AuthViewModel: ObservableObject {
                     purpose: "register"
                 )
                 infoMessage = response.message
-                debugCodeHint = response.debugCode
                 mode = .otpVerify
 
             case .otpVerify:
@@ -130,7 +128,6 @@ final class AuthViewModel: ObservableObject {
         confirmPassword = ""
         newPassword = ""
         resetCode = ""
-        debugCodeHint = nil
         errorMessage = nil
         infoMessage = nil
     }

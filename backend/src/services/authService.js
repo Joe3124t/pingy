@@ -102,25 +102,108 @@ const buildDisplayNameFromPhone = (phoneNumber) => {
   return `Pingy ${suffix}`.trim();
 };
 
-const sendOtpOutOfBand = async ({ phoneNumber, code, purpose }) => {
-  const codeLog = `[OTP] phone=${phoneNumber} purpose=${purpose} code=${code}`;
+const buildOtpMessage = ({ code, purpose }) => {
+  if (purpose === 'reset') {
+    return `Pingy reset code: ${code}. Do not share this code with anyone.`;
+  }
 
-  // Free-mode fallback: keep OTP flow operational even if no SMS gateway is configured.
-  if (env.NODE_ENV === 'production' && !env.OTP_DEV_ALLOW_PLAINTEXT) {
-    console.warn('[OTP] SMS provider not configured. Falling back to debug OTP response.');
-    console.log(codeLog);
+  return `Pingy verification code: ${code}. Do not share this code with anyone.`;
+};
+
+const sendOtpViaRelay = async ({ phoneNumber, code, purpose }) => {
+  if (!env.OTP_SMS_RELAY_URL) {
+    return false;
+  }
+
+  const payload = {
+    phoneNumber,
+    message: buildOtpMessage({ code, purpose }),
+    purpose,
+    code,
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+
+  if (env.OTP_SMS_RELAY_TOKEN) {
+    headers.Authorization = `Bearer ${env.OTP_SMS_RELAY_TOKEN}`;
+  }
+
+  const response = await fetch(env.OTP_SMS_RELAY_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    throw new HttpError(502, `OTP relay rejected request (${response.status})${responseText ? `: ${responseText}` : ''}`);
+  }
+
+  return true;
+};
+
+const sendOtpViaTwilio = async ({ phoneNumber, code, purpose }) => {
+  const hasTwilio =
+    Boolean(env.TWILIO_ACCOUNT_SID) &&
+    Boolean(env.TWILIO_AUTH_TOKEN) &&
+    Boolean(env.TWILIO_FROM_NUMBER);
+
+  if (!hasTwilio) {
+    return false;
+  }
+
+  const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`;
+  const basicAuth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+
+  const body = new URLSearchParams({
+    To: phoneNumber,
+    From: env.TWILIO_FROM_NUMBER,
+    Body: buildOtpMessage({ code, purpose }),
+  });
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => '');
+    throw new HttpError(502, `OTP SMS provider rejected request (${response.status})${responseText ? `: ${responseText}` : ''}`);
+  }
+
+  return true;
+};
+
+const sendOtpOutOfBand = async ({ phoneNumber, code, purpose }) => {
+  if (await sendOtpViaRelay({ phoneNumber, code, purpose })) {
     return {
-      delivery: 'fallback-debug',
-      exposeCode: true,
+      delivery: 'relay',
     };
   }
 
-  // Non-production or explicitly allowed plaintext mode.
-  console.log(codeLog);
-  return {
-    delivery: 'logged',
-    exposeCode: Boolean(env.OTP_DEV_ALLOW_PLAINTEXT),
-  };
+  if (await sendOtpViaTwilio({ phoneNumber, code, purpose })) {
+    return {
+      delivery: 'twilio',
+    };
+  }
+
+  if (env.OTP_DEV_ALLOW_PLAINTEXT) {
+    console.log(`[OTP-DEV] phone=${phoneNumber} purpose=${purpose} code=${code}`);
+    return {
+      delivery: 'dev-plaintext',
+    };
+  }
+
+  throw new HttpError(
+    503,
+    'OTP SMS service is not configured. Configure Twilio or OTP relay endpoint on server.',
+  );
 };
 
 const issueAuthTokens = async ({ userId, deviceId, rotateKeys }) => {
@@ -199,9 +282,6 @@ const requestPhoneOtp = async ({ phoneNumber, purpose = 'register' }) => {
   if (latestCode && Date.now() - new Date(latestCode.createdAt).getTime() < cooldownMs) {
     return {
       message: OTP_GENERIC_MESSAGE,
-      ...(env.NODE_ENV !== 'production' && env.OTP_DEV_ALLOW_PLAINTEXT
-        ? { debugCode: null }
-        : {}),
     };
   }
 
@@ -226,7 +306,7 @@ const requestPhoneOtp = async ({ phoneNumber, purpose = 'register' }) => {
     expiresAt,
   });
 
-  const deliveryResult = await sendOtpOutOfBand({
+  await sendOtpOutOfBand({
     phoneNumber: normalizedPhone,
     code,
     purpose: normalizedPurpose,
@@ -234,7 +314,6 @@ const requestPhoneOtp = async ({ phoneNumber, purpose = 'register' }) => {
 
   return {
     message: OTP_GENERIC_MESSAGE,
-    ...(deliveryResult?.exposeCode ? { debugCode: code } : {}),
   };
 };
 

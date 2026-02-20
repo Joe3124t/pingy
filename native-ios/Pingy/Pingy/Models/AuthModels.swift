@@ -20,7 +20,6 @@ struct GenericMessageResponse: Codable {
 
 struct OTPRequestResponse: Codable {
     let message: String
-    let debugCode: String?
 }
 
 struct OTPVerifyResponse: Codable {
