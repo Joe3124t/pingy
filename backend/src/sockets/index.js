@@ -200,10 +200,10 @@ const createSocketServer = (server) => {
     socket.on('message:send', async (payload = {}, acknowledge) => {
       try {
         const conversationId = String(payload.conversationId || '').trim();
-        const body = payload.body;
+        const body = String(payload.body || '').trim();
 
         if (!conversationId || !body) {
-          throw new Error('Encrypted message payload is required');
+          throw new Error('Text message body is required');
         }
 
         const message = await createConversationMessage({
@@ -212,7 +212,6 @@ const createSocketServer = (server) => {
           replyToMessageId: payload.replyToMessageId ? String(payload.replyToMessageId) : undefined,
           type: 'text',
           body,
-          isEncrypted: Boolean(payload.isEncrypted),
           clientId: payload.clientId ? String(payload.clientId) : undefined,
         });
 

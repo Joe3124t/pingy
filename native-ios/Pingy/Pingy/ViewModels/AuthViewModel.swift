@@ -177,8 +177,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func bootstrapCrypto(userID: String) async throws {
-        let publicKey = try await cryptoService.ensureIdentity(for: userID)
-        try await settingsService.upsertPublicKey(publicKey)
+        _ = userID
     }
 
     private func normalizedPhoneNumber(_ rawValue: String) -> String {

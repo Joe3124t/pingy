@@ -273,6 +273,63 @@ CREATE TABLE IF NOT EXISTS user_totp_recovery_codes (
 CREATE INDEX IF NOT EXISTS idx_user_totp_recovery_codes_user
   ON user_totp_recovery_codes (user_id, consumed_at);
 
+CREATE TABLE IF NOT EXISTS status_stories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type VARCHAR(12) NOT NULL CHECK (content_type IN ('text', 'image', 'video')),
+  text_content TEXT,
+  media_url TEXT,
+  background_hex VARCHAR(16),
+  privacy VARCHAR(16) NOT NULL DEFAULT 'contacts' CHECK (privacy IN ('contacts', 'custom')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+  deleted_at TIMESTAMPTZ,
+  CHECK (text_content IS NOT NULL OR media_url IS NOT NULL)
+);
+
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS text_content TEXT;
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS media_url TEXT;
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS background_hex VARCHAR(16);
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS privacy VARCHAR(16) NOT NULL DEFAULT 'contacts';
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours');
+ALTER TABLE status_stories ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+DO $$
+BEGIN
+  ALTER TABLE status_stories
+    ADD CONSTRAINT status_stories_privacy_check
+    CHECK (privacy IN ('contacts', 'custom'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE status_stories
+    ADD CONSTRAINT status_stories_content_type_check
+    CHECK (content_type IN ('text', 'image', 'video'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_status_stories_owner_created
+  ON status_stories (owner_user_id, created_at DESC)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_status_stories_expires
+  ON status_stories (expires_at)
+  WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS status_story_viewers (
+  story_id UUID NOT NULL REFERENCES status_stories(id) ON DELETE CASCADE,
+  viewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (story_id, viewer_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_story_viewers_story
+  ON status_story_viewers (story_id, viewed_at DESC);
+
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN

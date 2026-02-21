@@ -1,4 +1,5 @@
-﻿import AVFoundation
+import AVFoundation
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -6,18 +7,15 @@ struct MessageBubbleView: View {
     let message: Message
     let conversation: Conversation
     let currentUserID: String?
-    let cryptoService: E2EECryptoService
-    let resolvePeerKey: (_ forceRefresh: Bool) async throws -> PublicKeyJWK
     let isGroupedWithPrevious: Bool
     let onReply: () -> Void
     let onReact: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var decryptedText: String?
-    @State private var decryptionFailed = false
-    @State private var didRetryDecryption = false
     @State private var isVisible = false
     @GestureState private var swipeOffsetX: CGFloat = 0
+    @State private var selectedImageURL: URL?
+    @State private var selectedVideoURL: URL?
 
     private var isOwn: Bool {
         message.senderId == currentUserID
@@ -98,9 +96,9 @@ struct MessageBubbleView: View {
                     }
             )
             .contextMenu {
-                if let text = renderedText, !text.isEmpty {
+                if !renderedText.isEmpty {
                     Button {
-                        UIPasteboard.general.string = text
+                        UIPasteboard.general.string = renderedText
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
                     }
@@ -128,11 +126,18 @@ struct MessageBubbleView: View {
         .opacity(isVisible ? 1 : 0)
         .offset(y: isVisible ? 0 : 12)
         .animation(.spring(response: 0.34, dampingFraction: 0.85), value: isVisible)
-        .task(id: message.id) {
-            await decryptIfNeeded()
-        }
         .onAppear {
             isVisible = true
+        }
+        .sheet(isPresented: imageSheetPresentedBinding) {
+            if let selectedImageURL {
+                ChatImagePreviewSheet(url: selectedImageURL)
+            }
+        }
+        .sheet(isPresented: videoSheetPresentedBinding) {
+            if let selectedVideoURL {
+                ChatVideoPreviewSheet(url: selectedVideoURL)
+            }
         }
     }
 
@@ -178,7 +183,7 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.type {
         case .text:
-            Text(renderedText ?? "")
+            Text(renderedText)
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
                 .multilineTextAlignment(.leading)
@@ -186,33 +191,54 @@ struct MessageBubbleView: View {
 
         case .image:
             if let url = MediaURLResolver.resolve(message.mediaUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView().frame(width: 210, height: 180)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 230, height: 220)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    case .failure:
-                        Text("Image unavailable")
-                            .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
-                    @unknown default:
-                        EmptyView()
+                Button {
+                    selectedImageURL = url
+                } label: {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView().frame(width: 210, height: 180)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 230, height: 220)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        case .failure:
+                            Text("Image unavailable")
+                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                 }
+                .buttonStyle(.plain)
             }
 
         case .video:
             if let url = MediaURLResolver.resolve(message.mediaUrl) {
-                Link(destination: url) {
-                    Label("Open video", systemImage: "video.fill")
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white : PingyTheme.primary)
+                Button {
+                    selectedVideoURL = url
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(isOwn ? Color.white : PingyTheme.primaryStrong)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(message.mediaName ?? "Video")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
+                                .lineLimit(1)
+                            Text("Tap to open")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundStyle(isOwn ? Color.white.opacity(0.85) : PingyTheme.textSecondary)
+                        }
+                    }
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .padding(.vertical, 2)
                 }
+                .buttonStyle(.plain)
             }
 
         case .file:
@@ -233,11 +259,16 @@ struct MessageBubbleView: View {
     }
 
     private func replyPreview(_ reply: MessageReply) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Reply")
+        let senderName = (reply.senderUsername?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? (reply.senderUsername ?? "Unknown")
+            : "Unknown"
+        let preview = MessageBodyFormatter.previewText(from: reply.body, fallback: reply.mediaName ?? "Message")
+
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("From \(senderName)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white.opacity(0.9) : PingyTheme.primary)
-            Text(reply.body?.stringValue ?? reply.mediaName ?? "Message")
+            Text(preview)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .lineLimit(1)
                 .foregroundStyle(isOwn ? Color.white.opacity(0.83) : PingyTheme.textSecondary)
@@ -252,22 +283,8 @@ struct MessageBubbleView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private var renderedText: String? {
-        switch message.type {
-        case .text:
-            if message.isEncrypted {
-                if let decryptedText {
-                    return decryptedText
-                }
-                if decryptionFailed {
-                    return decryptedFallbackText ?? "Encrypted message"
-                }
-                return "Decrypting..."
-            }
-            return message.body?.stringValue ?? ""
-        default:
-            return nil
-        }
+    private var renderedText: String {
+        MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
     }
 
     private func formatTime(_ iso: String) -> String {
@@ -278,111 +295,105 @@ struct MessageBubbleView: View {
         return output.string(from: date)
     }
 
-    private func decryptIfNeeded() async {
-        guard message.type == .text, message.isEncrypted else {
-            return
-        }
-
-        didRetryDecryption = false
-        decryptionFailed = false
-        decryptedText = nil
-
-        guard let currentUserID else {
-            return
-        }
-        guard let payload = encryptedPayload(from: message.body) else {
-            decryptionFailed = true
-            return
-        }
-
-        do {
-            let peerKey = try await resolvePeerKey(false)
-            let plain = try await cryptoService.decryptText(
-                payload: payload,
-                userID: currentUserID,
-                peerUserID: conversation.participantId,
-                peerPublicKeyJWK: peerKey
-            )
-            decryptedText = plain
-            decryptionFailed = false
-        } catch {
-            if !didRetryDecryption {
-                didRetryDecryption = true
-                AppLogger.debug("Decrypt failed for message \(message.id). Refreshing conversation key once.")
-                await cryptoService.invalidateConversationKey(userID: currentUserID, peerUserID: conversation.participantId)
-
-                do {
-                    let peerKey = try await resolvePeerKey(true)
-                    let plain = try await cryptoService.decryptText(
-                        payload: payload,
-                        userID: currentUserID,
-                        peerUserID: conversation.participantId,
-                        peerPublicKeyJWK: peerKey
-                    )
-                    decryptedText = plain
-                    decryptionFailed = false
-                    return
-                } catch {
-                    AppLogger.error("Decrypt retry failed for message \(message.id): \(error.localizedDescription)")
-                    decryptionFailed = true
-                    return
+    private var imageSheetPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { selectedImageURL != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedImageURL = nil
                 }
             }
-
-            AppLogger.error("Decrypt failed for message \(message.id): \(error.localizedDescription)")
-            decryptionFailed = true
-        }
+        )
     }
 
-    private func encryptedPayload(from jsonValue: JSONValue?) -> EncryptedPayload? {
-        guard let jsonValue else { return nil }
-        if let object = jsonValue.objectValue {
-            guard
-                let v = object["v"]?.intValue,
-                let alg = object["alg"]?.stringValue,
-                let iv = object["iv"]?.stringValue,
-                let ciphertext = object["ciphertext"]?.stringValue
-            else {
-                return nil
+    private var videoSheetPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { selectedVideoURL != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedVideoURL = nil
+                }
             }
-            return EncryptedPayload(v: v, alg: alg, iv: iv, ciphertext: ciphertext)
-        }
-
-        if let stringValue = jsonValue.stringValue,
-           let data = stringValue.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode(EncryptedPayload.self, from: data)
-        {
-            return decoded
-        }
-
-        return nil
-    }
-
-    private var decryptedFallbackText: String? {
-        guard let text = message.body?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !text.isEmpty
-        else {
-            return nil
-        }
-
-        if let data = text.data(using: .utf8),
-           let parsed = try? JSONDecoder().decode(EncryptedPayload.self, from: data),
-           !parsed.ciphertext.isEmpty,
-           !parsed.iv.isEmpty
-        {
-            return nil
-        }
-
-        return text
+        )
     }
 }
 
-private extension JSONValue {
-    var intValue: Int? {
-        if case .number(let value) = self {
-            return Int(value)
+private struct ChatImagePreviewSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .tint(.white)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .failure:
+                        Text("Image unavailable")
+                            .foregroundStyle(.white.opacity(0.88))
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(.white)
+                }
+            }
         }
-        return nil
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct ChatVideoPreviewSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let player {
+                    VideoPlayer(player: player)
+                        .onAppear {
+                            player.play()
+                        }
+                        .onDisappear {
+                            player.pause()
+                        }
+                } else {
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(.white)
+                }
+            }
+            .onAppear {
+                if player == nil {
+                    player = AVPlayer(url: url)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
 

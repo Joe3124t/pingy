@@ -82,6 +82,10 @@ final class MessengerViewModel: ObservableObject {
         let contactName: String
     }
 
+    private enum PendingQueueError: Error {
+        case conversationUnavailable
+    }
+
     private enum CacheKeys {
         static func conversations(userID: String) -> String {
             "pingy.cache.conversations.\(userID)"
@@ -918,6 +922,19 @@ final class MessengerViewModel: ObservableObject {
                 let sent = try await sendPendingTextMessage(item)
                 upsertMessage(sent)
             } catch {
+                if isQueueItemDiscardable(error: error) {
+                    AppLogger.debug("Dropping stale queued message \(item.clientId) due unavailable conversation.")
+                    removeLocalPendingMessage(clientId: item.clientId, conversationID: item.conversationId)
+                    continue
+                }
+
+                if shouldDropQueueItem(after: error) {
+                    AppLogger.debug("Dropping non-retriable queued message \(item.clientId).")
+                    removeLocalPendingMessage(clientId: item.clientId, conversationID: item.conversationId)
+                    setError(from: error, fallback: "Couldn't send this message. Please try again.")
+                    continue
+                }
+
                 pendingTextQueue.insert(item, at: 0)
                 persistPendingQueue()
                 if shouldAutoRetryQueue(after: error) {
@@ -944,7 +961,7 @@ final class MessengerViewModel: ObservableObject {
         }
 
         guard let conversation = conversations.first(where: { $0.conversationId == item.conversationId }) else {
-            throw APIError.server(statusCode: 404, message: "Conversation not found")
+            throw PendingQueueError.conversationUnavailable
         }
 
         return try await deliverPendingTextMessage(item, conversation: conversation)
@@ -991,6 +1008,38 @@ final class MessengerViewModel: ObservableObject {
             clientId: item.clientId,
             createdAtISO: item.createdAtISO
         )
+    }
+
+    private func isQueueItemDiscardable(error: Error) -> Bool {
+        if error as? PendingQueueError == .conversationUnavailable {
+            return true
+        }
+
+        guard let apiError = error as? APIError else {
+            return false
+        }
+
+        switch apiError {
+        case .server(let statusCode, let message):
+            if statusCode == 404 {
+                return true
+            }
+            if statusCode == 400 {
+                let normalized = message.lowercased()
+                return normalized.contains("validation failed")
+                    || normalized.contains("text body is required")
+            }
+            return false
+        default:
+            return false
+        }
+    }
+
+    private func removeLocalPendingMessage(clientId: String, conversationID: String) {
+        guard var messages = messagesByConversation[conversationID] else { return }
+        messages.removeAll { $0.clientId == clientId && $0.id.hasPrefix("local-") }
+        messagesByConversation[conversationID] = messages
+        persistMessagesCache()
     }
 
     private func handleSocketEvent(_ event: SocketEvent) {
@@ -1595,6 +1644,32 @@ final class MessengerViewModel: ObservableObject {
 
         let lowered = error.localizedDescription.lowercased()
         return lowered.contains("network") || lowered.contains("timeout")
+    }
+
+    private func shouldDropQueueItem(after error: Error) -> Bool {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .server(let statusCode, let message):
+                let lowered = message.lowercased()
+                if statusCode == 400 || statusCode == 403 || statusCode == 404 || statusCode == 409 || statusCode == 422 {
+                    return true
+                }
+                if lowered.contains("validation failed")
+                    || lowered.contains("text body is required")
+                    || lowered.contains("cannot interact")
+                    || lowered.contains("blocked")
+                {
+                    return true
+                }
+                return false
+            case .unauthorized:
+                return true
+            default:
+                return false
+            }
+        }
+
+        return false
     }
 
     private func isTransientNetworkError(_ error: Error) -> Bool {

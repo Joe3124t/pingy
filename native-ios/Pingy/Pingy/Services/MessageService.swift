@@ -39,18 +39,58 @@ final class MessageService {
             let replyToMessageId: String?
         }
 
-        let endpoint = try Endpoint.json(
-            path: "messages/\(conversationID)",
-            method: .post,
-            payload: Payload(
-                body: body,
-                isEncrypted: false,
-                clientId: clientID,
-                replyToMessageId: replyToMessageID
+        do {
+            let endpoint = try Endpoint.json(
+                path: "messages/\(conversationID)",
+                method: .post,
+                payload: Payload(
+                    body: body,
+                    isEncrypted: false,
+                    clientId: clientID,
+                    replyToMessageId: replyToMessageID
+                )
             )
-        )
-        let response: MessageResponse = try await authService.authorizedRequest(endpoint, as: MessageResponse.self)
-        return response.message
+            let response: MessageResponse = try await authService.authorizedRequest(endpoint, as: MessageResponse.self)
+            return response.message
+        } catch let apiError as APIError {
+            // Compatibility fallback for older backend payload validators.
+            guard case .server(_, let message) = apiError else {
+                throw apiError
+            }
+            let lowered = message.lowercased()
+            let shouldRetryWithLegacyPayload =
+                lowered.contains("validation failed") ||
+                lowered.contains("text body is required") ||
+                lowered.contains("invalid body")
+
+            guard shouldRetryWithLegacyPayload else {
+                throw apiError
+            }
+
+            struct LegacyPayload: Encodable {
+                struct LegacyBody: Encodable {
+                    let text: String
+                }
+
+                let body: LegacyBody
+                let isEncrypted: Bool
+                let clientId: String
+                let replyToMessageId: String?
+            }
+
+            let legacyEndpoint = try Endpoint.json(
+                path: "messages/\(conversationID)",
+                method: .post,
+                payload: LegacyPayload(
+                    body: .init(text: body),
+                    isEncrypted: false,
+                    clientId: clientID,
+                    replyToMessageId: replyToMessageID
+                )
+            )
+            let legacyResponse: MessageResponse = try await authService.authorizedRequest(legacyEndpoint, as: MessageResponse.self)
+            return legacyResponse.message
+        }
     }
 
     func sendMediaMessage(
@@ -73,6 +113,7 @@ final class MessageService {
         if let voiceDurationMs {
             form.appendField(name: "voiceDurationMs", value: String(voiceDurationMs))
         }
+        form.appendField(name: "isEncrypted", value: "false")
         form.appendField(name: "clientId", value: clientID)
         if let replyToMessageID {
             form.appendField(name: "replyToMessageId", value: replyToMessageID)

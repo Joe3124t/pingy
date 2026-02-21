@@ -15,7 +15,8 @@ struct RootView: View {
             if sessionStore.isAuthenticated {
                 PingyTabShellView(
                     messengerViewModel: messengerViewModel,
-                    themeManager: themeManager
+                    themeManager: themeManager,
+                    statusService: appEnvironment.statusService
                 )
                     .task(id: sessionStore.currentUser?.id) {
                         if !didBindForCurrentSession {

@@ -542,15 +542,7 @@ struct ConversationRowView: View {
             return "No messages yet"
         }
 
-        if body.looksLikeEncryptedPayload {
-            return "Encrypted message"
-        }
-
-        if let text = body.stringValue, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return text
-        }
-
-        return "Message"
+        return MessageBodyFormatter.previewText(from: body, fallback: "Message")
     }
 
     private func formatTime(_ iso: String) -> String {
@@ -559,31 +551,6 @@ struct ConversationRowView: View {
         let time = DateFormatter()
         time.timeStyle = .short
         return time.string(from: date)
-    }
-}
-
-private extension JSONValue {
-    var looksLikeEncryptedPayload: Bool {
-        if let object = objectValue {
-            return object["ciphertext"]?.stringValue != nil && object["iv"]?.stringValue != nil
-        }
-
-        guard let raw = stringValue else {
-            return false
-        }
-
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}") else {
-            return false
-        }
-
-        guard let data = trimmed.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return false
-        }
-
-        return object["ciphertext"] != nil && object["iv"] != nil
     }
 }
 

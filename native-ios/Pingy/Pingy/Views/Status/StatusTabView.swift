@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 struct StatusTabView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
-    @StateObject private var viewModel = StatusViewModel()
+    @StateObject private var viewModel: StatusViewModel
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var statusMediaItem: PhotosPickerItem?
@@ -14,6 +14,11 @@ struct StatusTabView: View {
     @State private var textStatus = ""
     @State private var textStatusColorHex = "#0A7E8C"
     @State private var selectedStory: StatusStory?
+
+    init(messengerViewModel: MessengerViewModel, statusService: StatusService) {
+        self.messengerViewModel = messengerViewModel
+        _viewModel = StateObject(wrappedValue: StatusViewModel(service: statusService))
+    }
 
     private var currentUserID: String {
         messengerViewModel.currentUserID ?? "unknown-user"
@@ -151,7 +156,7 @@ struct StatusTabView: View {
 
             Picker("Privacy", selection: $viewModel.selectedPrivacy) {
                 ForEach(StatusPrivacy.allCases) { option in
-                    Text(option.rawValue).tag(option)
+                    Text(option.title).tag(option)
                 }
             }
             .pickerStyle(.segmented)
@@ -397,12 +402,24 @@ private struct StatusStoryViewer: View {
                 )
         case .image:
             if let url = MediaURLResolver.resolve(story.mediaURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        Color.black
+                ZStack {
+                    Color.black
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView().tint(.white)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        case .failure:
+                            Text("Status image unavailable")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.85))
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                 }
             } else {
@@ -410,7 +427,7 @@ private struct StatusStoryViewer: View {
             }
         case .video:
             if let url = MediaURLResolver.resolve(story.mediaURL) {
-                VideoPlayer(player: AVPlayer(url: url))
+                StatusVideoPlayer(url: url)
             } else {
                 Color.black
             }
@@ -427,6 +444,29 @@ private struct StatusStoryViewer: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+private struct StatusVideoPlayer: View {
+    let url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let player {
+                VideoPlayer(player: player)
+                    .onAppear { player.play() }
+                    .onDisappear { player.pause() }
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .onAppear {
+            if player == nil {
+                player = AVPlayer(url: url)
+            }
+        }
     }
 }
 

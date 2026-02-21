@@ -6,12 +6,27 @@ final class StatusViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isSaving = false
     @Published var errorMessage: String?
-    @Published var selectedPrivacy: StatusPrivacy = .contacts
+    @Published var selectedPrivacy: StatusPrivacy = .contacts {
+        didSet {
+            defaults.set(selectedPrivacy.rawValue, forKey: statusPrivacyDefaultsKey)
+        }
+    }
 
     private let service: StatusService
+    private let defaults = UserDefaults.standard
+    private let statusPrivacyDefaultsKey = "pingy.v3.statusPrivacy"
 
-    init(service: StatusService = .shared) {
+    init(service: StatusService) {
         self.service = service
+        let storedValue = defaults.string(forKey: statusPrivacyDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if storedValue == StatusPrivacy.custom.rawValue || storedValue == "custom" {
+            selectedPrivacy = .custom
+        } else {
+            selectedPrivacy = .contacts
+        }
     }
 
     func reload() async {
@@ -32,14 +47,19 @@ final class StatusViewModel: ObservableObject {
 
         isSaving = true
         defer { isSaving = false }
-        await service.addTextStory(
-            ownerUserID: ownerUserID,
-            ownerName: ownerName,
-            ownerAvatarURL: ownerAvatarURL,
-            text: normalized,
-            backgroundHex: backgroundHex,
-            privacy: selectedPrivacy
-        )
+        do {
+            try await service.addTextStory(
+                ownerUserID: ownerUserID,
+                ownerName: ownerName,
+                ownerAvatarURL: ownerAvatarURL,
+                text: normalized,
+                backgroundHex: backgroundHex,
+                privacy: selectedPrivacy
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = "Couldn't publish text status right now."
+        }
         stories = await service.listActiveStories()
     }
 

@@ -214,14 +214,6 @@ struct ChatDetailView: View {
                             message: message,
                             conversation: conversation,
                             currentUserID: viewModel.currentUserID,
-                            cryptoService: viewModel.cryptoServiceProxy,
-                            resolvePeerKey: { forceRefresh in
-                                try await viewModel.resolvePeerPublicKey(
-                                    conversationID: conversation.conversationId,
-                                    participantID: conversation.participantId,
-                                    forceRefresh: forceRefresh
-                                )
-                            },
                             isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
                             onReply: {
                                 viewModel.setReplyTarget(message)
@@ -269,13 +261,21 @@ struct ChatDetailView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             if let reply = viewModel.pendingReplyMessage {
+                let replySender = (reply.senderUsername?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+                    ? (reply.senderUsername ?? "message")
+                    : "message"
+                let replyPreviewText = MessageBodyFormatter.previewText(
+                    from: reply.body,
+                    fallback: reply.mediaName ?? "Message"
+                )
+
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Replying to \(reply.senderUsername ?? "message")")
+                        Text("Replying to \(replySender)")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundStyle(PingyTheme.primaryStrong)
 
-                        Text(reply.body?.stringValue ?? reply.mediaName ?? "Message")
+                        Text(replyPreviewText)
                             .font(.system(size: 13, weight: .regular, design: .rounded))
                             .foregroundStyle(PingyTheme.textSecondary)
                             .lineLimit(1)
@@ -443,9 +443,21 @@ struct ChatDetailView: View {
         guard let date = formatter.date(from: value) else {
             return "last seen recently"
         }
-        let relative = RelativeDateTimeFormatter()
-        relative.unitsStyle = .full
-        return "last seen \(relative.localizedString(for: date, relativeTo: Date()))"
+
+        let output = DateFormatter()
+        output.locale = .autoupdatingCurrent
+        output.timeStyle = .short
+
+        if Calendar.current.isDateInToday(date) {
+            return "last seen today at \(output.string(from: date))"
+        }
+
+        if Calendar.current.isDateInYesterday(date) {
+            return "last seen yesterday at \(output.string(from: date))"
+        }
+
+        output.dateStyle = .medium
+        return "last seen \(output.string(from: date))"
     }
 
     private var renderedMessages: [Message] {

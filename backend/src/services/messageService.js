@@ -18,7 +18,6 @@ const { isUserOnline } = require('./presenceService');
 const { sendMessagePushToUser } = require('./pushService');
 const { sanitizeText } = require('../utils/sanitize');
 const { HttpError } = require('../utils/httpError');
-const { assertEncryptedPayload } = require('../crypto/e2ee');
 const { assertUsersCanInteract } = require('./blockService');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -47,7 +46,6 @@ const createConversationMessage = async ({
   replyToMessageId = null,
   type,
   body,
-  isEncrypted = false,
   mediaUrl,
   mediaName,
   mediaMime,
@@ -77,40 +75,19 @@ const createConversationMessage = async ({
   }
 
   let normalizedBody = null;
-  let normalizedEncryptionFlag = false;
+  const normalizedEncryptionFlag = false;
 
   if (type === 'text') {
-    if (isEncrypted) {
-      if (!body) {
-        throw new HttpError(400, 'Encrypted text payload is required');
-      }
-
-      let parsedPayload = body;
-
-      if (typeof body === 'string') {
-        try {
-          parsedPayload = JSON.parse(body);
-        } catch {
-          throw new HttpError(400, 'Invalid encrypted payload');
-        }
-      }
-
-      const payload = assertEncryptedPayload(parsedPayload);
-      normalizedBody = JSON.stringify(payload);
-      normalizedEncryptionFlag = true;
+    if (typeof body === 'string') {
+      normalizedBody = sanitizeText(body, 4000);
+    } else if (body && typeof body === 'object' && typeof body.text === 'string') {
+      normalizedBody = sanitizeText(body.text, 4000);
     } else {
-      if (typeof body === 'string') {
-        normalizedBody = sanitizeText(body, 4000);
-      } else if (body && typeof body === 'object' && typeof body.text === 'string') {
-        normalizedBody = sanitizeText(body.text, 4000);
-      } else {
-        normalizedBody = null;
-      }
+      normalizedBody = null;
+    }
 
-      if (!normalizedBody) {
-        throw new HttpError(400, 'Text body is required');
-      }
-      normalizedEncryptionFlag = false;
+    if (!normalizedBody) {
+      throw new HttpError(400, 'Text body is required');
     }
   } else {
     normalizedBody = body ? sanitizeText(body, 500) : null;

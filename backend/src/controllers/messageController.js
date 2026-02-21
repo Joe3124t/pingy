@@ -52,7 +52,7 @@ const listMessages = asyncHandler(async (req, res) => {
 
 const sendTextMessage = asyncHandler(async (req, res) => {
   const { conversationId } = req.params;
-  const { body, clientId, isEncrypted = false, replyToMessageId } = req.body;
+  const { body, clientId, replyToMessageId } = req.body;
 
   const message = await createConversationMessage({
     conversationId,
@@ -60,7 +60,6 @@ const sendTextMessage = asyncHandler(async (req, res) => {
     replyToMessageId,
     type: 'text',
     body,
-    isEncrypted,
     clientId,
   });
 

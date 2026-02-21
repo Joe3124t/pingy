@@ -10,6 +10,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const userRoutes = require('./routes/userRoutes');
 const cryptoRoutes = require('./routes/cryptoRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const statusRoutes = require('./routes/statusRoutes');
 const { authMiddleware } = require('./middleware/authMiddleware');
 const { apiRateLimiter, authRateLimiter } = require('./middleware/rateLimiter');
 const { signedMediaAccessMiddleware } = require('./middleware/mediaAccessMiddleware');
@@ -60,6 +61,7 @@ app.use('/api/conversations', apiRateLimiter, authMiddleware, conversationRoutes
 app.use('/api/messages', apiRateLimiter, authMiddleware, messageRoutes);
 app.use('/api/users', apiRateLimiter, authMiddleware, userRoutes);
 app.use('/api/crypto', apiRateLimiter, authMiddleware, cryptoRoutes);
+app.use('/api/status', apiRateLimiter, authMiddleware, statusRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);

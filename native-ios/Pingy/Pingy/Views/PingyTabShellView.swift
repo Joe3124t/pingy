@@ -38,6 +38,7 @@ private enum PingyRootTab: String, CaseIterable, Identifiable {
 struct PingyTabShellView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
     @ObservedObject var themeManager: ThemeManager
+    let statusService: StatusService
 
     @State private var selectedTab: PingyRootTab = .chats
 
@@ -47,7 +48,10 @@ struct PingyTabShellView: View {
                 .tag(PingyRootTab.chats)
 
             NavigationStack {
-                StatusTabView(messengerViewModel: messengerViewModel)
+                StatusTabView(
+                    messengerViewModel: messengerViewModel,
+                    statusService: statusService
+                )
             }
             .tag(PingyRootTab.status)
 

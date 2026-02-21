@@ -91,7 +91,7 @@ struct Message: Codable, Identifiable, Equatable {
         }
 
         body = try container.decodeIfPresent(JSONValue.self, forKey: .body)
-        isEncrypted = try container.decode(Bool.self, forKey: .isEncrypted)
+        isEncrypted = try container.decodeIfPresent(Bool.self, forKey: .isEncrypted) ?? false
         mediaUrl = try container.decodeIfPresent(String.self, forKey: .mediaUrl)
         mediaName = try container.decodeIfPresent(String.self, forKey: .mediaName)
         mediaMime = try container.decodeIfPresent(String.self, forKey: .mediaMime)

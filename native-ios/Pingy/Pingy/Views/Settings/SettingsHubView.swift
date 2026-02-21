@@ -9,7 +9,7 @@ struct SettingsHubView: View {
     @AppStorage("pingy.v3.language") private var appLanguage = "System"
     @AppStorage("pingy.v3.lastSeenVisibility") private var lastSeenVisibility = "Contacts"
     @AppStorage("pingy.v3.profilePhotoPrivacy") private var profilePhotoPrivacy = "Everyone"
-    @AppStorage("pingy.v3.statusPrivacy") private var statusPrivacy = "Contacts"
+    @AppStorage("pingy.v3.statusPrivacy") private var statusPrivacy = "contacts"
     @AppStorage("pingy.v3.chat.backupEnabled") private var chatBackupEnabled = false
     @AppStorage("pingy.v3.chat.autoDownloadMedia") private var autoDownloadMedia = true
     @AppStorage("pingy.v3.chat.fontScale") private var chatFontScale = 1.0
@@ -44,6 +44,9 @@ struct SettingsHubView: View {
                 Task { await messengerViewModel.deleteMyAccount() }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .task {
+            statusPrivacy = normalizedStatusPrivacy(statusPrivacy)
         }
     }
 
@@ -169,8 +172,8 @@ struct SettingsHubView: View {
             }
 
             Picker("Status privacy", selection: $statusPrivacy) {
-                Text("My contacts").tag("Contacts")
-                Text("Custom").tag("Custom")
+                Text("My contacts").tag("contacts")
+                Text("Custom").tag("custom")
             }
 
             NavigationLink {
@@ -323,6 +326,14 @@ struct SettingsHubView: View {
         default:
             return String(localized: "System")
         }
+    }
+
+    private func normalizedStatusPrivacy(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized == "custom" {
+            return "custom"
+        }
+        return "contacts"
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

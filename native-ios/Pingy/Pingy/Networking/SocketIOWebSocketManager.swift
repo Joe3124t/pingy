@@ -125,46 +125,6 @@ final class SocketIOWebSocketManager: ObservableObject {
         }
     }
 
-    func sendEncryptedMessage(
-        conversationId: String,
-        body: EncryptedPayload,
-        clientId: String,
-        replyToMessageId: String?
-    ) async throws -> Message {
-        struct SendPayload: Encodable {
-            let conversationId: String
-            let body: EncryptedPayload
-            let isEncrypted: Bool
-            let clientId: String
-            let replyToMessageId: String?
-        }
-
-        let ack = try await emitWithAck(
-            event: "message:send",
-            payload: SendPayload(
-                conversationId: conversationId,
-                body: body,
-                isEncrypted: true,
-                clientId: clientId,
-                replyToMessageId: replyToMessageId
-            )
-        )
-
-        guard let payloadObject = ack.objectValue else {
-            throw SocketError.invalidAckPayload
-        }
-        guard (payloadObject["ok"]?.boolValue ?? false) == true else {
-            let message = payloadObject["message"]?.stringValue ?? "Message send failed"
-            throw APIError.server(statusCode: 400, message: message)
-        }
-
-        guard let messageValue = payloadObject["message"] else {
-            throw SocketError.invalidAckPayload
-        }
-        let messageData = try JSONEncoder().encode(messageValue)
-        return try decoder.decode(Message.self, from: messageData)
-    }
-
     func sendPlainTextMessage(
         conversationId: String,
         body: String,
