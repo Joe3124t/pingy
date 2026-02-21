@@ -504,7 +504,7 @@ struct ChatDetailView: View {
 
     private var headerStatusText: String {
         _ = viewModel.activeDurationTick
-        viewModel.presenceStatus(for: conversation).text
+        return viewModel.presenceStatus(for: conversation).text
     }
 
     private var hasTextToSend: Bool {
