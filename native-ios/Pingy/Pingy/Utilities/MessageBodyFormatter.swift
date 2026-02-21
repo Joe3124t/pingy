@@ -45,6 +45,11 @@ enum MessageBodyFormatter {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
+        let lowered = trimmed.lowercased()
+        if lowered.contains("\"ciphertext\""), lowered.contains("\"iv\"") {
+            return nil
+        }
+
         if let decoded = parseJSONObject(from: trimmed) {
             if isEncryptedPayload(rawObject: decoded) {
                 return nil

@@ -99,19 +99,72 @@ final class MessageService {
         clientID: String,
         replyToMessageID: String?
     ) async throws -> Message {
-        struct Payload: Encodable {
+        struct PayloadObjectBody: Encodable {
             let body: JSONValue
             let isEncrypted: Bool
             let clientId: String
             let replyToMessageId: String?
         }
 
+        struct PayloadStringBody: Encodable {
+            let body: String
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
+        struct LegacyEncryptedBody: Encodable {
+            let encryptedBody: JSONValue
+            let body: String
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
         let bodyValue = try JSONValue.fromEncodable(payload)
+        let payloadJSONStringData = try JSONEncoder().encode(payload)
+        let payloadJSONString = String(data: payloadJSONStringData, encoding: .utf8) ?? "{}"
+
+        do {
+            let endpoint = try Endpoint.json(
+                path: "messages/\(conversationID)",
+                method: .post,
+                payload: PayloadObjectBody(
+                    body: bodyValue,
+                    isEncrypted: true,
+                    clientId: clientID,
+                    replyToMessageId: replyToMessageID
+                )
+            )
+            let response: MessageResponse = try await authService.authorizedRequest(endpoint, as: MessageResponse.self)
+            return response.message
+        } catch {
+            // Older deployments may require encrypted payload as a JSON string in `body`.
+        }
+
+        do {
+            let endpoint = try Endpoint.json(
+                path: "messages/\(conversationID)",
+                method: .post,
+                payload: PayloadStringBody(
+                    body: payloadJSONString,
+                    isEncrypted: true,
+                    clientId: clientID,
+                    replyToMessageId: replyToMessageID
+                )
+            )
+            let response: MessageResponse = try await authService.authorizedRequest(endpoint, as: MessageResponse.self)
+            return response.message
+        } catch {
+            // Compatibility fallback for deployments using `encryptedBody`.
+        }
+
         let endpoint = try Endpoint.json(
             path: "messages/\(conversationID)",
             method: .post,
-            payload: Payload(
-                body: bodyValue,
+            payload: LegacyEncryptedBody(
+                encryptedBody: bodyValue,
+                body: payloadJSONString,
                 isEncrypted: true,
                 clientId: clientID,
                 replyToMessageId: replyToMessageID

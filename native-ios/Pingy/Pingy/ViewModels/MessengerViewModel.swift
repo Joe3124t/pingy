@@ -11,6 +11,14 @@ enum NetworkBannerState: Equatable {
     case updating
 }
 
+enum OutgoingMessageState: Equatable {
+    case sending
+    case sent
+    case delivered
+    case read
+    case failed
+}
+
 enum TransientNoticeStyle: Equatable {
     case info
     case warning
@@ -30,6 +38,7 @@ final class MessengerViewModel: ObservableObject {
     @Published var selectedConversationID: String?
     @Published var messagesByConversation: [String: [Message]] = [:]
     @Published var typingByConversation: [String: String] = [:]
+    @Published var recordingByConversation: [String: String] = [:]
     @Published var onlineUserIDs = Set<String>()
     @Published var isLoadingConversations = false
     @Published var isLoadingMessages = false
@@ -58,6 +67,8 @@ final class MessengerViewModel: ObservableObject {
     @Published private(set) var isSocketConnecting = false
     @Published private(set) var mediaUploadProgressByClientID: [String: Double] = [:]
     @Published private(set) var failedMediaClientIDs = Set<String>()
+    @Published private(set) var failedTextClientIDs = Set<String>()
+    @Published private(set) var activeDurationTick = Date()
     @Published private(set) var decryptedMessageBodyByID: [String: String] = [:]
     @Published private(set) var transientNotice: TransientNotice?
 
@@ -84,12 +95,17 @@ final class MessengerViewModel: ObservableObject {
     private var socketConnectingSince: Date?
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
     private var pendingTextQueue: [PendingTextMessage] = []
+    private var inFlightTextClientIDs = Set<String>()
     private var pendingMediaQueue: [PendingMediaMessage] = []
     private var isProcessingTextQueue = false
     private var isProcessingMediaQueue = false
     private var openConversationTasks: [String: Task<Void, Never>] = [:]
     private var syncedContactMatches: [ContactSearchResult] = []
     private let conversationListStateStore = ConversationListStateStore.shared
+    private var onlineSinceByUserID: [String: Date] = [:]
+    private var activeDurationTimer: Timer?
+    private var typingExpiryTasks: [String: Task<Void, Never>] = [:]
+    private var recordingExpiryTasks: [String: Task<Void, Never>] = [:]
 
     private struct PendingTextMessage: Codable {
         let conversationId: String
@@ -200,6 +216,7 @@ final class MessengerViewModel: ObservableObject {
                 self.handleSocketConnectingUpdate(isConnecting: isConnecting)
             }
 
+        startActiveDurationTimer()
         startNetworkMonitoring()
     }
 
@@ -211,6 +228,9 @@ final class MessengerViewModel: ObservableObject {
         socketConnectingObserver?.cancel()
         reconnectSyncRetryTask?.cancel()
         mediaRetryTask?.cancel()
+        activeDurationTimer?.invalidate()
+        typingExpiryTasks.values.forEach { $0.cancel() }
+        recordingExpiryTasks.values.forEach { $0.cancel() }
         networkMonitor.cancel()
     }
 
@@ -229,6 +249,10 @@ final class MessengerViewModel: ObservableObject {
     var activeMessages: [Message] {
         guard let selectedConversationID else { return [] }
         return messagesByConversation[selectedConversationID] ?? []
+    }
+
+    var totalUnreadCount: Int {
+        conversations.reduce(0) { $0 + max(0, $1.unreadCount) }
     }
 
     func contactDisplayName(for conversation: Conversation) -> String {
@@ -258,9 +282,87 @@ final class MessengerViewModel: ObservableObject {
         return mediaUploadProgressByClientID[clientId]
     }
 
+    func outgoingState(for message: Message) -> OutgoingMessageState? {
+        guard message.senderId == currentUserID else { return nil }
+
+        if let clientId = message.clientId {
+            if failedTextClientIDs.contains(clientId) {
+                return .failed
+            }
+            if inFlightTextClientIDs.contains(clientId) ||
+                pendingTextQueue.contains(where: { $0.clientId == clientId }) ||
+                pendingMediaQueue.contains(where: { $0.clientId == clientId })
+            {
+                return .sending
+            }
+        } else if message.id.hasPrefix("local-") {
+            return .failed
+        }
+
+        if message.seenAt != nil {
+            return .read
+        }
+        if message.deliveredAt != nil {
+            return .delivered
+        }
+        return .sent
+    }
+
+    func canRetryTextMessage(for message: Message) -> Bool {
+        guard let clientId = message.clientId else { return false }
+        return failedTextClientIDs.contains(clientId)
+    }
+
+    func retryPendingTextMessage(for message: Message) {
+        guard let clientId = message.clientId, !clientId.isEmpty else { return }
+        guard let conversation = conversations.first(where: { $0.conversationId == message.conversationId }) else { return }
+
+        if !pendingTextQueue.contains(where: { $0.clientId == clientId }) {
+            let queued = PendingTextMessage(
+                conversationId: message.conversationId,
+                participantId: conversation.participantId,
+                plainText: MessageBodyFormatter.previewText(from: message.body, fallback: "").trimmingCharacters(in: .whitespacesAndNewlines),
+                replyToMessageId: normalizedReplyToMessageId(message.replyToMessageId),
+                clientId: clientId,
+                createdAtISO: message.createdAt
+            )
+            if !queued.plainText.isEmpty {
+                pendingTextQueue.insert(queued, at: 0)
+            }
+        }
+
+        failedTextClientIDs.remove(clientId)
+        activeError = nil
+        persistPendingQueue()
+
+        Task { [weak self] in
+            await self?.processPendingTextQueue()
+        }
+    }
+
     func canRetryMediaUpload(for message: Message) -> Bool {
         guard let clientId = message.clientId else { return false }
         return failedMediaClientIDs.contains(clientId)
+    }
+
+    func presenceStatus(for conversation: Conversation) -> (text: String, highlighted: Bool) {
+        if let recording = recordingByConversation[conversation.conversationId], !recording.isEmpty {
+            return ("recording audio...", true)
+        }
+
+        if typingByConversation[conversation.conversationId] != nil {
+            return ("typing...", true)
+        }
+
+        if conversation.participantIsOnline {
+            if let since = onlineSinceByUserID[conversation.participantId] {
+                let elapsed = max(0, Int(Date().timeIntervalSince(since)))
+                return ("Active for \(formattedDuration(elapsed))", false)
+            }
+            return ("Online", false)
+        }
+
+        return (formatLastSeen(conversation.participantLastSeen), false)
     }
 
     func retryPendingMediaUpload(for message: Message) {
@@ -335,6 +437,11 @@ final class MessengerViewModel: ObservableObject {
 
         do {
             conversations = try await conversationService.listConversations()
+            for conversation in conversations where conversation.participantIsOnline {
+                if onlineSinceByUserID[conversation.participantId] == nil {
+                    onlineSinceByUserID[conversation.participantId] = Date()
+                }
+            }
             persistConversationsCache()
             return true
         } catch {
@@ -465,7 +572,14 @@ final class MessengerViewModel: ObservableObject {
             await markCurrentAsSeen()
             return true
         } catch {
-            if isTransientNetworkError(error) || (suppressNetworkAlert && isLikelyOfflineError(error)) {
+            if suppressNetworkAlert {
+                AppLogger.debug("Suppressing message refresh alert for \(conversationID): \(error.localizedDescription)")
+                if messagesByConversation[conversationID] == nil {
+                    messagesByConversation[conversationID] = []
+                }
+                return false
+            }
+            if isTransientNetworkError(error) || isLikelyOfflineError(error) {
                 AppLogger.debug("Keeping cached messages for \(conversationID) due offline refresh.")
                 if messagesByConversation[conversationID] == nil {
                     messagesByConversation[conversationID] = []
@@ -596,6 +710,7 @@ final class MessengerViewModel: ObservableObject {
             clientId: "ios-\(UUID().uuidString)",
             createdAtISO: ISO8601DateFormatter().string(from: Date())
         )
+        failedTextClientIDs.remove(queued.clientId)
         insertLocalPendingMessage(queued, conversation: conversation, sender: me)
         pendingReplyMessage = nil
         pendingTextQueue.append(queued)
@@ -693,6 +808,40 @@ final class MessengerViewModel: ObservableObject {
         } else {
             socketManager.sendTypingStop(conversationId: conversationID)
         }
+    }
+
+    func sendRecordingIndicator(_ isRecording: Bool) {
+        guard let conversationID = selectedConversationID else { return }
+        if isRecording {
+            socketManager.sendRecordingStart(conversationId: conversationID)
+        } else {
+            socketManager.sendRecordingStop(conversationId: conversationID)
+        }
+    }
+
+    func sendCallInvite(callId: String, conversationId: String, participantID: String) {
+        socketManager.sendCallInvite(
+            callId: callId,
+            conversationId: conversationId,
+            toUserId: participantID
+        )
+    }
+
+    func sendCallAccepted(callId: String, conversationId: String, participantID: String) {
+        socketManager.sendCallAccept(
+            callId: callId,
+            conversationId: conversationId,
+            toUserId: participantID
+        )
+    }
+
+    func sendCallEnded(callId: String, conversationId: String, participantID: String, status: CallSignalStatus) {
+        socketManager.sendCallEnd(
+            callId: callId,
+            conversationId: conversationId,
+            toUserId: participantID,
+            status: status
+        )
     }
 
     func toggleReaction(messageID: String, emoji: String) async {
@@ -985,12 +1134,21 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation = [:]
             decryptedMessageBodyByID = [:]
             pendingTextQueue = []
+            inFlightTextClientIDs = []
             pendingMediaQueue = []
             mediaRetryTask?.cancel()
             mediaUploadProgressByClientID = [:]
             failedMediaClientIDs = []
+            failedTextClientIDs = []
             pinnedConversationIDs = []
             archivedConversationIDs = []
+            onlineSinceByUserID = [:]
+            typingByConversation = [:]
+            recordingByConversation = [:]
+            typingExpiryTasks.values.forEach { $0.cancel() }
+            recordingExpiryTasks.values.forEach { $0.cancel() }
+            typingExpiryTasks = [:]
+            recordingExpiryTasks = [:]
             selectedConversationID = nil
         } catch {
             setError(from: error)
@@ -1009,12 +1167,21 @@ final class MessengerViewModel: ObservableObject {
         messagesByConversation = [:]
         decryptedMessageBodyByID = [:]
         pendingTextQueue = []
+        inFlightTextClientIDs = []
         pendingMediaQueue = []
         mediaRetryTask?.cancel()
         mediaUploadProgressByClientID = [:]
         failedMediaClientIDs = []
+        failedTextClientIDs = []
         pinnedConversationIDs = []
         archivedConversationIDs = []
+        onlineSinceByUserID = [:]
+        typingByConversation = [:]
+        recordingByConversation = [:]
+        typingExpiryTasks.values.forEach { $0.cancel() }
+        recordingExpiryTasks.values.forEach { $0.cancel() }
+        typingExpiryTasks = [:]
+        recordingExpiryTasks = [:]
         selectedConversationID = nil
     }
 
@@ -1068,21 +1235,26 @@ final class MessengerViewModel: ObservableObject {
         while !pendingTextQueue.isEmpty {
             let rawItem = pendingTextQueue.removeFirst()
             let item = normalizedPendingTextMessage(rawItem)
+            inFlightTextClientIDs.insert(item.clientId)
             persistPendingQueue()
             do {
                 let sent = try await sendPendingTextMessage(item)
+                inFlightTextClientIDs.remove(item.clientId)
+                failedTextClientIDs.remove(item.clientId)
                 upsertMessage(sent)
             } catch {
+                inFlightTextClientIDs.remove(item.clientId)
                 if isQueueItemDiscardable(error: error) {
                     AppLogger.debug("Dropping stale queued message \(item.clientId) due unavailable conversation.")
                     removeLocalPendingMessage(clientId: item.clientId, conversationID: item.conversationId)
+                    failedTextClientIDs.remove(item.clientId)
                     continue
                 }
 
                 if shouldDropQueueItem(after: error) {
-                    AppLogger.debug("Dropping non-retriable queued message \(item.clientId).")
-                    removeLocalPendingMessage(clientId: item.clientId, conversationID: item.conversationId)
-                    setError(from: error, fallback: "Couldn't send this message. Please try again.")
+                    AppLogger.debug("Marking non-retriable queued message as failed \(item.clientId).")
+                    failedTextClientIDs.insert(item.clientId)
+                    showTransientNotice("Message failed. Tap to retry.", style: .warning, autoDismissAfter: 2.2)
                     continue
                 }
 
@@ -1109,7 +1281,8 @@ final class MessengerViewModel: ObservableObject {
                         await self?.processPendingTextQueue()
                     }
                 } else {
-                    setError(from: error, fallback: "Couldn't send this message. Please try again.")
+                    failedTextClientIDs.insert(item.clientId)
+                    showTransientNotice("Message failed. Tap to retry.", style: .error, autoDismissAfter: 2.4)
                 }
                 break
             }
@@ -1144,6 +1317,7 @@ final class MessengerViewModel: ObservableObject {
                 persistPendingQueue()
                 mediaUploadProgressByClientID[item.clientId] = nil
                 failedMediaClientIDs.remove(item.clientId)
+                await primeMediaCache(fromLocalPath: item.localMediaURL, sentMessage: sent)
                 cleanupPendingMediaFile(path: item.localMediaURL)
                 upsertMessage(sent)
             } catch {
@@ -1258,6 +1432,7 @@ final class MessengerViewModel: ObservableObject {
         let lowered = message.lowercased()
         return lowered.contains("encrypted text payload is required")
             || lowered.contains("encrypted payload is required")
+            || lowered.contains("secure session")
     }
 
     private func sendEncryptedTextMessage(
@@ -1320,27 +1495,9 @@ final class MessengerViewModel: ObservableObject {
 
     private func isQueueItemDiscardable(error: Error) -> Bool {
         if let queueError = error as? PendingQueueError {
-            return queueError == .conversationUnavailable || queueError == .mediaUnavailable
+            return queueError == .mediaUnavailable
         }
-
-        guard let apiError = error as? APIError else {
-            return false
-        }
-
-        switch apiError {
-        case .server(let statusCode, let message):
-            if statusCode == 404 {
-                return true
-            }
-            if statusCode == 400 {
-                let normalized = message.lowercased()
-                return normalized.contains("validation failed")
-                    || normalized.contains("text body is required")
-            }
-            return false
-        default:
-            return false
-        }
+        return false
     }
 
     private func removeLocalPendingMessage(clientId: String, conversationID: String) {
@@ -1362,16 +1519,34 @@ final class MessengerViewModel: ObservableObject {
             applyReactionUpdate(update)
         case .typingStart(let value):
             typingByConversation[value.conversationId] = value.username ?? "Typing..."
+            scheduleTypingExpiry(for: value.conversationId)
         case .typingStop(let value):
             typingByConversation[value.conversationId] = nil
+            typingExpiryTasks[value.conversationId]?.cancel()
+            typingExpiryTasks[value.conversationId] = nil
+        case .recordingStart(let value):
+            recordingByConversation[value.conversationId] = value.username ?? "Recording..."
+            typingByConversation[value.conversationId] = nil
+            scheduleRecordingExpiry(for: value.conversationId)
+        case .recordingStop(let value):
+            recordingByConversation[value.conversationId] = nil
+            recordingExpiryTasks[value.conversationId]?.cancel()
+            recordingExpiryTasks[value.conversationId] = nil
         case .presenceSnapshot(let snapshot):
             onlineUserIDs = Set(snapshot.onlineUserIds)
+            onlineSinceByUserID = onlineUserIDs.reduce(into: [:]) { mapping, userID in
+                mapping[userID] = onlineSinceByUserID[userID] ?? Date()
+            }
             refreshConversationPresence()
         case .presenceUpdate(let update):
             if update.isOnline {
                 onlineUserIDs.insert(update.userId)
+                if onlineSinceByUserID[update.userId] == nil {
+                    onlineSinceByUserID[update.userId] = Date()
+                }
             } else {
                 onlineUserIDs.remove(update.userId)
+                onlineSinceByUserID.removeValue(forKey: update.userId)
             }
             refreshConversationPresence()
             updateConversationLastSeen(userID: update.userId, lastSeen: update.lastSeen)
@@ -1379,6 +1554,8 @@ final class MessengerViewModel: ObservableObject {
             applyProfileUpdate(profile)
         case .conversationWallpaper(let event):
             applyConversationWallpaperEvent(event)
+        case .callSignal:
+            break
         }
     }
 
@@ -1388,6 +1565,10 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func upsertMessage(_ message: Message) {
+        if let clientId = message.clientId {
+            failedTextClientIDs.remove(clientId)
+            inFlightTextClientIDs.remove(clientId)
+        }
         var current = messagesByConversation[message.conversationId] ?? []
         if let index = current.firstIndex(where: { $0.id == message.id }) {
             current[index] = message
@@ -1512,7 +1693,15 @@ final class MessengerViewModel: ObservableObject {
     private func refreshConversationPresence() {
         for index in conversations.indices {
             let participantID = conversations[index].participantId
-            conversations[index].participantIsOnline = onlineUserIDs.contains(participantID)
+            let isOnline = onlineUserIDs.contains(participantID)
+            conversations[index].participantIsOnline = isOnline
+            if isOnline {
+                if onlineSinceByUserID[participantID] == nil {
+                    onlineSinceByUserID[participantID] = Date()
+                }
+            } else {
+                onlineSinceByUserID.removeValue(forKey: participantID)
+            }
         }
     }
 
@@ -1602,6 +1791,79 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
+    private func startActiveDurationTimer() {
+        activeDurationTimer?.invalidate()
+        activeDurationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.activeDurationTick = Date()
+            }
+        }
+    }
+
+    private func formatLastSeen(_ iso: String?) -> String {
+        guard let value = iso else {
+            return "last seen recently"
+        }
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else {
+            return "last seen recently"
+        }
+
+        let output = DateFormatter()
+        output.locale = .autoupdatingCurrent
+        output.timeStyle = .short
+
+        if Calendar.current.isDateInToday(date) {
+            return "last seen today at \(output.string(from: date))"
+        }
+
+        if Calendar.current.isDateInYesterday(date) {
+            return "last seen yesterday at \(output.string(from: date))"
+        }
+
+        output.dateStyle = .medium
+        return "last seen \(output.string(from: date))"
+    }
+
+    private func formattedDuration(_ totalSeconds: Int) -> String {
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return "\(hours)h \(minutes)m \(seconds)s"
+        }
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        }
+        return "\(seconds)s"
+    }
+
+    private func scheduleTypingExpiry(for conversationID: String) {
+        typingExpiryTasks[conversationID]?.cancel()
+        typingExpiryTasks[conversationID] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.typingByConversation[conversationID] = nil
+                self?.typingExpiryTasks[conversationID] = nil
+            }
+        }
+    }
+
+    private func scheduleRecordingExpiry(for conversationID: String) {
+        recordingExpiryTasks[conversationID]?.cancel()
+        recordingExpiryTasks[conversationID] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.recordingByConversation[conversationID] = nil
+                self?.recordingExpiryTasks[conversationID] = nil
+            }
+        }
+    }
+
     private func startNetworkMonitoring() {
         networkMonitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
@@ -1670,8 +1932,7 @@ final class MessengerViewModel: ObservableObject {
                   isSocketConnecting
         {
             let connectingDuration = Date().timeIntervalSince(socketConnectingSince ?? Date())
-            let hasPendingQueue = !pendingTextQueue.isEmpty || !pendingMediaQueue.isEmpty
-            nextState = (connectingDuration < 18 || hasPendingQueue) ? .connecting : .hidden
+            nextState = connectingDuration < 10 ? .connecting : .hidden
         } else if isSyncingAfterReconnect {
             nextState = .updating
         } else {
@@ -1873,6 +2134,13 @@ final class MessengerViewModel: ObservableObject {
         return await Task.detached(priority: .utility) {
             try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
         }.value
+    }
+
+    private func primeMediaCache(fromLocalPath path: String, sentMessage: Message) async {
+        guard sentMessage.type == .image else { return }
+        guard let remoteURL = MediaURLResolver.resolve(sentMessage.mediaUrl) else { return }
+        guard let localData = await loadPendingMediaData(path: path), !localData.isEmpty else { return }
+        await RemoteImageStore.shared.primeImage(data: localData, for: remoteURL)
     }
 
     private func cleanupPendingMediaFile(path: String?) {
@@ -2296,7 +2564,7 @@ final class MessengerViewModel: ObservableObject {
                     return
                 }
                 if lowered.contains("public key not found") {
-                    activeError = "Secure key exchange is not ready with this user yet."
+                    activeError = nil
                     showTransientNotice(
                         "Secure session is syncing. Message queued and will send automatically.",
                         style: .info,
@@ -2305,7 +2573,7 @@ final class MessengerViewModel: ObservableObject {
                     return
                 }
                 if lowered.contains("encrypted text payload is required") {
-                    activeError = "Secure chat session is still syncing. Message queued for retry."
+                    activeError = nil
                     showTransientNotice(
                         "Secure session is syncing. Message queued and will send automatically.",
                         style: .info,

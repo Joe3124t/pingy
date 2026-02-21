@@ -35,6 +35,7 @@ struct ChatMediaViewer: View {
     @State private var shareURL: URL?
     @State private var mediaInfo: ChatMediaInfo?
     @State private var showSaveToast = false
+    @State private var reloadToken = UUID()
 
     init(
         entries: [ChatMediaGalleryEntry],
@@ -70,9 +71,22 @@ struct ChatMediaViewer: View {
                             .overlay(ProgressView().tint(.white))
                             .padding(30)
                     } failure: {
-                        Text("Image unavailable")
-                            .foregroundStyle(.white.opacity(0.82))
+                        Button {
+                            reloadToken = UUID()
+                        } label: {
+                            VStack(spacing: 8) {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                                    .font(.system(size: 30, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.92))
+                                Text("Tap to retry")
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.82))
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .buttonStyle(.plain)
                     }
+                    .id(reloadToken)
                     .tag(index)
                 }
             }

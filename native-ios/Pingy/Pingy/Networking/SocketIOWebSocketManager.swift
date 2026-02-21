@@ -27,10 +27,13 @@ enum SocketEvent {
     case messageReaction(ReactionUpdate)
     case typingStart(TypingEvent)
     case typingStop(TypingEvent)
+    case recordingStart(RecordingEvent)
+    case recordingStop(RecordingEvent)
     case presenceSnapshot(PresenceSnapshot)
     case presenceUpdate(PresenceUpdate)
     case profileUpdate(ProfileUpdateEvent)
     case conversationWallpaper(ConversationWallpaperEvent)
+    case callSignal(CallSignalEvent)
 }
 
 @MainActor
@@ -109,6 +112,82 @@ final class SocketIOWebSocketManager: ObservableObject {
         struct TypingPayload: Encodable { let conversationId: String }
         Task {
             try? await emit(event: "typing:stop", payload: TypingPayload(conversationId: conversationId))
+        }
+    }
+
+    func sendRecordingStart(conversationId: String) {
+        struct RecordingPayload: Encodable { let conversationId: String }
+        Task {
+            try? await emit(event: "recording:start", payload: RecordingPayload(conversationId: conversationId))
+        }
+    }
+
+    func sendRecordingStop(conversationId: String) {
+        struct RecordingPayload: Encodable { let conversationId: String }
+        Task {
+            try? await emit(event: "recording:stop", payload: RecordingPayload(conversationId: conversationId))
+        }
+    }
+
+    func sendCallInvite(callId: String, conversationId: String, toUserId: String) {
+        struct InvitePayload: Encodable {
+            let callId: String
+            let conversationId: String
+            let toUserId: String
+        }
+        Task {
+            try? await emit(
+                event: "call:invite",
+                payload: InvitePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+            )
+        }
+    }
+
+    func sendCallAccept(callId: String, conversationId: String, toUserId: String) {
+        struct AcceptPayload: Encodable {
+            let callId: String
+            let conversationId: String
+            let toUserId: String
+        }
+        Task {
+            try? await emit(
+                event: "call:accept",
+                payload: AcceptPayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+            )
+        }
+    }
+
+    func sendCallDecline(callId: String, conversationId: String, toUserId: String) {
+        struct DeclinePayload: Encodable {
+            let callId: String
+            let conversationId: String
+            let toUserId: String
+        }
+        Task {
+            try? await emit(
+                event: "call:decline",
+                payload: DeclinePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+            )
+        }
+    }
+
+    func sendCallEnd(callId: String, conversationId: String, toUserId: String, status: CallSignalStatus) {
+        struct EndPayload: Encodable {
+            let callId: String
+            let conversationId: String
+            let toUserId: String
+            let status: String
+        }
+        Task {
+            try? await emit(
+                event: "call:end",
+                payload: EndPayload(
+                    callId: callId,
+                    conversationId: conversationId,
+                    toUserId: toUserId,
+                    status: status.rawValue
+                )
+            )
         }
     }
 
@@ -324,6 +403,12 @@ final class SocketIOWebSocketManager: ObservableObject {
             case "typing:stop":
                 let value: TypingEvent = try decodePayload(payload, as: TypingEvent.self)
                 onEvent?(.typingStop(value))
+            case "recording:start":
+                let value: RecordingEvent = try decodePayload(payload, as: RecordingEvent.self)
+                onEvent?(.recordingStart(value))
+            case "recording:stop":
+                let value: RecordingEvent = try decodePayload(payload, as: RecordingEvent.self)
+                onEvent?(.recordingStop(value))
             case "presence:snapshot":
                 let value: PresenceSnapshot = try decodePayload(payload, as: PresenceSnapshot.self)
                 onEvent?(.presenceSnapshot(value))
@@ -336,6 +421,9 @@ final class SocketIOWebSocketManager: ObservableObject {
             case "conversation:wallpaper":
                 let value: ConversationWallpaperEvent = try decodePayload(payload, as: ConversationWallpaperEvent.self)
                 onEvent?(.conversationWallpaper(value))
+            case "call:ringing", "call:connected", "call:declined", "call:ended", "call:missed":
+                let value: CallSignalEvent = try decodePayload(payload, as: CallSignalEvent.self)
+                onEvent?(.callSignal(value))
             default:
                 break
             }

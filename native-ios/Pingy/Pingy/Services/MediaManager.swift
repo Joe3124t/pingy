@@ -16,6 +16,7 @@ actor MediaManager {
             if let item = await loadSingleItem(from: result, source: source) {
                 items.append(item)
             }
+            await Task.yield()
         }
 
         return items
@@ -45,7 +46,7 @@ actor MediaManager {
             return nil
         }
 
-        guard let previewImage = downsampledImage(from: data, maxPixelSize: 2200) else {
+        guard let previewImage = downsampledImage(from: data, maxPixelSize: 1800) else {
             return nil
         }
 
@@ -53,8 +54,8 @@ actor MediaManager {
         let mimeType = mimeType(for: format)
         let dimensions = imageDimensions(from: data)
 
-        let optimizedImage = downsampledImage(from: data, maxPixelSize: 1700) ?? previewImage
-        let hdImage = downsampledImage(from: data, maxPixelSize: 3200) ?? optimizedImage
+        let optimizedImage = downsampledImage(from: data, maxPixelSize: 1500) ?? previewImage
+        let hdImage = downsampledImage(from: data, maxPixelSize: 2600) ?? optimizedImage
 
         guard let optimizedData = encode(image: optimizedImage, preferredFormat: format, quality: 0.72) else {
             return nil

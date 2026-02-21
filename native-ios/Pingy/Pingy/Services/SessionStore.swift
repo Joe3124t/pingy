@@ -17,6 +17,8 @@ final class SessionStore: ObservableObject {
     private enum Keys {
         static let accessToken = "pingy.session.accessToken"
         static let refreshToken = "pingy.session.refreshToken"
+        static let accessTokenFallback = "pingy.session.accessToken.fallback"
+        static let refreshTokenFallback = "pingy.session.refreshToken.fallback"
         static let currentUser = "pingy.session.currentUser"
         static let migrationVersion = "pingy.security.migrationVersion"
     }
@@ -44,6 +46,8 @@ final class SessionStore: ObservableObject {
         } catch {
             AppLogger.error("Failed to persist tokens in keychain: \(error.localizedDescription)")
         }
+        userDefaults.set(tokens.accessToken, forKey: Keys.accessTokenFallback)
+        userDefaults.set(tokens.refreshToken, forKey: Keys.refreshTokenFallback)
 
         do {
             let data = try JSONEncoder().encode(user)
@@ -60,6 +64,7 @@ final class SessionStore: ObservableObject {
         } catch {
             AppLogger.error("Failed to update access token: \(error.localizedDescription)")
         }
+        userDefaults.set(token, forKey: Keys.accessTokenFallback)
     }
 
     func clear() {
@@ -74,6 +79,8 @@ final class SessionStore: ObservableObject {
             AppLogger.error("Failed to clear keychain session: \(error.localizedDescription)")
         }
 
+        userDefaults.removeObject(forKey: Keys.accessTokenFallback)
+        userDefaults.removeObject(forKey: Keys.refreshTokenFallback)
         userDefaults.removeObject(forKey: Keys.currentUser)
     }
 
@@ -83,6 +90,14 @@ final class SessionStore: ObservableObject {
             refreshToken = try keychain.string(for: Keys.refreshToken)
         } catch {
             AppLogger.error("Failed to restore tokens from keychain: \(error.localizedDescription)")
+        }
+
+        if (accessToken ?? "").isEmpty {
+            accessToken = userDefaults.string(forKey: Keys.accessTokenFallback)
+        }
+
+        if (refreshToken ?? "").isEmpty {
+            refreshToken = userDefaults.string(forKey: Keys.refreshTokenFallback)
         }
 
         if let userData = userDefaults.data(forKey: Keys.currentUser) {

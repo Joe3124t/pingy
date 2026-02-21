@@ -54,6 +54,17 @@ struct SettingsHubView: View {
                     SettingsSectionRow(icon: "gearshape.2", title: "Advanced")
                 }
             }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Text("Pingy v\(appVersionString)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
+                    Spacer()
+                }
+                .listRowBackground(Color.clear)
+            }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -84,6 +95,10 @@ struct SettingsHubView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+    }
+
+    private var appVersionString: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.7"
     }
 }
 

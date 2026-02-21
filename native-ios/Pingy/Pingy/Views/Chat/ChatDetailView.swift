@@ -22,6 +22,8 @@ struct ChatDetailView: View {
     @State private var isContactInfoPresented = false
     @State private var mediaViewerState: ChatMediaViewerState?
     @State private var isMicGestureActive = false
+    @State private var activeCallSession: InAppCallSession?
+    @State private var callAutoConnectTask: Task<Void, Never>?
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
@@ -61,6 +63,12 @@ struct ChatDetailView: View {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = false
             }
+            callAutoConnectTask?.cancel()
+            if voiceRecorder.isRecording {
+                _ = try? voiceRecorder.stopRecording()
+            }
+            viewModel.sendTyping(false)
+            viewModel.sendRecordingIndicator(false)
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
@@ -79,7 +87,7 @@ struct ChatDetailView: View {
             }
         .sheet(isPresented: $isNativeMediaPickerPresented) {
             NativeMediaPickerView(
-                selectionLimit: 6,
+                selectionLimit: 4,
                 onCancel: {
                     isNativeMediaPickerPresented = false
                 },
@@ -162,6 +170,20 @@ struct ChatDetailView: View {
                 onDeleteOwnMessage: { message in
                     viewModel.deleteMessageLocally(messageID: message.id, conversationID: message.conversationId)
                     mediaViewerState = nil
+                }
+            )
+        }
+        .fullScreenCover(item: $activeCallSession) { session in
+            InAppVoiceCallView(
+                session: session,
+                onToggleMute: {
+                    toggleCallMute()
+                },
+                onToggleSpeaker: {
+                    toggleCallSpeaker()
+                },
+                onEnd: {
+                    endCurrentCall()
                 }
             )
         }
@@ -262,6 +284,8 @@ struct ChatDetailView: View {
                             decryptedText: viewModel.decryptedBody(for: message),
                             uploadProgress: viewModel.mediaUploadProgress(for: message),
                             canRetryUpload: viewModel.canRetryMediaUpload(for: message),
+                            outgoingState: viewModel.outgoingState(for: message),
+                            canRetryText: viewModel.canRetryTextMessage(for: message),
                             onReply: {
                                 viewModel.setReplyTarget(message)
                             },
@@ -270,6 +294,9 @@ struct ChatDetailView: View {
                             },
                             onRetryUpload: {
                                 viewModel.retryPendingMediaUpload(for: message)
+                            },
+                            onRetryText: {
+                                viewModel.retryPendingTextMessage(for: message)
                             },
                             onOpenImage: { tappedMessage, _ in
                                 openMediaViewer(for: tappedMessage)
@@ -471,46 +498,17 @@ struct ChatDetailView: View {
     }
 
     private var headerStatusIsTyping: Bool {
-        viewModel.typingByConversation[conversation.conversationId] != nil
+        let status = viewModel.presenceStatus(for: conversation)
+        return status.highlighted
     }
 
     private var headerStatusText: String {
-        if headerStatusIsTyping {
-            return "typing..."
-        }
-        if conversation.participantIsOnline {
-            return "Online"
-        }
-        return lastSeenText
+        _ = viewModel.activeDurationTick
+        viewModel.presenceStatus(for: conversation).text
     }
 
     private var hasTextToSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var lastSeenText: String {
-        guard let value = conversation.participantLastSeen else {
-            return "last seen recently"
-        }
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: value) else {
-            return "last seen recently"
-        }
-
-        let output = DateFormatter()
-        output.locale = .autoupdatingCurrent
-        output.timeStyle = .short
-
-        if Calendar.current.isDateInToday(date) {
-            return "last seen today at \(output.string(from: date))"
-        }
-
-        if Calendar.current.isDateInYesterday(date) {
-            return "last seen yesterday at \(output.string(from: date))"
-        }
-
-        output.dateStyle = .medium
-        return "last seen \(output.string(from: date))"
     }
 
     private var renderedMessages: [Message] {
@@ -599,10 +597,12 @@ struct ChatDetailView: View {
         if isPressing {
             guard !isMicGestureActive else { return }
             isMicGestureActive = true
+            viewModel.sendRecordingIndicator(true)
             do {
                 try await voiceRecorder.startRecording()
             } catch {
                 isMicGestureActive = false
+                viewModel.sendRecordingIndicator(false)
                 viewModel.activeError = error.localizedDescription
             }
             return
@@ -610,6 +610,7 @@ struct ChatDetailView: View {
 
         guard isMicGestureActive else { return }
         isMicGestureActive = false
+        viewModel.sendRecordingIndicator(false)
 
         guard voiceRecorder.isRecording else { return }
 
@@ -624,21 +625,76 @@ struct ChatDetailView: View {
     }
 
     private func startVoiceCall() {
-        let rawPhone = (viewModel.contactPhoneNumber(for: conversation.participantId) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let dialable = rawPhone.filter { "+0123456789".contains($0) }
+        guard activeCallSession == nil else { return }
+        let callId = UUID().uuidString
+        activeCallSession = InAppCallSession(
+            id: callId,
+            conversationId: conversation.conversationId,
+            participantId: conversation.participantId,
+            participantName: participantDisplayName,
+            participantAvatarURL: conversation.participantAvatarUrl,
+            status: .ringing,
+            startedAt: nil,
+            isMuted: false,
+            isSpeakerEnabled: false
+        )
+        viewModel.sendCallInvite(callId: callId, conversationId: conversation.conversationId, participantID: conversation.participantId)
 
-        guard !dialable.isEmpty else {
-            viewModel.activeError = "Phone number is unavailable for this contact."
-            return
+        callAutoConnectTask?.cancel()
+        callAutoConnectTask = Task { [conversationId = conversation.conversationId, participantId = conversation.participantId] in
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            await MainActor.run {
+                guard var session = activeCallSession, session.conversationId == conversationId else { return }
+                session.status = .connected
+                session.startedAt = Date()
+                activeCallSession = session
+                viewModel.sendCallAccepted(callId: session.id, conversationId: conversationId, participantID: participantId)
+            }
         }
+    }
 
-        guard let telURL = URL(string: "tel://\(dialable)"), UIApplication.shared.canOpenURL(telURL) else {
-            viewModel.activeError = "Voice call is unavailable on this device."
-            return
+    private func toggleCallMute() {
+        guard var session = activeCallSession else { return }
+        session.isMuted.toggle()
+        activeCallSession = session
+    }
+
+    private func toggleCallSpeaker() {
+        guard var session = activeCallSession else { return }
+        session.isSpeakerEnabled.toggle()
+        activeCallSession = session
+    }
+
+    private func endCurrentCall() {
+        guard let session = activeCallSession else { return }
+        callAutoConnectTask?.cancel()
+        let isConnected = session.startedAt != nil
+        let duration = isConnected ? Int(Date().timeIntervalSince(session.startedAt ?? Date())) : 0
+        viewModel.sendCallEnded(
+            callId: session.id,
+            conversationId: session.conversationId,
+            participantID: session.participantId,
+            status: session.startedAt == nil ? .missed : .ended
+        )
+        if let userID = viewModel.currentUserID, !userID.isEmpty {
+            Task {
+                await CallLogService.shared.append(
+                    CallLogEntry(
+                        id: UUID().uuidString,
+                        conversationID: session.conversationId,
+                        participantID: session.participantId,
+                        participantName: session.participantName,
+                        participantAvatarURL: session.participantAvatarURL,
+                        direction: .outgoing,
+                        type: .voice,
+                        createdAt: Date(),
+                        durationSeconds: duration
+                    ),
+                    for: userID
+                )
+            }
         }
-
-        UIApplication.shared.open(telURL, options: [:], completionHandler: nil)
+        activeCallSession = nil
     }
 
     @ViewBuilder

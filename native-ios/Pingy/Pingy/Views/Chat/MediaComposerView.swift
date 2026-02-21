@@ -11,7 +11,7 @@ struct NativeMediaPickerView: UIViewControllerRepresentable {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
         configuration.selectionLimit = selectionLimit
-        configuration.preferredAssetRepresentationMode = .current
+        configuration.preferredAssetRepresentationMode = .compatible
 
         let controller = PHPickerViewController(configuration: configuration)
         controller.delegate = context.coordinator
@@ -34,12 +34,11 @@ struct NativeMediaPickerView: UIViewControllerRepresentable {
         }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            picker.dismiss(animated: true) {
-                if results.isEmpty {
-                    self.onCancel()
-                } else {
-                    self.onFinish(results)
-                }
+            // Let SwiftUI sheet state drive dismissal to avoid double-dismiss races.
+            if results.isEmpty {
+                onCancel()
+            } else {
+                onFinish(results)
             }
         }
     }

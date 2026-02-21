@@ -11,9 +11,12 @@ struct MessageBubbleView: View {
     let decryptedText: String?
     let uploadProgress: Double?
     let canRetryUpload: Bool
+    let outgoingState: OutgoingMessageState?
+    let canRetryText: Bool
     let onReply: () -> Void
     let onReact: (String) -> Void
     let onRetryUpload: () -> Void
+    let onRetryText: () -> Void
     let onOpenImage: ((Message, URL) -> Void)?
     @Environment(\.colorScheme) private var colorScheme
 
@@ -46,10 +49,8 @@ struct MessageBubbleView: View {
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(isOwn ? Color.white.opacity(0.92) : PingyTheme.textSecondary)
 
-                    if isOwn {
-                        Image(systemName: statusSymbol)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(statusColor)
+                    if isOwn, let outgoingState {
+                        messageStateIndicator(state: outgoingState)
                     }
                 }
 
@@ -161,18 +162,42 @@ struct MessageBubbleView: View {
         return AnyShapeStyle(PingyTheme.receivedBubble)
     }
 
-    private var statusSymbol: String {
-        if message.seenAt != nil {
-            return "checkmark.circle.fill"
+    @ViewBuilder
+    private func messageStateIndicator(state: OutgoingMessageState) -> some View {
+        switch state {
+        case .sending:
+            Image(systemName: "clock")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.92))
+        case .sent:
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.92))
+        case .delivered:
+            HStack(spacing: 1) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color.white.opacity(0.92))
+        case .read:
+            HStack(spacing: 1) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color(red: 0.68, green: 0.93, blue: 0.76))
+        case .failed:
+            Button {
+                PingyHaptics.softTap()
+                onRetryText()
+            } label: {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle((canRetryText ? Color.red : Color.orange).opacity(0.96))
+            }
+            .buttonStyle(.plain)
         }
-        if message.deliveredAt != nil {
-            return "checkmark.circle"
-        }
-        return "clock"
-    }
-
-    private var statusColor: Color {
-        message.seenAt != nil ? PingyTheme.success : Color.white.opacity(0.92)
     }
 
     private var reactionEmojis: [String] {
@@ -214,15 +239,29 @@ struct MessageBubbleView: View {
                                 .scaledToFill()
                                 .frame(width: 230, height: 220)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                         } placeholder: {
                             ProgressView()
                                 .frame(width: 210, height: 180)
                                 .tint(isOwn ? .white : PingyTheme.primaryStrong)
                         } failure: {
-                            Text("Image unavailable")
-                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
-                                .frame(width: 210, height: 120)
+                            VStack(spacing: 8) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
+                                if canRetryUpload {
+                                    Button("Retry") {
+                                        onRetryUpload()
+                                    }
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .foregroundStyle(isOwn ? Color.white : PingyTheme.primaryStrong)
+                                } else {
+                                    Text("Tap to retry later")
+                                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                                        .foregroundStyle(isOwn ? Color.white.opacity(0.88) : PingyTheme.textSecondary)
+                                }
+                            }
+                            .frame(width: 210, height: 120)
                         }
 
                         if isLocalPendingMedia {
@@ -404,7 +443,7 @@ private struct ChatImagePreviewSheet: View {
                             .scaledToFit()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     case .failure:
-                        Text("Image unavailable")
+                        Text("Couldn't load image")
                             .foregroundStyle(.white.opacity(0.88))
                     @unknown default:
                         EmptyView()

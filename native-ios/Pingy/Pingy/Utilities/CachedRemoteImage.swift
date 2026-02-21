@@ -50,6 +50,15 @@ actor RemoteImageStore {
         }
     }
 
+    func primeImage(data: Data, for url: URL) async {
+        let key = cacheKey(for: url)
+        guard let image = UIImage(data: data) else {
+            return
+        }
+        memoryCache.setObject(image, forKey: key as NSString)
+        saveToDisk(data: data, cacheKey: key)
+    }
+
     private func cacheKey(for url: URL) -> String {
         if url.isFileURL {
             return "file://\(url.path)"
