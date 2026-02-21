@@ -12,7 +12,7 @@ final class SessionStore: ObservableObject {
 
     private let userDefaults = UserDefaults.standard
     private let keychain = KeychainStore.shared
-    private let keychainResetVersion = 2
+    private let sessionMigrationVersion = 3
 
     private enum Keys {
         static let accessToken = "pingy.session.accessToken"
@@ -29,7 +29,7 @@ final class SessionStore: ObservableObject {
     }
 
     init() {
-        runOneTimeKeychainResetIfNeeded()
+        runSessionMigrationIfNeeded()
         restore()
     }
 
@@ -149,20 +149,14 @@ final class SessionStore: ObservableObject {
         return try? JSONDecoder().decode(AccessTokenClaims.self, from: data)
     }
 
-    private func runOneTimeKeychainResetIfNeeded() {
+    private func runSessionMigrationIfNeeded() {
         let appliedVersion = userDefaults.integer(forKey: Keys.migrationVersion)
 
-        guard appliedVersion < keychainResetVersion else {
+        guard appliedVersion < sessionMigrationVersion else {
             return
         }
 
-        do {
-            try keychain.deleteAll(matchingAccountPrefix: "pingy.")
-        } catch {
-            AppLogger.error("Failed to reset keychain during v2 migration: \(error.localizedDescription)")
-        }
-
-        userDefaults.removeObject(forKey: Keys.currentUser)
-        userDefaults.set(keychainResetVersion, forKey: Keys.migrationVersion)
+        // Keep existing keychain/session data across app updates.
+        userDefaults.set(sessionMigrationVersion, forKey: Keys.migrationVersion)
     }
 }

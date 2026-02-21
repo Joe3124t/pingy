@@ -63,17 +63,30 @@ struct MediaComposerView: View {
             Color.black.opacity(0.88)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                topBar
-                mediaPreview
-                metadataPanel
-                thumbnailsStrip
-                composerBar
+            if items.isEmpty {
+                VStack(spacing: 14) {
+                    Text("No media selected")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                    Button("Close") {
+                        onClose()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    topBar
+                    mediaPreview
+                    metadataPanel
+                    thumbnailsStrip
+                    composerBar
+                }
             }
         }
     }
 
-    private var selectedItem: MediaComposerItem {
+    private var selectedItem: MediaComposerItem? {
+        guard !items.isEmpty else { return nil }
         let safeIndex = min(max(0, selectedIndex), max(0, items.count - 1))
         return items[safeIndex]
     }
@@ -129,12 +142,12 @@ struct MediaComposerView: View {
 
     private var metadataPanel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("\(selectedItem.resolutionLabel) | \(selectedItem.format)")
+            Text("\(selectedItem?.resolutionLabel ?? "--") | \(selectedItem?.format ?? "--")")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.92))
 
             Text(
-                "Original \(formatBytes(selectedItem.originalSizeBytes)) | Optimized \(formatBytes(selectedItem.optimizedSizeBytes)) | Est. upload \(formatBytes(selectedItem.estimatedUploadSizeBytes(hdEnabled: hdEnabled)))"
+                "Original \(formatBytes(selectedItem?.originalSizeBytes ?? 0)) | Optimized \(formatBytes(selectedItem?.optimizedSizeBytes ?? 0)) | Est. upload \(formatBytes(selectedItem?.estimatedUploadSizeBytes(hdEnabled: hdEnabled) ?? 0))"
             )
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.78))
@@ -196,6 +209,7 @@ struct MediaComposerView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
                 Button {
+                    guard !items.isEmpty else { return }
                     PingyHaptics.softTap()
                     onSend(items, caption, hdEnabled)
                 } label: {

@@ -11,6 +11,19 @@ enum NetworkBannerState: Equatable {
     case updating
 }
 
+enum TransientNoticeStyle: Equatable {
+    case info
+    case warning
+    case error
+    case success
+}
+
+struct TransientNotice: Identifiable, Equatable {
+    let id = UUID()
+    let message: String
+    let style: TransientNoticeStyle
+}
+
 @MainActor
 final class MessengerViewModel: ObservableObject {
     @Published var conversations: [Conversation] = []
@@ -46,6 +59,7 @@ final class MessengerViewModel: ObservableObject {
     @Published private(set) var mediaUploadProgressByClientID: [String: Double] = [:]
     @Published private(set) var failedMediaClientIDs = Set<String>()
     @Published private(set) var decryptedMessageBodyByID: [String: String] = [:]
+    @Published private(set) var transientNotice: TransientNotice?
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -64,6 +78,10 @@ final class MessengerViewModel: ObservableObject {
     private var isSocketBound = false
     private var isSyncingAfterReconnect = false
     private var reconnectSyncRetryTask: Task<Void, Never>?
+    private var mediaRetryTask: Task<Void, Never>?
+    private var transientNoticeTask: Task<Void, Never>?
+    private var lastSessionSyncNoticeAt: Date?
+    private var socketConnectingSince: Date?
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
     private var pendingTextQueue: [PendingTextMessage] = []
     private var pendingMediaQueue: [PendingMediaMessage] = []
@@ -82,7 +100,7 @@ final class MessengerViewModel: ObservableObject {
         let createdAtISO: String
     }
 
-    private struct PendingMediaMessage {
+    private struct PendingMediaMessage: Codable {
         let conversationId: String
         let participantId: String
         let type: MessageType
@@ -96,6 +114,11 @@ final class MessengerViewModel: ObservableObject {
         let localMediaURL: String
     }
 
+    private struct PendingQueueSnapshot: Codable {
+        let text: [PendingTextMessage]
+        let media: [PendingMediaMessage]
+    }
+
     private struct CachedContactMatch: Codable {
         let user: User
         let contactName: String
@@ -103,6 +126,7 @@ final class MessengerViewModel: ObservableObject {
 
     private enum PendingQueueError: Error {
         case conversationUnavailable
+        case mediaUnavailable
     }
 
     private enum CacheKeys {
@@ -186,6 +210,7 @@ final class MessengerViewModel: ObservableObject {
         socketConnectionObserver?.cancel()
         socketConnectingObserver?.cancel()
         reconnectSyncRetryTask?.cancel()
+        mediaRetryTask?.cancel()
         networkMonitor.cancel()
     }
 
@@ -244,6 +269,7 @@ final class MessengerViewModel: ObservableObject {
 
         let item = pendingMediaQueue.remove(at: index)
         pendingMediaQueue.insert(item, at: 0)
+        persistPendingQueue()
         failedMediaClientIDs.remove(clientId)
         mediaUploadProgressByClientID[clientId] = 0.08
 
@@ -584,6 +610,10 @@ final class MessengerViewModel: ObservableObject {
         type: MessageType,
         body: String? = nil
     ) async {
+        guard !data.isEmpty else {
+            showTransientNotice("Selected media is empty and could not be sent.", style: .warning)
+            return
+        }
         guard let conversation = selectedConversation else { return }
         guard let me = authService.sessionStore.currentUser else { return }
 
@@ -591,6 +621,7 @@ final class MessengerViewModel: ObservableObject {
         let normalizedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let localMediaURL = await savePendingMediaFile(data: data, fileName: fileName, clientId: clientId) else {
             activeError = "Couldn't prepare media file. Please try another file."
+            showTransientNotice(activeError ?? "Couldn't prepare media file.", style: .error)
             return
         }
 
@@ -611,6 +642,7 @@ final class MessengerViewModel: ObservableObject {
         insertLocalPendingMediaMessage(queued, conversation: conversation, sender: me)
         pendingReplyMessage = nil
         pendingMediaQueue.append(queued)
+        persistPendingQueue()
         mediaUploadProgressByClientID[clientId] = 0.05
         failedMediaClientIDs.remove(clientId)
         await processPendingMediaQueue()
@@ -841,14 +873,26 @@ final class MessengerViewModel: ObservableObject {
         defer { isUploadingAvatar = false }
 
         do {
-            currentUserSettings = try await settingsService.uploadAvatar(
+            let updatedUser = try await settingsService.uploadAvatar(
                 imageData: imageData,
                 filename: fileName,
                 mimeType: mimeType
             )
+            currentUserSettings = updatedUser
+            if var me = authService.sessionStore.currentUser, me.id == updatedUser.id {
+                me.avatarUrl = updatedUser.avatarUrl
+                me.username = updatedUser.username
+                me.bio = updatedUser.bio
+                let tokens = AuthTokens(
+                    accessToken: authService.sessionStore.accessToken ?? "",
+                    refreshToken: authService.sessionStore.refreshToken ?? ""
+                )
+                authService.sessionStore.update(user: me, tokens: tokens)
+            }
             persistSettingsCache()
             await loadConversations()
             profileSaveToken = UUID()
+            showTransientNotice("Profile photo updated.", style: .success)
             return true
         } catch {
             setError(from: error, fallback: "Couldn't upload profile photo. Try JPG/PNG under 5 MB.")
@@ -942,6 +986,7 @@ final class MessengerViewModel: ObservableObject {
             decryptedMessageBodyByID = [:]
             pendingTextQueue = []
             pendingMediaQueue = []
+            mediaRetryTask?.cancel()
             mediaUploadProgressByClientID = [:]
             failedMediaClientIDs = []
             pinnedConversationIDs = []
@@ -965,6 +1010,7 @@ final class MessengerViewModel: ObservableObject {
         decryptedMessageBodyByID = [:]
         pendingTextQueue = []
         pendingMediaQueue = []
+        mediaRetryTask?.cancel()
         mediaUploadProgressByClientID = [:]
         failedMediaClientIDs = []
         pinnedConversationIDs = []
@@ -1044,6 +1090,20 @@ final class MessengerViewModel: ObservableObject {
                 persistPendingQueue()
                 if shouldAutoRetryQueue(after: error) {
                     AppLogger.debug("Keeping message queued until network is back: \(item.clientId)")
+                    if isSecureSessionSyncingError(error) {
+                        let shouldShowNotice: Bool = {
+                            guard let last = lastSessionSyncNoticeAt else { return true }
+                            return Date().timeIntervalSince(last) > 4
+                        }()
+                        if shouldShowNotice {
+                            lastSessionSyncNoticeAt = Date()
+                            showTransientNotice(
+                                "Secure session is syncing. Message queued and will send automatically.",
+                                style: .info,
+                                autoDismissAfter: 2.2
+                            )
+                        }
+                    }
                     Task { [weak self] in
                         try? await Task.sleep(nanoseconds: 2_000_000_000)
                         await self?.processPendingTextQueue()
@@ -1066,6 +1126,7 @@ final class MessengerViewModel: ObservableObject {
             pendingMediaQueue.removeAll()
             mediaUploadProgressByClientID.removeAll()
             failedMediaClientIDs.removeAll()
+            persistPendingQueue()
             return
         }
         guard isInternetReachable else { return }
@@ -1080,21 +1141,45 @@ final class MessengerViewModel: ObservableObject {
             do {
                 let sent = try await sendPendingMediaMessage(item)
                 pendingMediaQueue.removeFirst()
+                persistPendingQueue()
                 mediaUploadProgressByClientID[item.clientId] = nil
                 failedMediaClientIDs.remove(item.clientId)
                 cleanupPendingMediaFile(path: item.localMediaURL)
                 upsertMessage(sent)
             } catch {
+                if isQueueItemDiscardable(error: error) || shouldDropQueueItem(after: error) {
+                    pendingMediaQueue.removeFirst()
+                    persistPendingQueue()
+                    mediaUploadProgressByClientID[item.clientId] = nil
+                    failedMediaClientIDs.remove(item.clientId)
+                    cleanupPendingMediaFile(path: item.localMediaURL)
+                    removeLocalPendingMessage(clientId: item.clientId, conversationID: item.conversationId)
+                    setError(from: error, fallback: "Couldn't send one media item. It was removed from queue.")
+                    continue
+                }
+
                 if shouldAutoRetryMediaUpload(after: error) {
                     mediaUploadProgressByClientID[item.clientId] = 0.05
+                    persistPendingQueue()
+                    scheduleMediaQueueRetry(after: 2_500_000_000)
                     break
                 }
 
                 failedMediaClientIDs.insert(item.clientId)
                 mediaUploadProgressByClientID[item.clientId] = nil
                 setError(from: error, fallback: "Couldn't send media right now. Tap retry.")
+                persistPendingQueue()
                 break
             }
+        }
+    }
+
+    private func scheduleMediaQueueRetry(after nanoseconds: UInt64) {
+        mediaRetryTask?.cancel()
+        mediaRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            await self?.processPendingMediaQueue()
         }
     }
 
@@ -1108,7 +1193,7 @@ final class MessengerViewModel: ObservableObject {
         }
 
         guard let fileData = await loadPendingMediaData(path: item.localMediaURL) else {
-            throw APIError.server(statusCode: 422, message: "Pending media file is unavailable")
+            throw PendingQueueError.mediaUnavailable
         }
 
         return try await messageService.sendMediaMessage(
@@ -1234,8 +1319,8 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func isQueueItemDiscardable(error: Error) -> Bool {
-        if error as? PendingQueueError == .conversationUnavailable {
-            return true
+        if let queueError = error as? PendingQueueError {
+            return queueError == .conversationUnavailable || queueError == .mediaUnavailable
         }
 
         guard let apiError = error as? APIError else {
@@ -1553,6 +1638,7 @@ final class MessengerViewModel: ObservableObject {
         isSocketConnected = isConnected
         if isConnected {
             isSocketConnecting = false
+            socketConnectingSince = nil
         }
         updateNetworkBannerState()
         if isConnected, isInternetReachable {
@@ -1565,6 +1651,11 @@ final class MessengerViewModel: ObservableObject {
 
     private func handleSocketConnectingUpdate(isConnecting: Bool) {
         isSocketConnecting = isConnecting
+        if isConnecting {
+            socketConnectingSince = socketConnectingSince ?? Date()
+        } else {
+            socketConnectingSince = nil
+        }
         updateNetworkBannerState()
     }
 
@@ -1578,7 +1669,9 @@ final class MessengerViewModel: ObservableObject {
                   !isSocketConnected,
                   isSocketConnecting
         {
-            nextState = .connecting
+            let connectingDuration = Date().timeIntervalSince(socketConnectingSince ?? Date())
+            let hasPendingQueue = !pendingTextQueue.isEmpty || !pendingMediaQueue.isEmpty
+            nextState = (connectingDuration < 18 || hasPendingQueue) ? .connecting : .hidden
         } else if isSyncingAfterReconnect {
             nextState = .updating
         } else {
@@ -1775,18 +1868,32 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func loadPendingMediaData(path: String) async -> Data? {
-        await Task.detached(priority: .utility) {
-            try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe])
+        let fileURL = resolveLocalFileURL(path)
+        guard let fileURL else { return nil }
+        return await Task.detached(priority: .utility) {
+            try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
         }.value
     }
 
     private func cleanupPendingMediaFile(path: String?) {
         guard let path, !path.isEmpty else { return }
+        guard let fileURL = resolveLocalFileURL(path) else { return }
         do {
-            try FileManager.default.removeItem(atPath: path)
+            try FileManager.default.removeItem(at: fileURL)
         } catch {
             // Ignore local cache cleanup failures.
         }
+    }
+
+    private func resolveLocalFileURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("file://") {
+            return URL(string: trimmed)
+        }
+
+        return URL(fileURLWithPath: trimmed)
     }
 
     private func restoreCachedStateFromDatabase() async {
@@ -1806,11 +1913,12 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation = decoded
         }
 
-        if pendingTextQueue.isEmpty,
+        if pendingTextQueue.isEmpty && pendingMediaQueue.isEmpty,
            let data = await localCache.loadData(for: CacheKeys.pendingQueue(userID: userID), userID: userID),
-           let decoded = try? JSONDecoder().decode([PendingTextMessage].self, from: data)
+           let decoded = decodePendingQueueSnapshot(from: data)
         {
-            pendingTextQueue = decoded
+            pendingTextQueue = decoded.text
+            pendingMediaQueue = decoded.media
         }
 
         if currentUserSettings == nil,
@@ -1838,11 +1946,12 @@ final class MessengerViewModel: ObservableObject {
             messagesByConversation = decoded
         }
 
-        if pendingTextQueue.isEmpty,
+        if pendingTextQueue.isEmpty && pendingMediaQueue.isEmpty,
            let data = userDefaults.data(forKey: CacheKeys.pendingQueue(userID: userID)),
-           let decoded = try? JSONDecoder().decode([PendingTextMessage].self, from: data)
+           let decoded = decodePendingQueueSnapshot(from: data)
         {
-            pendingTextQueue = decoded
+            pendingTextQueue = decoded.text
+            pendingMediaQueue = decoded.media
         }
 
         if currentUserSettings == nil,
@@ -1877,11 +1986,24 @@ final class MessengerViewModel: ObservableObject {
 
     private func persistPendingQueue() {
         guard let userID = currentUserID else { return }
-        guard let data = try? JSONEncoder().encode(pendingTextQueue) else { return }
+        let snapshot = PendingQueueSnapshot(text: pendingTextQueue, media: pendingMediaQueue)
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
         userDefaults.set(data, forKey: CacheKeys.pendingQueue(userID: userID))
         Task { [localCache] in
             await localCache.saveData(data, for: CacheKeys.pendingQueue(userID: userID), userID: userID)
         }
+    }
+
+    private func decodePendingQueueSnapshot(from data: Data) -> PendingQueueSnapshot? {
+        if let snapshot = try? JSONDecoder().decode(PendingQueueSnapshot.self, from: data) {
+            return snapshot
+        }
+
+        if let legacyText = try? JSONDecoder().decode([PendingTextMessage].self, from: data) {
+            return PendingQueueSnapshot(text: legacyText, media: [])
+        }
+
+        return nil
     }
 
     private func persistSettingsCache() {
@@ -2008,6 +2130,10 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func shouldAutoRetryQueue(after error: Error) -> Bool {
+        if isSecureSessionSyncingError(error) {
+            return true
+        }
+
         if let apiError = error as? APIError {
             switch apiError {
             case .network, .invalidResponse:
@@ -2050,6 +2176,10 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func shouldDropQueueItem(after error: Error) -> Bool {
+        if isSecureSessionSyncingError(error) {
+            return false
+        }
+
         if let apiError = error as? APIError {
             switch apiError {
             case .server(let statusCode, let message):
@@ -2097,6 +2227,50 @@ final class MessengerViewModel: ObservableObject {
             || lowered.contains("timed out")
     }
 
+    func dismissTransientNotice() {
+        transientNoticeTask?.cancel()
+        transientNoticeTask = nil
+        transientNotice = nil
+    }
+
+    func showTransientNotice(
+        _ message: String,
+        style: TransientNoticeStyle = .info,
+        autoDismissAfter: TimeInterval = 2.6
+    ) {
+        transientNoticeTask?.cancel()
+        let notice = TransientNotice(message: message, style: style)
+        transientNotice = notice
+
+        guard autoDismissAfter > 0 else { return }
+        transientNoticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(autoDismissAfter * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self?.transientNotice?.id == notice.id else { return }
+                self?.transientNotice = nil
+            }
+        }
+    }
+
+    private func isSecureSessionSyncingError(_ error: Error) -> Bool {
+        if let apiError = error as? APIError {
+            if case .server(_, let message) = apiError {
+                let lowered = message.lowercased()
+                return lowered.contains("encrypted text payload is required")
+                    || lowered.contains("secure chat session is still syncing")
+                    || lowered.contains("public key not found")
+                    || lowered.contains("key exchange is not ready")
+            }
+            return false
+        }
+
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("encrypted text payload is required")
+            || lowered.contains("secure chat session is still syncing")
+            || lowered.contains("public key not found")
+    }
+
     private func setError(from error: Error, fallback: String? = nil) {
         AppLogger.error("MessengerViewModel error: \(error.localizedDescription)")
 
@@ -2107,44 +2281,65 @@ final class MessengerViewModel: ObservableObject {
             case .decodingError:
                 activeError = "Server response format changed. Please retry in a moment."
             case .network:
-                activeError = apiError.errorDescription
+                let message = apiError.errorDescription
+                activeError = message
+                showTransientNotice(message, style: .warning)
             case .invalidURL, .invalidResponse:
-                activeError = fallback ?? apiError.errorDescription
+                let message = fallback ?? apiError.errorDescription
+                activeError = message
+                showTransientNotice(message, style: .warning)
             case .server(let statusCode, let message):
                 let lowered = message.lowercased()
                 if lowered.contains("route not found") {
                     activeError = "This feature isn't available on current backend deployment yet."
+                    showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
                 if lowered.contains("public key not found") {
                     activeError = "Secure key exchange is not ready with this user yet."
+                    showTransientNotice(
+                        "Secure session is syncing. Message queued and will send automatically.",
+                        style: .info,
+                        autoDismissAfter: 2.2
+                    )
                     return
                 }
                 if lowered.contains("encrypted text payload is required") {
-                    activeError = "Secure chat session is still syncing. Please retry in a moment."
+                    activeError = "Secure chat session is still syncing. Message queued for retry."
+                    showTransientNotice(
+                        "Secure session is syncing. Message queued and will send automatically.",
+                        style: .info,
+                        autoDismissAfter: 2.2
+                    )
                     return
                 }
                 if lowered.contains("validation failed") {
                     activeError = fallback ?? "Couldn't send this message. Please try again."
+                    showTransientNotice(activeError ?? message, style: .error)
                     return
                 }
                 if lowered.contains("blocked") || lowered.contains("cannot interact") {
                     activeError = "You cannot message this user due to privacy settings."
+                    showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
                 if statusCode == 413 || lowered.contains("file too large") || lowered.contains("too large") {
                     activeError = "Profile photo is too large. Choose a smaller image."
+                    showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
                 if lowered.contains("unsupported") && lowered.contains("mime") {
                     activeError = "Unsupported image format. Please choose JPG or PNG."
+                    showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
                 if statusCode >= 500 {
                     activeError = fallback ?? "Server is temporarily busy. Please try again."
+                    showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
                 activeError = message.isEmpty ? (fallback ?? "Request failed. Please try again.") : message
+                showTransientNotice(activeError ?? "Request failed.", style: .error)
             }
             return
         }
@@ -2154,14 +2349,17 @@ final class MessengerViewModel: ObservableObject {
 
         if lowered.contains("decode") {
             activeError = "Server response format changed. Please retry in a moment."
+            showTransientNotice(activeError ?? "Server response changed.", style: .warning)
             return
         }
 
         if lowered.contains("internal server error") {
             activeError = fallback ?? "Server is temporarily busy. Please try again."
+            showTransientNotice(activeError ?? "Server is temporarily busy.", style: .warning)
             return
         }
 
         activeError = fallback ?? message
+        showTransientNotice(activeError ?? message, style: .error)
     }
 }

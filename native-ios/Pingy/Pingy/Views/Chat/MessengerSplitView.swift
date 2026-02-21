@@ -27,25 +27,6 @@ struct MessengerSplitView: View {
                 }
             }
         }
-        .alert(
-            "Error",
-            isPresented: Binding(
-                get: { viewModel.activeError != nil },
-                set: { newValue in
-                    if !newValue {
-                        viewModel.activeError = nil
-                    }
-                }
-            ),
-            actions: {
-                Button("OK", role: .cancel) {
-                    viewModel.activeError = nil
-                }
-            },
-            message: {
-                Text(viewModel.activeError ?? "Unknown error")
-            }
-        )
         .onChange(of: horizontalSizeClass) { newValue in
             if newValue != .compact {
                 viewModel.isCompactChatDetailPresented = false

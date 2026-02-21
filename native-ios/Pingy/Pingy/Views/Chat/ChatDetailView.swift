@@ -80,13 +80,26 @@ struct ChatDetailView: View {
         .sheet(isPresented: $isNativeMediaPickerPresented) {
             NativeMediaPickerView(
                 selectionLimit: 6,
-                onCancel: {},
+                onCancel: {
+                    isNativeMediaPickerPresented = false
+                },
                 onFinish: { results in
                     Task {
+                        await MainActor.run {
+                            isNativeMediaPickerPresented = false
+                        }
+                        guard !results.isEmpty else { return }
                         let items = await mediaManager.loadComposerItems(from: results, source: .gallery)
                         await MainActor.run {
+                            guard !items.isEmpty else {
+                                viewModel.showTransientNotice(
+                                    "Couldn't read selected media. Try another photo.",
+                                    style: .warning
+                                )
+                                return
+                            }
                             composedMediaItems = items
-                            isMediaComposerPresented = !items.isEmpty
+                            isMediaComposerPresented = true
                         }
                     }
                 }
@@ -113,6 +126,15 @@ struct ChatDetailView: View {
                             caption: batchCaption,
                             hdEnabled: useHD
                         ) { item, uploadData, caption in
+                            guard !uploadData.isEmpty else {
+                                await MainActor.run {
+                                    viewModel.showTransientNotice(
+                                        "Skipped one file because it could not be prepared.",
+                                        style: .warning
+                                    )
+                                }
+                                return
+                            }
                             await viewModel.sendMedia(
                                 data: uploadData,
                                 fileName: item.fileName,

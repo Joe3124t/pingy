@@ -70,16 +70,31 @@ struct PingyTabShellView: View {
         }
         .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if messengerViewModel.networkBannerState != .hidden {
-                NetworkStateBannerView(state: messengerViewModel.networkBannerState)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 2)
-                    .padding(.bottom, 4)
+            VStack(spacing: 6) {
+                if messengerViewModel.networkBannerState != .hidden {
+                    NetworkStateBannerView(state: messengerViewModel.networkBannerState)
+                        .transition(
+                            .move(edge: .top)
+                                .combined(with: .opacity)
+                        )
+                }
+
+                if let notice = messengerViewModel.transientNotice {
+                    TransientNoticeBannerView(
+                        notice: notice,
+                        onDismiss: {
+                            messengerViewModel.dismissTransientNotice()
+                        }
+                    )
                     .transition(
                         .move(edge: .top)
                             .combined(with: .opacity)
                     )
+                }
             }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if shouldShowBottomBar {
@@ -90,6 +105,13 @@ struct PingyTabShellView: View {
             }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onChange(of: messengerViewModel.activeError) { message in
+            guard let message, !message.isEmpty else { return }
+            if messengerViewModel.transientNotice?.message != message {
+                messengerViewModel.showTransientNotice(message, style: .error, autoDismissAfter: 2.8)
+            }
+            messengerViewModel.activeError = nil
+        }
     }
 
     private var shouldShowBottomBar: Bool {
@@ -150,6 +172,77 @@ struct PingyTabShellView: View {
             .animation(.spring(response: 0.26, dampingFraction: 0.78), value: isSelected)
         }
         .buttonStyle(PingyPressableButtonStyle())
+    }
+}
+
+private struct TransientNoticeBannerView: View {
+    let notice: TransientNotice
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            Text(notice.message)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+                .lineLimit(2)
+
+            Spacer(minLength: 0)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(PingyTheme.textSecondary)
+                    .frame(width: 20, height: 20)
+                    .background(PingyTheme.surfaceElevated.opacity(0.8))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(tintColor.opacity(0.25))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(PingyTheme.border.opacity(0.45), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
+    }
+
+    private var iconName: String {
+        switch notice.style {
+        case .info:
+            return "info.circle.fill"
+        case .warning:
+            return "exclamationmark.triangle.fill"
+        case .error:
+            return "xmark.octagon.fill"
+        case .success:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    private var tintColor: Color {
+        switch notice.style {
+        case .info:
+            return PingyTheme.primary
+        case .warning:
+            return Color.orange
+        case .error:
+            return Color.red
+        case .success:
+            return Color.green
+        }
     }
 }
 

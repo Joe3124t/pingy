@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
@@ -33,18 +34,27 @@ actor MediaManager {
         } ?? UTType.image.identifier
 
         guard let data = await loadData(from: provider, typeIdentifier: typeIdentifier),
-              let image = UIImage(data: data)
+              !data.isEmpty
         else {
+            return nil
+        }
+
+        // Defensive limit for stability on older devices.
+        guard data.count <= 40_000_000 else {
+            AppLogger.error("Skipped media item because source data is too large: \(data.count)")
+            return nil
+        }
+
+        guard let previewImage = downsampledImage(from: data, maxPixelSize: 2200) else {
             return nil
         }
 
         let format = detectImageFormat(from: data)
         let mimeType = mimeType(for: format)
-        let dimensions = imageDimensions(image: image)
-        let previewImage = resizedImage(image, maxDimension: 2200)
+        let dimensions = imageDimensions(from: data)
 
-        let optimizedImage = resizedImage(image, maxDimension: 1700)
-        let hdImage = resizedImage(image, maxDimension: 3200)
+        let optimizedImage = downsampledImage(from: data, maxPixelSize: 1700) ?? previewImage
+        let hdImage = downsampledImage(from: data, maxPixelSize: 3200) ?? optimizedImage
 
         guard let optimizedData = encode(image: optimizedImage, preferredFormat: format, quality: 0.72) else {
             return nil
@@ -116,32 +126,34 @@ actor MediaManager {
         }
     }
 
-    private func imageDimensions(image: UIImage) -> (width: Int, height: Int) {
-        let size = image.size
-        let scale = image.scale
-        return (
-            width: max(1, Int((size.width * scale).rounded())),
-            height: max(1, Int((size.height * scale).rounded()))
-        )
+    private func imageDimensions(from data: Data) -> (width: Int, height: Int) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else {
+            return (1, 1)
+        }
+
+        let width = properties[kCGImagePropertyPixelWidth] as? Int ?? 1
+        let height = properties[kCGImagePropertyPixelHeight] as? Int ?? 1
+        return (max(width, 1), max(height, 1))
     }
 
-    private func resizedImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let originalSize = image.size
-        let maxSide = max(originalSize.width, originalSize.height)
-        guard maxSide > maxDimension else {
-            return image
+    private func downsampledImage(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize),
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceShouldCache: true,
+        ]
+
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else {
+            return nil
         }
 
-        let scale = maxDimension / maxSide
-        let target = CGSize(
-            width: max(1, (originalSize.width * scale).rounded()),
-            height: max(1, (originalSize.height * scale).rounded())
-        )
-
-        let renderer = UIGraphicsImageRenderer(size: target)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
-        }
+        return UIImage(cgImage: cgImage)
     }
 
     private func encode(image: UIImage, preferredFormat: String, quality: CGFloat) -> Data? {

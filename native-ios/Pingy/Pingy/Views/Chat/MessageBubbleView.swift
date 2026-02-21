@@ -208,23 +208,21 @@ struct MessageBubbleView: View {
                     }
                 } label: {
                     ZStack {
-                        AsyncImage(url: url) { phase in
-                            switch phase {
-                            case .empty:
-                                ProgressView().frame(width: 210, height: 180)
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 230, height: 220)
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            case .failure:
-                                Text("Image unavailable")
-                                    .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
-                            @unknown default:
-                                EmptyView()
-                            }
+                        CachedRemoteImage(url: url) { image in
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 230, height: 220)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        } placeholder: {
+                            ProgressView()
+                                .frame(width: 210, height: 180)
+                                .tint(isOwn ? .white : PingyTheme.primaryStrong)
+                        } failure: {
+                            Text("Image unavailable")
+                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
+                                .frame(width: 210, height: 120)
                         }
 
                         if isLocalPendingMedia {

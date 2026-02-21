@@ -14,8 +14,7 @@ struct AvatarView: View {
                         .resizable()
                         .scaledToFill()
                 } placeholder: {
-                    ProgressView()
-                        .tint(.white)
+                    fallbackView
                 } failure: {
                     fallbackView
                 }

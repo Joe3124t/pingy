@@ -51,6 +51,7 @@ struct RootView: View {
             case .active:
                 messengerViewModel.bindSocket()
                 Task {
+                    await messengerViewModel.reloadAll()
                     await appEnvironment.pushManager.configure()
                 }
             case .background:

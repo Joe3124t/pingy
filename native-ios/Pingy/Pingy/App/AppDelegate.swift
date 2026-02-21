@@ -3,6 +3,11 @@ import UIKit
 final class AppDelegate: NSObject, UIApplicationDelegate {
     weak var pushManager: PushNotificationManager?
 
+    override init() {
+        super.init()
+        CrashReporter.shared.install()
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
