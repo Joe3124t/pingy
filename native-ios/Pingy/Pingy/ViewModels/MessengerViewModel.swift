@@ -43,6 +43,8 @@ final class MessengerViewModel: ObservableObject {
     @Published private(set) var isInternetReachable = true
     @Published private(set) var isSocketConnected = false
     @Published private(set) var isSocketConnecting = false
+    @Published private(set) var mediaUploadProgressByClientID: [String: Double] = [:]
+    @Published private(set) var failedMediaClientIDs = Set<String>()
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -63,7 +65,9 @@ final class MessengerViewModel: ObservableObject {
     private var reconnectSyncRetryTask: Task<Void, Never>?
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
     private var pendingTextQueue: [PendingTextMessage] = []
+    private var pendingMediaQueue: [PendingMediaMessage] = []
     private var isProcessingTextQueue = false
+    private var isProcessingMediaQueue = false
     private var openConversationTasks: [String: Task<Void, Never>] = [:]
     private var syncedContactMatches: [ContactSearchResult] = []
     private let conversationListStateStore = ConversationListStateStore.shared
@@ -75,6 +79,20 @@ final class MessengerViewModel: ObservableObject {
         let replyToMessageId: String?
         let clientId: String
         let createdAtISO: String
+    }
+
+    private struct PendingMediaMessage {
+        let conversationId: String
+        let participantId: String
+        let type: MessageType
+        let fileData: Data
+        let fileName: String
+        let mimeType: String
+        let body: String?
+        let replyToMessageId: String?
+        let clientId: String
+        let createdAtISO: String
+        let localMediaURL: String?
     }
 
     private struct CachedContactMatch: Codable {
@@ -205,6 +223,30 @@ final class MessengerViewModel: ObservableObject {
         messagesByConversation[conversationId] ?? []
     }
 
+    func mediaUploadProgress(for message: Message) -> Double? {
+        guard let clientId = message.clientId else { return nil }
+        return mediaUploadProgressByClientID[clientId]
+    }
+
+    func canRetryMediaUpload(for message: Message) -> Bool {
+        guard let clientId = message.clientId else { return false }
+        return failedMediaClientIDs.contains(clientId)
+    }
+
+    func retryPendingMediaUpload(for message: Message) {
+        guard let clientId = message.clientId else { return }
+        guard let index = pendingMediaQueue.firstIndex(where: { $0.clientId == clientId }) else { return }
+
+        let item = pendingMediaQueue.remove(at: index)
+        pendingMediaQueue.insert(item, at: 0)
+        failedMediaClientIDs.remove(clientId)
+        mediaUploadProgressByClientID[clientId] = 0.08
+
+        Task { [weak self] in
+            await self?.processPendingMediaQueue()
+        }
+    }
+
     func bindSocket() {
         guard !isSocketBound else {
             socketManager.connectIfNeeded()
@@ -238,6 +280,9 @@ final class MessengerViewModel: ObservableObject {
         await refreshContactSync(promptForPermission: false)
         if !pendingTextQueue.isEmpty {
             await processPendingTextQueue()
+        }
+        if !pendingMediaQueue.isEmpty {
+            await processPendingMediaQueue()
         }
         updateNetworkBannerState()
     }
@@ -521,24 +566,32 @@ final class MessengerViewModel: ObservableObject {
         body: String? = nil
     ) async {
         guard let conversation = selectedConversation else { return }
+        guard let me = authService.sessionStore.currentUser else { return }
 
-        do {
-            let message = try await messageService.sendMediaMessage(
-                conversationID: conversation.conversationId,
-                fileData: data,
-                fileName: fileName,
-                mimeType: mimeType,
-                type: type,
-                body: body,
-                voiceDurationMs: nil,
-                clientID: "ios-\(UUID().uuidString)",
-                replyToMessageID: normalizedReplyToMessageId(pendingReplyMessage?.id)
-            )
-            upsertMessage(message)
-            pendingReplyMessage = nil
-        } catch {
-            setError(from: error)
-        }
+        let clientId = "ios-\(UUID().uuidString)"
+        let normalizedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let localMediaURL = savePendingMediaFile(data: data, fileName: fileName, clientId: clientId)
+
+        let queued = PendingMediaMessage(
+            conversationId: conversation.conversationId,
+            participantId: conversation.participantId,
+            type: type,
+            fileData: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            body: normalizedBody,
+            replyToMessageId: normalizedReplyToMessageId(pendingReplyMessage?.id),
+            clientId: clientId,
+            createdAtISO: ISO8601DateFormatter().string(from: Date()),
+            localMediaURL: localMediaURL
+        )
+
+        insertLocalPendingMediaMessage(queued, conversation: conversation, sender: me)
+        pendingReplyMessage = nil
+        pendingMediaQueue.append(queued)
+        mediaUploadProgressByClientID[clientId] = 0.05
+        failedMediaClientIDs.remove(clientId)
+        await processPendingMediaQueue()
     }
 
     func sendVoice(url: URL, durationMs: Int) async {
@@ -599,6 +652,27 @@ final class MessengerViewModel: ObservableObject {
 
     func setReplyTarget(_ message: Message?) {
         pendingReplyMessage = message
+    }
+
+    func deleteMessageLocally(messageID: String, conversationID: String) {
+        guard var messages = messagesByConversation[conversationID] else { return }
+        messages.removeAll { $0.id == messageID }
+        messagesByConversation[conversationID] = messages
+        persistMessagesCache()
+
+        guard let conversationIndex = conversations.firstIndex(where: { $0.conversationId == conversationID }) else {
+            return
+        }
+
+        let latest = messages.max(by: { $0.createdAt < $1.createdAt })
+        conversations[conversationIndex].lastMessageId = latest?.id
+        conversations[conversationIndex].lastMessageType = latest?.type.rawValue
+        conversations[conversationIndex].lastMessageBody = latest?.body
+        conversations[conversationIndex].lastMessageIsEncrypted = latest?.isEncrypted
+        conversations[conversationIndex].lastMessageMediaName = latest?.mediaName
+        conversations[conversationIndex].lastMessageCreatedAt = latest?.createdAt
+        conversations[conversationIndex].lastMessageSenderId = latest?.senderId
+        persistConversationsCache()
     }
 
     func deleteSelectedConversation(forEveryone: Bool) async {
@@ -843,6 +917,9 @@ final class MessengerViewModel: ObservableObject {
             conversations = []
             messagesByConversation = [:]
             pendingTextQueue = []
+            pendingMediaQueue = []
+            mediaUploadProgressByClientID = [:]
+            failedMediaClientIDs = []
             pinnedConversationIDs = []
             archivedConversationIDs = []
             selectedConversationID = nil
@@ -862,6 +939,9 @@ final class MessengerViewModel: ObservableObject {
         conversations = []
         messagesByConversation = [:]
         pendingTextQueue = []
+        pendingMediaQueue = []
+        mediaUploadProgressByClientID = [:]
+        failedMediaClientIDs = []
         pinnedConversationIDs = []
         archivedConversationIDs = []
         selectedConversationID = nil
@@ -955,6 +1035,66 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
+    private func processPendingMediaQueue() async {
+        guard !isProcessingMediaQueue else { return }
+        guard authService.sessionStore.currentUser != nil else {
+            pendingMediaQueue.removeAll()
+            mediaUploadProgressByClientID.removeAll()
+            failedMediaClientIDs.removeAll()
+            return
+        }
+        guard isInternetReachable else { return }
+
+        isProcessingMediaQueue = true
+        defer { isProcessingMediaQueue = false }
+
+        while !pendingMediaQueue.isEmpty {
+            let item = pendingMediaQueue[0]
+            mediaUploadProgressByClientID[item.clientId] = max(mediaUploadProgressByClientID[item.clientId] ?? 0.05, 0.14)
+
+            do {
+                let sent = try await sendPendingMediaMessage(item)
+                pendingMediaQueue.removeFirst()
+                mediaUploadProgressByClientID[item.clientId] = nil
+                failedMediaClientIDs.remove(item.clientId)
+                cleanupPendingMediaFile(path: item.localMediaURL)
+                upsertMessage(sent)
+            } catch {
+                if shouldAutoRetryMediaUpload(after: error) {
+                    mediaUploadProgressByClientID[item.clientId] = 0.05
+                    break
+                }
+
+                failedMediaClientIDs.insert(item.clientId)
+                mediaUploadProgressByClientID[item.clientId] = nil
+                setError(from: error, fallback: "Couldn't send media right now. Tap retry.")
+                break
+            }
+        }
+    }
+
+    private func sendPendingMediaMessage(_ item: PendingMediaMessage) async throws -> Message {
+        guard authService.sessionStore.currentUser != nil else {
+            throw APIError.unauthorized
+        }
+
+        guard conversations.contains(where: { $0.conversationId == item.conversationId }) else {
+            throw PendingQueueError.conversationUnavailable
+        }
+
+        return try await messageService.sendMediaMessage(
+            conversationID: item.conversationId,
+            fileData: item.fileData,
+            fileName: item.fileName,
+            mimeType: item.mimeType,
+            type: item.type,
+            body: item.body,
+            voiceDurationMs: nil,
+            clientID: item.clientId,
+            replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
+        )
+    }
+
     private func sendPendingTextMessage(_ item: PendingTextMessage) async throws -> Message {
         guard authService.sessionStore.currentUser != nil else {
             throw APIError.unauthorized
@@ -971,25 +1111,26 @@ final class MessengerViewModel: ObservableObject {
         _ item: PendingTextMessage,
         conversation: Conversation
     ) async throws -> Message {
-        if socketManager.isConnected {
-            do {
+        do {
+            return try await messageService.sendTextMessage(
+                conversationID: conversation.conversationId,
+                body: item.plainText,
+                clientID: item.clientId,
+                replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
+            )
+        } catch {
+            // Keep socket as a compatibility fallback only.
+            if socketManager.isConnected {
+                AppLogger.debug("REST send failed for \(item.clientId), trying socket fallback.")
                 return try await socketManager.sendPlainTextMessage(
                     conversationId: item.conversationId,
                     body: item.plainText,
                     clientId: item.clientId,
                     replyToMessageId: item.replyToMessageId
                 )
-            } catch {
-                AppLogger.debug("Socket send failed for \(item.clientId), fallback to REST.")
             }
+            throw error
         }
-
-        return try await messageService.sendTextMessage(
-            conversationID: conversation.conversationId,
-            body: item.plainText,
-            clientID: item.clientId,
-            replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
-        )
     }
 
     private func normalizedReplyToMessageId(_ value: String?) -> String? {
@@ -1347,6 +1488,10 @@ final class MessengerViewModel: ObservableObject {
             await processPendingTextQueue()
             queueSynced = pendingTextQueue.isEmpty
         }
+        if !pendingMediaQueue.isEmpty {
+            await processPendingMediaQueue()
+            queueSynced = queueSynced && pendingMediaQueue.isEmpty
+        }
 
         return conversationsSynced
             && settingsSynced
@@ -1403,6 +1548,89 @@ final class MessengerViewModel: ObservableObject {
         )
 
         upsertMessage(localMessage)
+    }
+
+    private func insertLocalPendingMediaMessage(
+        _ queued: PendingMediaMessage,
+        conversation: Conversation,
+        sender: User
+    ) {
+        let normalizedBody = queued.body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bodyValue: JSONValue? = {
+            guard let normalizedBody, !normalizedBody.isEmpty else { return nil }
+            return .string(normalizedBody)
+        }()
+
+        let localMessage = Message(
+            id: "local-\(queued.clientId)",
+            conversationId: queued.conversationId,
+            senderId: sender.id,
+            senderUsername: sender.username,
+            senderAvatarUrl: sender.avatarUrl,
+            recipientId: conversation.participantId,
+            replyToMessageId: queued.replyToMessageId,
+            type: queued.type,
+            body: bodyValue,
+            isEncrypted: false,
+            mediaUrl: queued.localMediaURL,
+            mediaName: queued.fileName,
+            mediaMime: queued.mimeType,
+            mediaSize: queued.fileData.count,
+            voiceDurationMs: nil,
+            clientId: queued.clientId,
+            createdAt: queued.createdAtISO,
+            deliveredAt: nil,
+            seenAt: nil,
+            replyTo: pendingReplyMessage.map { source in
+                MessageReply(
+                    id: source.id,
+                    senderId: source.senderId,
+                    senderUsername: source.senderUsername,
+                    type: source.type,
+                    body: source.body,
+                    isEncrypted: source.isEncrypted,
+                    mediaName: source.mediaName,
+                    createdAt: source.createdAt
+                )
+            },
+            reactions: []
+        )
+
+        upsertMessage(localMessage)
+    }
+
+    private func savePendingMediaFile(data: Data, fileName: String, clientId: String) -> String? {
+        let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        guard let baseURL else { return nil }
+
+        let folder = baseURL.appendingPathComponent("pingy-pending-media", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            AppLogger.error("Failed to create pending media directory: \(error.localizedDescription)")
+            return nil
+        }
+
+        let ext = URL(fileURLWithPath: fileName).pathExtension
+        let resolvedExt = ext.isEmpty ? "jpg" : ext
+        let target = folder.appendingPathComponent("\(clientId).\(resolvedExt)")
+
+        do {
+            try data.write(to: target, options: .atomic)
+            return target.path
+        } catch {
+            AppLogger.error("Failed to cache pending media file: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func cleanupPendingMediaFile(path: String?) {
+        guard let path, !path.isEmpty else { return }
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            // Ignore local cache cleanup failures.
+        }
     }
 
     private func restoreCachedStateFromDatabase() async {
@@ -1644,6 +1872,25 @@ final class MessengerViewModel: ObservableObject {
 
         let lowered = error.localizedDescription.lowercased()
         return lowered.contains("network") || lowered.contains("timeout")
+    }
+
+    private func shouldAutoRetryMediaUpload(after error: Error) -> Bool {
+        if isQueueItemDiscardable(error: error) {
+            return false
+        }
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .network, .invalidResponse:
+                return true
+            case .server(let statusCode, _):
+                return statusCode >= 500
+            default:
+                return false
+            }
+        }
+
+        let lowered = error.localizedDescription.lowercased()
+        return lowered.contains("network") || lowered.contains("timeout") || lowered.contains("offline")
     }
 
     private func shouldDropQueueItem(after error: Error) -> Bool {

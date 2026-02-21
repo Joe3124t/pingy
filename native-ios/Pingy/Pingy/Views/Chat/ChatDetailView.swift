@@ -1,5 +1,3 @@
-import PhotosUI
-import Photos
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -16,15 +14,17 @@ struct ChatDetailView: View {
     @StateObject private var voiceRecorder = VoiceRecorderService()
 
     @State private var draft = ""
-    @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var quickCameraItem: PhotosPickerItem?
-    @State private var isMediaPickerPresented = false
-    @State private var isQuickCameraPickerPresented = false
+    @State private var isNativeMediaPickerPresented = false
+    @State private var isMediaComposerPresented = false
+    @State private var composedMediaItems: [MediaComposerItem] = []
     @State private var isFileImporterPresented = false
     @State private var composerHeight: CGFloat = 84
     @State private var isContactInfoPresented = false
+    @State private var mediaViewerState: ChatMediaViewerState?
     @State private var isMicGestureActive = false
-    @State private var photoPermissionAlertMessage: String?
+
+    private let mediaManager = MediaManager()
+    private let uploadService = UploadService()
 
     var body: some View {
         ZStack {
@@ -62,20 +62,6 @@ struct ChatDetailView: View {
                 viewModel.isCompactChatDetailPresented = false
             }
         }
-        .onChange(of: selectedPhotoItem) { newValue in
-            guard let newValue else { return }
-            Task {
-                await sendPickedPhoto(item: newValue)
-                selectedPhotoItem = nil
-            }
-        }
-        .onChange(of: quickCameraItem) { newValue in
-            guard let newValue else { return }
-            Task {
-                await sendPickedPhoto(item: newValue)
-                quickCameraItem = nil
-            }
-        }
         .fileImporter(
             isPresented: $isFileImporterPresented,
             allowedContentTypes: [.image, .movie, .pdf, .data],
@@ -87,39 +73,71 @@ struct ChatDetailView: View {
             }
         }
         .sheet(isPresented: $isContactInfoPresented) {
-            NavigationStack {
-                ContactInfoView(viewModel: viewModel, conversation: conversation)
+                NavigationStack {
+                    ContactInfoView(viewModel: viewModel, conversation: conversation)
+                }
             }
-        }
-        .photosPicker(
-            isPresented: $isMediaPickerPresented,
-            selection: $selectedPhotoItem,
-            matching: .any(of: [.images, .videos]),
-            photoLibrary: .shared()
-        )
-        .photosPicker(
-            isPresented: $isQuickCameraPickerPresented,
-            selection: $quickCameraItem,
-            matching: .images,
-            photoLibrary: .shared()
-        )
-        .alert(
-            "Photo access required",
-            isPresented: Binding(
-                get: { photoPermissionAlertMessage != nil },
-                set: { shouldShow in
-                    if !shouldShow {
-                        photoPermissionAlertMessage = nil
+        .sheet(isPresented: $isNativeMediaPickerPresented) {
+            NativeMediaPickerView(
+                selectionLimit: 10,
+                onCancel: {},
+                onFinish: { results in
+                    Task {
+                        let items = await mediaManager.loadComposerItems(from: results, source: .gallery)
+                        await MainActor.run {
+                            composedMediaItems = items
+                            isMediaComposerPresented = !items.isEmpty
+                        }
                     }
                 }
             )
-        ) {
-            Button("Open Settings") {
-                openAppSettings()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(photoPermissionAlertMessage ?? "Enable Photos access in Settings to send images and videos.")
+        }
+        .fullScreenCover(isPresented: $isMediaComposerPresented, onDismiss: {
+            composedMediaItems = []
+        }) {
+            MediaComposerView(
+                items: composedMediaItems,
+                recipientName: participantDisplayName,
+                onClose: {
+                    isMediaComposerPresented = false
+                },
+                onSend: { items, caption, hdEnabled in
+                    Task {
+                        await uploadService.uploadMediaBatch(
+                            items: items,
+                            caption: caption,
+                            hdEnabled: hdEnabled
+                        ) { item, uploadData, caption in
+                            await viewModel.sendMedia(
+                                data: uploadData,
+                                fileName: item.fileName,
+                                mimeType: item.mimeType,
+                                type: .image,
+                                body: caption
+                            )
+                        }
+                        isMediaComposerPresented = false
+                    }
+                }
+            )
+        }
+        .fullScreenCover(item: $mediaViewerState) { state in
+            ChatMediaViewer(
+                entries: state.entries,
+                initialIndex: state.initialIndex,
+                currentUserID: viewModel.currentUserID,
+                onDismiss: {
+                    mediaViewerState = nil
+                },
+                onReply: { message in
+                    viewModel.setReplyTarget(message)
+                    mediaViewerState = nil
+                },
+                onDeleteOwnMessage: { message in
+                    viewModel.deleteMessageLocally(messageID: message.id, conversationID: message.conversationId)
+                    mediaViewerState = nil
+                }
+            )
         }
         .toolbar(.hidden, for: .tabBar)
         .toolbar(.hidden, for: .navigationBar)
@@ -215,11 +233,19 @@ struct ChatDetailView: View {
                             conversation: conversation,
                             currentUserID: viewModel.currentUserID,
                             isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
+                            uploadProgress: viewModel.mediaUploadProgress(for: message),
+                            canRetryUpload: viewModel.canRetryMediaUpload(for: message),
                             onReply: {
                                 viewModel.setReplyTarget(message)
                             },
                             onReact: { emoji in
                                 Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
+                            },
+                            onRetryUpload: {
+                                viewModel.retryPendingMediaUpload(for: message)
+                            },
+                            onOpenImage: { tappedMessage, _ in
+                                openMediaViewer(for: tappedMessage)
                             }
                         )
                         .id(message.id)
@@ -298,7 +324,7 @@ struct ChatDetailView: View {
             HStack(alignment: .bottom, spacing: 8) {
                 Menu {
                     Button {
-                        Task { await presentMediaPicker(imagesOnly: false) }
+                        isNativeMediaPickerPresented = true
                     } label: {
                         Label("Photo or video", systemImage: "photo")
                     }
@@ -328,7 +354,7 @@ struct ChatDetailView: View {
                         }
 
                     Button {
-                        Task { await presentMediaPicker(imagesOnly: true) }
+                        isNativeMediaPickerPresented = true
                     } label: {
                         Image(systemName: "camera.fill")
                             .font(.system(size: 18, weight: .semibold))
@@ -481,30 +507,6 @@ struct ChatDetailView: View {
         return currentDate.timeIntervalSince(previousDate) < 180
     }
 
-    private func sendPickedPhoto(item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-        let contentType = item.supportedContentTypes.first
-        let isVideo = contentType?.conforms(to: .movie) ?? false
-        var suggestedName = contentType?.preferredFilenameExtension ?? (isVideo ? "mp4" : "jpg")
-        var mimeType = contentType?.preferredMIMEType ?? (isVideo ? "video/mp4" : "image/jpeg")
-        let type: MessageType = isVideo ? .video : .image
-        var payload = data
-
-        // Normalize HEIC/HEIF to JPEG so backend/media previews stay consistent across devices.
-        if !isVideo, (mimeType == "image/heic" || mimeType == "image/heif"), let image = UIImage(data: data), let jpegData = image.jpegData(compressionQuality: 0.9) {
-            payload = jpegData
-            mimeType = "image/jpeg"
-            suggestedName = "jpg"
-        }
-
-        await viewModel.sendMedia(
-            data: payload,
-            fileName: "media-\(UUID().uuidString).\(suggestedName)",
-            mimeType: mimeType,
-            type: type
-        )
-    }
-
     private func sendPickedFile(url: URL) async {
         guard let data = try? Data(contentsOf: url) else { return }
         let ext = url.pathExtension.lowercased()
@@ -566,53 +568,6 @@ struct ChatDetailView: View {
         return .file
     }
 
-    @MainActor
-    private func presentMediaPicker(imagesOnly: Bool) async {
-        let granted = await ensurePhotoAccess()
-        guard granted else {
-            photoPermissionAlertMessage = "Allow Photos access to send media from your gallery."
-            return
-        }
-
-        if imagesOnly {
-            isQuickCameraPickerPresented = true
-        } else {
-            isMediaPickerPresented = true
-        }
-    }
-
-    private func ensurePhotoAccess() async -> Bool {
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        switch status {
-        case .authorized, .limited:
-            return true
-        case .notDetermined:
-            let requested = await requestPhotoAccess()
-            return requested == .authorized || requested == .limited
-        case .denied, .restricted:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-    private func requestPhotoAccess() async -> PHAuthorizationStatus {
-        await withCheckedContinuation { continuation in
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
-                continuation.resume(returning: status)
-            }
-        }
-    }
-
-    private func openAppSettings() {
-        guard let settingsURL = URL(string: UIApplication.openSettingsURLString),
-              UIApplication.shared.canOpenURL(settingsURL)
-        else {
-            return
-        }
-        UIApplication.shared.open(settingsURL)
-    }
-
     private func handleMicPressing(_ isPressing: Bool) async {
         if isPressing {
             guard !isMicGestureActive else { return }
@@ -668,5 +623,32 @@ struct ChatDetailView: View {
             .clipped()
             .blur(radius: CGFloat(max(0, conversation.blurIntensity)))
             .overlay(PingyTheme.wallpaperOverlay(for: colorScheme))
+    }
+
+    private var galleryEntries: [ChatMediaGalleryEntry] {
+        renderedMessages.compactMap { message in
+            guard message.type == .image,
+                  let url = MediaURLResolver.resolve(message.mediaUrl)
+            else {
+                return nil
+            }
+
+            return ChatMediaGalleryEntry(
+                id: message.id,
+                message: message,
+                url: url
+            )
+        }
+    }
+
+    private func openMediaViewer(for tappedMessage: Message) {
+        let entries = galleryEntries
+        guard !entries.isEmpty else { return }
+        guard let index = entries.firstIndex(where: { $0.message.id == tappedMessage.id }) else { return }
+
+        mediaViewerState = ChatMediaViewerState(
+            entries: entries,
+            initialIndex: index
+        )
     }
 }

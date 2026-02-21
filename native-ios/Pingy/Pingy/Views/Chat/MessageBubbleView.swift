@@ -8,8 +8,12 @@ struct MessageBubbleView: View {
     let conversation: Conversation
     let currentUserID: String?
     let isGroupedWithPrevious: Bool
+    let uploadProgress: Double?
+    let canRetryUpload: Bool
     let onReply: () -> Void
     let onReact: (String) -> Void
+    let onRetryUpload: () -> Void
+    let onOpenImage: ((Message, URL) -> Void)?
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var isVisible = false
@@ -19,6 +23,10 @@ struct MessageBubbleView: View {
 
     private var isOwn: Bool {
         message.senderId == currentUserID
+    }
+
+    private var isLocalPendingMedia: Bool {
+        isOwn && message.id.hasPrefix("local-") && (message.type == .image || message.type == .video)
     }
 
     var body: some View {
@@ -192,24 +200,34 @@ struct MessageBubbleView: View {
         case .image:
             if let url = MediaURLResolver.resolve(message.mediaUrl) {
                 Button {
-                    selectedImageURL = url
+                    if let onOpenImage {
+                        onOpenImage(message, url)
+                    } else {
+                        selectedImageURL = url
+                    }
                 } label: {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView().frame(width: 210, height: 180)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 230, height: 220)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        case .failure:
-                            Text("Image unavailable")
-                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
-                        @unknown default:
-                            EmptyView()
+                    ZStack {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .empty:
+                                ProgressView().frame(width: 210, height: 180)
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 230, height: 220)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            case .failure:
+                                Text("Image unavailable")
+                                    .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+
+                        if isLocalPendingMedia {
+                            mediaUploadOverlay
                         }
                     }
                 }
@@ -239,6 +257,11 @@ struct MessageBubbleView: View {
                     .padding(.vertical, 2)
                 }
                 .buttonStyle(.plain)
+                .overlay(alignment: .center) {
+                    if isLocalPendingMedia {
+                        mediaUploadOverlay
+                    }
+                }
             }
 
         case .file:
@@ -315,6 +338,46 @@ struct MessageBubbleView: View {
                 }
             }
         )
+    }
+
+    @ViewBuilder
+    private var mediaUploadOverlay: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.black.opacity(0.35))
+
+            if canRetryUpload {
+                Button {
+                    PingyHaptics.softTap()
+                    onRetryUpload()
+                } label: {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.3), radius: 3, y: 2)
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+            } else {
+                VStack(spacing: 6) {
+                    ProgressView(value: uploadProgress ?? 0.18, total: 1)
+                        .tint(.white)
+                        .frame(width: 120)
+                    Text(uploadPercentText)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.24))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .frame(width: message.type == .image ? 230 : 220, height: message.type == .image ? 220 : 80)
+    }
+
+    private var uploadPercentText: String {
+        let progress = max(0, min(1, uploadProgress ?? 0))
+        return "\(Int((progress * 100).rounded()))%"
     }
 }
 
