@@ -16,6 +16,7 @@ struct RootView: View {
                 PingyTabShellView(
                     messengerViewModel: messengerViewModel,
                     themeManager: themeManager,
+                    callSignalingService: appEnvironment.callSignalingService,
                     statusService: appEnvironment.statusService
                 )
                     .task(id: sessionStore.currentUser?.id) {

@@ -22,8 +22,6 @@ struct ChatDetailView: View {
     @State private var isContactInfoPresented = false
     @State private var mediaViewerState: ChatMediaViewerState?
     @State private var isMicGestureActive = false
-    @State private var activeCallSession: InAppCallSession?
-    @State private var callAutoConnectTask: Task<Void, Never>?
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
@@ -63,7 +61,6 @@ struct ChatDetailView: View {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = false
             }
-            callAutoConnectTask?.cancel()
             if voiceRecorder.isRecording {
                 _ = try? voiceRecorder.stopRecording()
             }
@@ -170,20 +167,6 @@ struct ChatDetailView: View {
                 onDeleteOwnMessage: { message in
                     viewModel.deleteMessageLocally(messageID: message.id, conversationID: message.conversationId)
                     mediaViewerState = nil
-                }
-            )
-        }
-        .fullScreenCover(item: $activeCallSession) { session in
-            InAppVoiceCallView(
-                session: session,
-                onToggleMute: {
-                    toggleCallMute()
-                },
-                onToggleSpeaker: {
-                    toggleCallSpeaker()
-                },
-                onEnd: {
-                    endCurrentCall()
                 }
             )
         }
@@ -625,76 +608,7 @@ struct ChatDetailView: View {
     }
 
     private func startVoiceCall() {
-        guard activeCallSession == nil else { return }
-        let callId = UUID().uuidString
-        activeCallSession = InAppCallSession(
-            id: callId,
-            conversationId: conversation.conversationId,
-            participantId: conversation.participantId,
-            participantName: participantDisplayName,
-            participantAvatarURL: conversation.participantAvatarUrl,
-            status: .ringing,
-            startedAt: nil,
-            isMuted: false,
-            isSpeakerEnabled: false
-        )
-        viewModel.sendCallInvite(callId: callId, conversationId: conversation.conversationId, participantID: conversation.participantId)
-
-        callAutoConnectTask?.cancel()
-        callAutoConnectTask = Task { [conversationId = conversation.conversationId, participantId = conversation.participantId] in
-            try? await Task.sleep(nanoseconds: 1_300_000_000)
-            await MainActor.run {
-                guard var session = activeCallSession, session.conversationId == conversationId else { return }
-                session.status = .connected
-                session.startedAt = Date()
-                activeCallSession = session
-                viewModel.sendCallAccepted(callId: session.id, conversationId: conversationId, participantID: participantId)
-            }
-        }
-    }
-
-    private func toggleCallMute() {
-        guard var session = activeCallSession else { return }
-        session.isMuted.toggle()
-        activeCallSession = session
-    }
-
-    private func toggleCallSpeaker() {
-        guard var session = activeCallSession else { return }
-        session.isSpeakerEnabled.toggle()
-        activeCallSession = session
-    }
-
-    private func endCurrentCall() {
-        guard let session = activeCallSession else { return }
-        callAutoConnectTask?.cancel()
-        let isConnected = session.startedAt != nil
-        let duration = isConnected ? Int(Date().timeIntervalSince(session.startedAt ?? Date())) : 0
-        viewModel.sendCallEnded(
-            callId: session.id,
-            conversationId: session.conversationId,
-            participantID: session.participantId,
-            status: session.startedAt == nil ? .missed : .ended
-        )
-        if let userID = viewModel.currentUserID, !userID.isEmpty {
-            Task {
-                await CallLogService.shared.append(
-                    CallLogEntry(
-                        id: UUID().uuidString,
-                        conversationID: session.conversationId,
-                        participantID: session.participantId,
-                        participantName: session.participantName,
-                        participantAvatarURL: session.participantAvatarURL,
-                        direction: .outgoing,
-                        type: .voice,
-                        createdAt: Date(),
-                        durationSeconds: duration
-                    ),
-                    for: userID
-                )
-            }
-        }
-        activeCallSession = nil
+        viewModel.startCall(from: conversation)
     }
 
     @ViewBuilder

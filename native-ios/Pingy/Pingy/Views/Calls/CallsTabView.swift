@@ -4,8 +4,6 @@ struct CallsTabView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
     @StateObject private var viewModel = CallsViewModel()
     @State private var isPickerPresented = false
-    @State private var activeCallSession: InAppCallSession?
-    @State private var callAutoConnectTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -29,24 +27,6 @@ struct CallsTabView: View {
             NavigationStack {
                 callPicker
             }
-        }
-        .fullScreenCover(item: $activeCallSession) { session in
-            InAppVoiceCallView(
-                session: session,
-                onToggleMute: {
-                    guard var value = activeCallSession else { return }
-                    value.isMuted.toggle()
-                    activeCallSession = value
-                },
-                onToggleSpeaker: {
-                    guard var value = activeCallSession else { return }
-                    value.isSpeakerEnabled.toggle()
-                    activeCallSession = value
-                },
-                onEnd: {
-                    endCurrentCall()
-                }
-            )
         }
     }
 
@@ -137,7 +117,7 @@ struct CallsTabView: View {
                             conversation: conversation
                         )
                         isPickerPresented = false
-                        startCall(for: conversation)
+                        messengerViewModel.startCall(from: conversation)
                     }
                 } label: {
                     HStack(spacing: PingySpacing.sm) {
@@ -175,49 +155,4 @@ struct CallsTabView: View {
         return "\(direction) - \(time)"
     }
 
-    private func startCall(for conversation: Conversation) {
-        guard activeCallSession == nil else { return }
-
-        let callId = UUID().uuidString
-        activeCallSession = InAppCallSession(
-            id: callId,
-            conversationId: conversation.conversationId,
-            participantId: conversation.participantId,
-            participantName: messengerViewModel.contactDisplayName(for: conversation),
-            participantAvatarURL: conversation.participantAvatarUrl,
-            status: .ringing,
-            startedAt: nil,
-            isMuted: false,
-            isSpeakerEnabled: false
-        )
-        messengerViewModel.sendCallInvite(
-            callId: callId,
-            conversationId: conversation.conversationId,
-            participantID: conversation.participantId
-        )
-
-        callAutoConnectTask?.cancel()
-        callAutoConnectTask = Task { [conversationId = conversation.conversationId, participantId = conversation.participantId] in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            await MainActor.run {
-                guard var session = activeCallSession, session.conversationId == conversationId else { return }
-                session.status = .connected
-                session.startedAt = Date()
-                activeCallSession = session
-                messengerViewModel.sendCallAccepted(callId: session.id, conversationId: conversationId, participantID: participantId)
-            }
-        }
-    }
-
-    private func endCurrentCall() {
-        guard let session = activeCallSession else { return }
-        callAutoConnectTask?.cancel()
-        messengerViewModel.sendCallEnded(
-            callId: session.id,
-            conversationId: session.conversationId,
-            participantID: session.participantId,
-            status: session.startedAt == nil ? .missed : .ended
-        )
-        activeCallSession = nil
-    }
 }

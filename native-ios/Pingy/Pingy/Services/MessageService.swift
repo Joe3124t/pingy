@@ -39,6 +39,20 @@ final class MessageService {
             let replyToMessageId: String?
         }
 
+        struct TextPayload: Encodable {
+            let text: String
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
+        struct MessagePayload: Encodable {
+            let message: String
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
         do {
             let endpoint = try Endpoint.json(
                 path: "messages/\(conversationID)",
@@ -61,7 +75,8 @@ final class MessageService {
             let shouldRetryWithLegacyPayload =
                 lowered.contains("validation failed") ||
                 lowered.contains("text body is required") ||
-                lowered.contains("invalid body")
+                lowered.contains("invalid body") ||
+                lowered.contains("text is required")
 
             guard shouldRetryWithLegacyPayload else {
                 throw apiError
@@ -78,18 +93,52 @@ final class MessageService {
                 let replyToMessageId: String?
             }
 
-            let legacyEndpoint = try Endpoint.json(
+            do {
+                let legacyEndpoint = try Endpoint.json(
+                    path: "messages/\(conversationID)",
+                    method: .post,
+                    payload: LegacyPayload(
+                        body: .init(text: body),
+                        isEncrypted: false,
+                        clientId: clientID,
+                        replyToMessageId: replyToMessageID
+                    )
+                )
+                let legacyResponse: MessageResponse = try await authService.authorizedRequest(legacyEndpoint, as: MessageResponse.self)
+                return legacyResponse.message
+            } catch {
+                // Continue to other compatibility payloads.
+            }
+
+            do {
+                let textEndpoint = try Endpoint.json(
+                    path: "messages/\(conversationID)",
+                    method: .post,
+                    payload: TextPayload(
+                        text: body,
+                        isEncrypted: false,
+                        clientId: clientID,
+                        replyToMessageId: replyToMessageID
+                    )
+                )
+                let textResponse: MessageResponse = try await authService.authorizedRequest(textEndpoint, as: MessageResponse.self)
+                return textResponse.message
+            } catch {
+                // Continue to next compatibility payload.
+            }
+
+            let messageEndpoint = try Endpoint.json(
                 path: "messages/\(conversationID)",
                 method: .post,
-                payload: LegacyPayload(
-                    body: .init(text: body),
+                payload: MessagePayload(
+                    message: body,
                     isEncrypted: false,
                     clientId: clientID,
                     replyToMessageId: replyToMessageID
                 )
             )
-            let legacyResponse: MessageResponse = try await authService.authorizedRequest(legacyEndpoint, as: MessageResponse.self)
-            return legacyResponse.message
+            let messageResponse: MessageResponse = try await authService.authorizedRequest(messageEndpoint, as: MessageResponse.self)
+            return messageResponse.message
         }
     }
 

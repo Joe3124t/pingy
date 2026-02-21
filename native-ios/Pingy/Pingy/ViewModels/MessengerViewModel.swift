@@ -79,6 +79,7 @@ final class MessengerViewModel: ObservableObject {
     private let contactSyncService: ContactSyncService
     private let socketManager: SocketIOWebSocketManager
     private let cryptoService: E2EECryptoService
+    private let callSignalingService: CallSignalingService
     private let localCache = LocalDatabaseCache.shared
     private let userDefaults = UserDefaults.standard
     private let networkMonitor = NWPathMonitor()
@@ -90,8 +91,8 @@ final class MessengerViewModel: ObservableObject {
     private var isSyncingAfterReconnect = false
     private var reconnectSyncRetryTask: Task<Void, Never>?
     private var mediaRetryTask: Task<Void, Never>?
+    private var textRetryTask: Task<Void, Never>?
     private var transientNoticeTask: Task<Void, Never>?
-    private var lastSessionSyncNoticeAt: Date?
     private var socketConnectingSince: Date?
     private var keyRefreshTasks: [String: Task<PublicKeyJWK, Error>] = [:]
     private var pendingTextQueue: [PendingTextMessage] = []
@@ -114,6 +115,8 @@ final class MessengerViewModel: ObservableObject {
         let replyToMessageId: String?
         let clientId: String
         let createdAtISO: String
+        let retryAttempt: Int?
+        let nextRetryAtISO: String?
     }
 
     private struct PendingMediaMessage: Codable {
@@ -174,7 +177,8 @@ final class MessengerViewModel: ObservableObject {
         settingsService: SettingsService,
         contactSyncService: ContactSyncService,
         socketManager: SocketIOWebSocketManager,
-        cryptoService: E2EECryptoService
+        cryptoService: E2EECryptoService,
+        callSignalingService: CallSignalingService
     ) {
         self.authService = authService
         self.conversationService = conversationService
@@ -183,6 +187,15 @@ final class MessengerViewModel: ObservableObject {
         self.contactSyncService = contactSyncService
         self.socketManager = socketManager
         self.cryptoService = cryptoService
+        self.callSignalingService = callSignalingService
+        self.callSignalingService.onRingingTimeout = { [weak self] session in
+            self?.sendCallEnded(
+                callId: session.id,
+                conversationId: session.conversationId,
+                participantID: session.participantId,
+                status: .missed
+            )
+        }
 
         notificationObserver = NotificationCenter.default.addObserver(
             forName: .pingyOpenConversationFromPush,
@@ -228,6 +241,7 @@ final class MessengerViewModel: ObservableObject {
         socketConnectingObserver?.cancel()
         reconnectSyncRetryTask?.cancel()
         mediaRetryTask?.cancel()
+        textRetryTask?.cancel()
         activeDurationTimer?.invalidate()
         typingExpiryTasks.values.forEach { $0.cancel() }
         recordingExpiryTasks.values.forEach { $0.cancel() }
@@ -324,7 +338,9 @@ final class MessengerViewModel: ObservableObject {
                 plainText: MessageBodyFormatter.previewText(from: message.body, fallback: "").trimmingCharacters(in: .whitespacesAndNewlines),
                 replyToMessageId: normalizedReplyToMessageId(message.replyToMessageId),
                 clientId: clientId,
-                createdAtISO: message.createdAt
+                createdAtISO: message.createdAt,
+                retryAttempt: 0,
+                nextRetryAtISO: nil
             )
             if !queued.plainText.isEmpty {
                 pendingTextQueue.insert(queued, at: 0)
@@ -708,7 +724,9 @@ final class MessengerViewModel: ObservableObject {
             plainText: plain,
             replyToMessageId: normalizedReplyToMessageId(pendingReplyMessage?.id),
             clientId: "ios-\(UUID().uuidString)",
-            createdAtISO: ISO8601DateFormatter().string(from: Date())
+            createdAtISO: ISO8601DateFormatter().string(from: Date()),
+            retryAttempt: 0,
+            nextRetryAtISO: nil
         )
         failedTextClientIDs.remove(queued.clientId)
         insertLocalPendingMessage(queued, conversation: conversation, sender: me)
@@ -827,6 +845,14 @@ final class MessengerViewModel: ObservableObject {
         )
     }
 
+    func sendCallDeclined(callId: String, conversationId: String, participantID: String) {
+        socketManager.sendCallDecline(
+            callId: callId,
+            conversationId: conversationId,
+            toUserId: participantID
+        )
+    }
+
     func sendCallAccepted(callId: String, conversationId: String, participantID: String) {
         socketManager.sendCallAccept(
             callId: callId,
@@ -842,6 +868,62 @@ final class MessengerViewModel: ObservableObject {
             toUserId: participantID,
             status: status
         )
+    }
+
+    func startCall(from conversation: Conversation) {
+        let profile = CallSignalingService.CallParticipantProfile(
+            conversationId: conversation.conversationId,
+            participantId: conversation.participantId,
+            displayName: contactDisplayName(for: conversation),
+            avatarURL: conversation.participantAvatarUrl
+        )
+        let callId = UUID().uuidString
+        callSignalingService.beginOutgoingCall(profile: profile, callId: callId)
+        sendCallInvite(
+            callId: callId,
+            conversationId: conversation.conversationId,
+            participantID: conversation.participantId
+        )
+    }
+
+    func acceptActiveCall() {
+        guard let session = callSignalingService.activeSession else { return }
+        callSignalingService.acceptCurrentCall()
+        sendCallAccepted(
+            callId: session.id,
+            conversationId: session.conversationId,
+            participantID: session.participantId
+        )
+    }
+
+    func declineActiveCall() {
+        guard let session = callSignalingService.activeSession else { return }
+        callSignalingService.declineCurrentCall()
+        sendCallDeclined(
+            callId: session.id,
+            conversationId: session.conversationId,
+            participantID: session.participantId
+        )
+    }
+
+    func endActiveCall() {
+        guard let session = callSignalingService.activeSession else { return }
+        let status: CallSignalStatus = session.startedAt == nil ? .missed : .ended
+        callSignalingService.endCurrentCall(status: status)
+        sendCallEnded(
+            callId: session.id,
+            conversationId: session.conversationId,
+            participantID: session.participantId,
+            status: status
+        )
+    }
+
+    func toggleCallMute() {
+        callSignalingService.toggleMute()
+    }
+
+    func toggleCallSpeaker() {
+        callSignalingService.toggleSpeaker()
     }
 
     func toggleReaction(messageID: String, emoji: String) async {
@@ -1137,6 +1219,7 @@ final class MessengerViewModel: ObservableObject {
             inFlightTextClientIDs = []
             pendingMediaQueue = []
             mediaRetryTask?.cancel()
+            textRetryTask?.cancel()
             mediaUploadProgressByClientID = [:]
             failedMediaClientIDs = []
             failedTextClientIDs = []
@@ -1149,6 +1232,7 @@ final class MessengerViewModel: ObservableObject {
             recordingExpiryTasks.values.forEach { $0.cancel() }
             typingExpiryTasks = [:]
             recordingExpiryTasks = [:]
+            callSignalingService.dismissCallUI()
             selectedConversationID = nil
         } catch {
             setError(from: error)
@@ -1170,6 +1254,7 @@ final class MessengerViewModel: ObservableObject {
         inFlightTextClientIDs = []
         pendingMediaQueue = []
         mediaRetryTask?.cancel()
+        textRetryTask?.cancel()
         mediaUploadProgressByClientID = [:]
         failedMediaClientIDs = []
         failedTextClientIDs = []
@@ -1182,6 +1267,7 @@ final class MessengerViewModel: ObservableObject {
         recordingExpiryTasks.values.forEach { $0.cancel() }
         typingExpiryTasks = [:]
         recordingExpiryTasks = [:]
+        callSignalingService.dismissCallUI()
         selectedConversationID = nil
     }
 
@@ -1227,6 +1313,8 @@ final class MessengerViewModel: ObservableObject {
 
         isProcessingTextQueue = true
         isSendingMessage = true
+        textRetryTask?.cancel()
+        textRetryTask = nil
         defer {
             isProcessingTextQueue = false
             isSendingMessage = false
@@ -1235,6 +1323,15 @@ final class MessengerViewModel: ObservableObject {
         while !pendingTextQueue.isEmpty {
             let rawItem = pendingTextQueue.removeFirst()
             let item = normalizedPendingTextMessage(rawItem)
+            let now = Date()
+
+            if let nextRetryDate = parseISO8601(item.nextRetryAtISO), nextRetryDate > now {
+                pendingTextQueue.insert(item, at: 0)
+                persistPendingQueue()
+                scheduleTextQueueRetry(at: nextRetryDate)
+                break
+            }
+
             inFlightTextClientIDs.insert(item.clientId)
             persistPendingQueue()
             do {
@@ -1254,35 +1351,30 @@ final class MessengerViewModel: ObservableObject {
                 if shouldDropQueueItem(after: error) {
                     AppLogger.debug("Marking non-retriable queued message as failed \(item.clientId).")
                     failedTextClientIDs.insert(item.clientId)
-                    showTransientNotice("Message failed. Tap to retry.", style: .warning, autoDismissAfter: 2.2)
                     continue
                 }
 
-                pendingTextQueue.insert(item, at: 0)
+                let nextAttempt = max(0, item.retryAttempt ?? 0) + 1
+                let retryDelaySeconds = min(pow(2.0, Double(nextAttempt)), 30.0)
+                let retryAt = Date().addingTimeInterval(retryDelaySeconds)
+                let retriableItem = PendingTextMessage(
+                    conversationId: item.conversationId,
+                    participantId: item.participantId,
+                    plainText: item.plainText,
+                    replyToMessageId: item.replyToMessageId,
+                    clientId: item.clientId,
+                    createdAtISO: item.createdAtISO,
+                    retryAttempt: nextAttempt,
+                    nextRetryAtISO: ISO8601DateFormatter().string(from: retryAt)
+                )
+
+                pendingTextQueue.insert(retriableItem, at: 0)
                 persistPendingQueue()
                 if shouldAutoRetryQueue(after: error) {
                     AppLogger.debug("Keeping message queued until network is back: \(item.clientId)")
-                    if isSecureSessionSyncingError(error) {
-                        let shouldShowNotice: Bool = {
-                            guard let last = lastSessionSyncNoticeAt else { return true }
-                            return Date().timeIntervalSince(last) > 4
-                        }()
-                        if shouldShowNotice {
-                            lastSessionSyncNoticeAt = Date()
-                            showTransientNotice(
-                                "Secure session is syncing. Message queued and will send automatically.",
-                                style: .info,
-                                autoDismissAfter: 2.2
-                            )
-                        }
-                    }
-                    Task { [weak self] in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        await self?.processPendingTextQueue()
-                    }
+                    scheduleTextQueueRetry(at: retryAt)
                 } else {
                     failedTextClientIDs.insert(item.clientId)
-                    showTransientNotice("Message failed. Tap to retry.", style: .error, autoDismissAfter: 2.4)
                 }
                 break
             }
@@ -1357,6 +1449,21 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
+    private func scheduleTextQueueRetry(at date: Date) {
+        textRetryTask?.cancel()
+        let delay = max(0.2, date.timeIntervalSinceNow)
+        textRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.processPendingTextQueue()
+        }
+    }
+
+    private func parseISO8601(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
     private func sendPendingMediaMessage(_ item: PendingMediaMessage) async throws -> Message {
         guard authService.sessionStore.currentUser != nil else {
             throw APIError.unauthorized
@@ -1407,22 +1514,33 @@ final class MessengerViewModel: ObservableObject {
                 replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
             )
         } catch {
-            if requiresEncryptedTextPayload(error) {
+            let restError = error
+
+            // Keep socket as a compatibility fallback first when available.
+            if socketManager.isConnected {
+                AppLogger.debug("REST send failed for \(item.clientId), trying socket fallback.")
+                do {
+                    return try await socketManager.sendPlainTextMessage(
+                        conversationId: item.conversationId,
+                        body: item.plainText,
+                        clientId: item.clientId,
+                        replyToMessageId: item.replyToMessageId
+                    )
+                } catch {
+                    if requiresEncryptedTextPayload(restError) || requiresEncryptedTextPayload(error) {
+                        AppLogger.debug("Text requires encrypted payload, retrying with E2EE for \(item.clientId)")
+                        return try await sendEncryptedTextMessage(item, conversation: conversation)
+                    }
+                    throw error
+                }
+            }
+
+            if requiresEncryptedTextPayload(restError) {
                 AppLogger.debug("Server requires encrypted text payload, retrying with E2EE body for \(item.clientId)")
                 return try await sendEncryptedTextMessage(item, conversation: conversation)
             }
 
-            // Keep socket as a compatibility fallback only.
-            if socketManager.isConnected {
-                AppLogger.debug("REST send failed for \(item.clientId), trying socket fallback.")
-                return try await socketManager.sendPlainTextMessage(
-                    conversationId: item.conversationId,
-                    body: item.plainText,
-                    clientId: item.clientId,
-                    replyToMessageId: item.replyToMessageId
-                )
-            }
-            throw error
+            throw restError
         }
     }
 
@@ -1489,7 +1607,9 @@ final class MessengerViewModel: ObservableObject {
             plainText: item.plainText,
             replyToMessageId: normalizedReplyToMessageId(item.replyToMessageId),
             clientId: item.clientId,
-            createdAtISO: item.createdAtISO
+            createdAtISO: item.createdAtISO,
+            retryAttempt: max(0, item.retryAttempt ?? 0),
+            nextRetryAtISO: item.nextRetryAtISO
         )
     }
 
@@ -1554,8 +1674,13 @@ final class MessengerViewModel: ObservableObject {
             applyProfileUpdate(profile)
         case .conversationWallpaper(let event):
             applyConversationWallpaperEvent(event)
-        case .callSignal:
-            break
+        case .callSignal(let signal):
+            guard let currentUserID else { return }
+            callSignalingService.handleSignal(
+                signal,
+                currentUserID: currentUserID,
+                profile: callProfile(for: signal, currentUserID: currentUserID)
+            )
         }
     }
 
@@ -1679,6 +1804,7 @@ final class MessengerViewModel: ObservableObject {
         }
         messages[index] = message
         messagesByConversation[update.conversationId] = messages
+        persistMessagesCache()
     }
 
     private func applyReactionUpdate(_ update: ReactionUpdate) {
@@ -1723,6 +1849,33 @@ final class MessengerViewModel: ObservableObject {
             conversations[index].wallpaperUrl = event.wallpaperUrl
             conversations[index].blurIntensity = event.blurIntensity
         }
+    }
+
+    private func callProfile(
+        for signal: CallSignalEvent,
+        currentUserID: String
+    ) -> CallSignalingService.CallParticipantProfile? {
+        let participantId = signal.fromUserId == currentUserID ? signal.toUserId : signal.fromUserId
+
+        if let conversation = conversations.first(where: { $0.conversationId == signal.conversationId }) {
+            return CallSignalingService.CallParticipantProfile(
+                conversationId: conversation.conversationId,
+                participantId: participantId,
+                displayName: contactDisplayName(for: conversation),
+                avatarURL: conversation.participantAvatarUrl
+            )
+        }
+
+        if let conversation = conversations.first(where: { $0.participantId == participantId }) {
+            return CallSignalingService.CallParticipantProfile(
+                conversationId: conversation.conversationId,
+                participantId: participantId,
+                displayName: contactDisplayName(for: conversation),
+                avatarURL: conversation.participantAvatarUrl
+            )
+        }
+
+        return nil
     }
 
     private func loadConversationListState() async {
@@ -2563,22 +2716,14 @@ final class MessengerViewModel: ObservableObject {
                     showTransientNotice(activeError ?? message, style: .warning)
                     return
                 }
-                if lowered.contains("public key not found") {
+                if lowered.contains("secure chat session is still syncing")
+                    || lowered.contains("encrypted text payload is required")
+                    || lowered.contains("encrypted payload is required")
+                    || lowered.contains("public key not found")
+                    || lowered.contains("key exchange is not ready")
+                {
+                    // Queue/retry will handle this silently.
                     activeError = nil
-                    showTransientNotice(
-                        "Secure session is syncing. Message queued and will send automatically.",
-                        style: .info,
-                        autoDismissAfter: 2.2
-                    )
-                    return
-                }
-                if lowered.contains("encrypted text payload is required") {
-                    activeError = nil
-                    showTransientNotice(
-                        "Secure session is syncing. Message queued and will send automatically.",
-                        style: .info,
-                        autoDismissAfter: 2.2
-                    )
                     return
                 }
                 if lowered.contains("validation failed") {

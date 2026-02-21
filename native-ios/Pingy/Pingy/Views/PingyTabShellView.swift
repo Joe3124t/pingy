@@ -3,6 +3,7 @@ import SwiftUI
 struct PingyTabShellView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
     @ObservedObject var themeManager: ThemeManager
+    @ObservedObject var callSignalingService: CallSignalingService
     let statusService: StatusService
 
     @State private var selectedTab: PingyRootTab = .chats
@@ -63,27 +64,6 @@ struct PingyTabShellView: View {
                         selectTab(.status)
                     }
                 )
-
-                if messengerViewModel.networkBannerState != .hidden {
-                    NetworkStateBannerView(state: messengerViewModel.networkBannerState)
-                        .transition(
-                            .move(edge: .top)
-                                .combined(with: .opacity)
-                        )
-                }
-
-                if let notice = messengerViewModel.transientNotice {
-                    TransientNoticeBannerView(
-                        notice: notice,
-                        onDismiss: {
-                            messengerViewModel.dismissTransientNotice()
-                        }
-                    )
-                    .transition(
-                        .move(edge: .top)
-                            .combined(with: .opacity)
-                    )
-                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 2)
@@ -91,7 +71,7 @@ struct PingyTabShellView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if shouldShowBottomBar {
-                FloatingTabBar(
+                FloatingGlassTabBar(
                     selectedTab: $selectedTab,
                     unreadCount: messengerViewModel.totalUnreadCount,
                     compact: chromeCompact,
@@ -122,12 +102,34 @@ struct PingyTabShellView: View {
                     }
                 }
         )
-        .onChange(of: messengerViewModel.activeError) { message in
-            guard let message, !message.isEmpty else { return }
-            if messengerViewModel.transientNotice?.message != message {
-                messengerViewModel.showTransientNotice(message, style: .error, autoDismissAfter: 2.8)
-            }
-            messengerViewModel.activeError = nil
+        .fullScreenCover(
+            item: Binding(
+                get: { callSignalingService.activeSession },
+                set: { value in
+                    if value == nil {
+                        callSignalingService.dismissCallUI()
+                    }
+                }
+            )
+        ) { session in
+            CallView(
+                session: session,
+                onAccept: {
+                    messengerViewModel.acceptActiveCall()
+                },
+                onDecline: {
+                    messengerViewModel.declineActiveCall()
+                },
+                onToggleMute: {
+                    messengerViewModel.toggleCallMute()
+                },
+                onToggleSpeaker: {
+                    messengerViewModel.toggleCallSpeaker()
+                },
+                onEnd: {
+                    messengerViewModel.endActiveCall()
+                }
+            )
         }
     }
 
@@ -160,158 +162,6 @@ struct PingyTabShellView: View {
         guard selectedTab != tab else { return }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
             selectedTab = tab
-        }
-    }
-}
-
-private struct TransientNoticeBannerView: View {
-    let notice: TransientNotice
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: iconName)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            Text(notice.message)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-                .lineLimit(2)
-
-            Spacer(minLength: 0)
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(PingyTheme.textSecondary)
-                    .frame(width: 20, height: 20)
-                    .background(PingyTheme.surfaceElevated.opacity(0.8))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.ultraThinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(tintColor.opacity(0.25))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(PingyTheme.border.opacity(0.45), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
-    }
-
-    private var iconName: String {
-        switch notice.style {
-        case .info:
-            return "info.circle.fill"
-        case .warning:
-            return "exclamationmark.triangle.fill"
-        case .error:
-            return "xmark.octagon.fill"
-        case .success:
-            return "checkmark.circle.fill"
-        }
-    }
-
-    private var tintColor: Color {
-        switch notice.style {
-        case .info:
-            return PingyTheme.primary
-        case .warning:
-            return Color.orange
-        case .error:
-            return Color.red
-        case .success:
-            return Color.green
-        }
-    }
-}
-
-private struct NetworkStateBannerView: View {
-    let state: NetworkBannerState
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if showsProgress {
-                ProgressView()
-                    .tint(PingyTheme.textPrimary)
-                    .controlSize(.small)
-            } else {
-                Image(systemName: iconName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(PingyTheme.textPrimary)
-            }
-
-            Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(.ultraThinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(backgroundTint)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(PingyTheme.border.opacity(0.45), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.15), radius: 10, y: 4)
-    }
-
-    private var title: String {
-        switch state {
-        case .connecting:
-            return "Connecting..."
-        case .waitingForInternet:
-            return "Waiting for internet..."
-        case .updating:
-            return "Updating..."
-        case .hidden:
-            return ""
-        }
-    }
-
-    private var iconName: String {
-        switch state {
-        case .waitingForInternet:
-            return "wifi.slash"
-        case .connecting:
-            return "bolt.horizontal.circle"
-        case .updating:
-            return "arrow.triangle.2.circlepath"
-        case .hidden:
-            return ""
-        }
-    }
-
-    private var showsProgress: Bool {
-        state == .connecting || state == .updating
-    }
-
-    private var backgroundTint: Color {
-        switch state {
-        case .waitingForInternet:
-            return Color.orange.opacity(0.16)
-        case .connecting:
-            return Color.yellow.opacity(0.12)
-        case .updating:
-            return PingyTheme.primarySoft.opacity(0.34)
-        case .hidden:
-            return .clear
         }
     }
 }

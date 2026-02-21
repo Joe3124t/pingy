@@ -14,6 +14,7 @@ final class AppEnvironment: ObservableObject {
     let contactSyncService: ContactSyncService
     let statusService: StatusService
     let socketManager: SocketIOWebSocketManager
+    let callSignalingService = CallSignalingService()
     let pushManager: PushNotificationManager
     let authViewModel: AuthViewModel
     let messengerViewModel: MessengerViewModel
@@ -43,7 +44,8 @@ final class AppEnvironment: ObservableObject {
             settingsService: settingsService,
             contactSyncService: contactSyncService,
             socketManager: socketManager,
-            cryptoService: cryptoService
+            cryptoService: cryptoService,
+            callSignalingService: callSignalingService
         )
     }
 
