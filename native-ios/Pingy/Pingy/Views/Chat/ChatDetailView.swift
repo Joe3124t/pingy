@@ -79,7 +79,7 @@ struct ChatDetailView: View {
             }
         .sheet(isPresented: $isNativeMediaPickerPresented) {
             NativeMediaPickerView(
-                selectionLimit: 10,
+                selectionLimit: 6,
                 onCancel: {},
                 onFinish: { results in
                     Task {
@@ -102,11 +102,16 @@ struct ChatDetailView: View {
                     isMediaComposerPresented = false
                 },
                 onSend: { items, caption, hdEnabled in
+                    let batchItems = items
+                    let batchCaption = caption
+                    let useHD = hdEnabled
+                    isMediaComposerPresented = false
+
                     Task {
                         await uploadService.uploadMediaBatch(
-                            items: items,
-                            caption: caption,
-                            hdEnabled: hdEnabled
+                            items: batchItems,
+                            caption: batchCaption,
+                            hdEnabled: useHD
                         ) { item, uploadData, caption in
                             await viewModel.sendMedia(
                                 data: uploadData,
@@ -116,7 +121,6 @@ struct ChatDetailView: View {
                                 body: caption
                             )
                         }
-                        isMediaComposerPresented = false
                     }
                 }
             )
@@ -233,6 +237,7 @@ struct ChatDetailView: View {
                             conversation: conversation,
                             currentUserID: viewModel.currentUserID,
                             isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
+                            decryptedText: viewModel.decryptedBody(for: message),
                             uploadProgress: viewModel.mediaUploadProgress(for: message),
                             canRetryUpload: viewModel.canRetryMediaUpload(for: message),
                             onReply: {

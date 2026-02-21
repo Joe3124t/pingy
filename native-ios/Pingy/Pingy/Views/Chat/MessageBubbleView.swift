@@ -8,6 +8,7 @@ struct MessageBubbleView: View {
     let conversation: Conversation
     let currentUserID: String?
     let isGroupedWithPrevious: Bool
+    let decryptedText: String?
     let uploadProgress: Double?
     let canRetryUpload: Bool
     let onReply: () -> Void
@@ -191,7 +192,7 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.type {
         case .text:
-            Text(renderedText)
+            Text(resolvedText)
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
                 .multilineTextAlignment(.leading)
@@ -308,6 +309,11 @@ struct MessageBubbleView: View {
 
     private var renderedText: String {
         MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
+    }
+
+    private var resolvedText: String {
+        let normalized = decryptedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? renderedText : normalized
     }
 
     private func formatTime(_ iso: String) -> String {

@@ -129,12 +129,12 @@ struct MediaComposerView: View {
 
     private var metadataPanel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("\(selectedItem.resolutionLabel) • \(selectedItem.format)")
+            Text("\(selectedItem.resolutionLabel) | \(selectedItem.format)")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color.white.opacity(0.92))
 
             Text(
-                "Original \(formatBytes(selectedItem.originalSizeBytes))  •  Optimized \(formatBytes(selectedItem.optimizedSizeBytes))  •  Est. upload \(formatBytes(selectedItem.estimatedUploadSizeBytes(hdEnabled: hdEnabled)))"
+                "Original \(formatBytes(selectedItem.originalSizeBytes)) | Optimized \(formatBytes(selectedItem.optimizedSizeBytes)) | Est. upload \(formatBytes(selectedItem.estimatedUploadSizeBytes(hdEnabled: hdEnabled)))"
             )
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.78))
@@ -245,3 +245,4 @@ private struct VisualEffectBlur: UIViewRepresentable {
         uiView.effect = UIBlurEffect(style: style)
     }
 }
+

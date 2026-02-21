@@ -93,6 +93,34 @@ final class MessageService {
         }
     }
 
+    func sendEncryptedTextMessage(
+        conversationID: String,
+        payload: EncryptedPayload,
+        clientID: String,
+        replyToMessageID: String?
+    ) async throws -> Message {
+        struct Payload: Encodable {
+            let body: JSONValue
+            let isEncrypted: Bool
+            let clientId: String
+            let replyToMessageId: String?
+        }
+
+        let bodyValue = try JSONValue.fromEncodable(payload)
+        let endpoint = try Endpoint.json(
+            path: "messages/\(conversationID)",
+            method: .post,
+            payload: Payload(
+                body: bodyValue,
+                isEncrypted: true,
+                clientId: clientID,
+                replyToMessageId: replyToMessageID
+            )
+        )
+        let response: MessageResponse = try await authService.authorizedRequest(endpoint, as: MessageResponse.self)
+        return response.message
+    }
+
     func sendMediaMessage(
         conversationID: String,
         fileData: Data,

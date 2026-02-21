@@ -6,6 +6,15 @@ enum MediaURLResolver {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
+        if trimmed.hasPrefix("file://"), let fileURL = URL(string: trimmed) {
+            return fileURL
+        }
+
+        // Keep pending local media previews resolvable while upload is queued.
+        if trimmed.hasPrefix("/") {
+            return URL(fileURLWithPath: trimmed)
+        }
+
         if let parsed = URL(string: trimmed), parsed.scheme != nil {
             return parsed
         }

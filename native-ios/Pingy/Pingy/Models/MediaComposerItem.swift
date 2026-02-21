@@ -9,7 +9,7 @@ enum MediaUploadSource: String, Codable {
 struct MediaComposerItem: Identifiable {
     let id: UUID
     let previewImage: UIImage
-    let originalData: Data
+    let originalSizeBytes: Int
     let optimizedData: Data
     let hdData: Data
     let mimeType: String
@@ -22,7 +22,7 @@ struct MediaComposerItem: Identifiable {
     init(
         id: UUID = UUID(),
         previewImage: UIImage,
-        originalData: Data,
+        originalSizeBytes: Int,
         optimizedData: Data,
         hdData: Data,
         mimeType: String,
@@ -34,7 +34,7 @@ struct MediaComposerItem: Identifiable {
     ) {
         self.id = id
         self.previewImage = previewImage
-        self.originalData = originalData
+        self.originalSizeBytes = originalSizeBytes
         self.optimizedData = optimizedData
         self.hdData = hdData
         self.mimeType = mimeType
@@ -43,10 +43,6 @@ struct MediaComposerItem: Identifiable {
         self.pixelHeight = pixelHeight
         self.source = source
         self.fileName = fileName
-    }
-
-    var originalSizeBytes: Int {
-        originalData.count
     }
 
     var optimizedSizeBytes: Int {

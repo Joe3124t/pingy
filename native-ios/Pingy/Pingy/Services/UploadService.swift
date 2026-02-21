@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 final class UploadService {
     func uploadMediaBatch(
         items: [MediaComposerItem],

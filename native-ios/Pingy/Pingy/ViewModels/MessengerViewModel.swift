@@ -45,6 +45,7 @@ final class MessengerViewModel: ObservableObject {
     @Published private(set) var isSocketConnecting = false
     @Published private(set) var mediaUploadProgressByClientID: [String: Double] = [:]
     @Published private(set) var failedMediaClientIDs = Set<String>()
+    @Published private(set) var decryptedMessageBodyByID: [String: String] = [:]
 
     private let authService: AuthService
     private let conversationService: ConversationService
@@ -85,14 +86,14 @@ final class MessengerViewModel: ObservableObject {
         let conversationId: String
         let participantId: String
         let type: MessageType
-        let fileData: Data
         let fileName: String
         let mimeType: String
+        let mediaSize: Int
         let body: String?
         let replyToMessageId: String?
         let clientId: String
         let createdAtISO: String
-        let localMediaURL: String?
+        let localMediaURL: String
     }
 
     private struct CachedContactMatch: Codable {
@@ -223,6 +224,10 @@ final class MessengerViewModel: ObservableObject {
         messagesByConversation[conversationId] ?? []
     }
 
+    func decryptedBody(for message: Message) -> String? {
+        decryptedMessageBodyByID[message.id]
+    }
+
     func mediaUploadProgress(for message: Message) -> Double? {
         guard let clientId = message.clientId else { return nil }
         return mediaUploadProgressByClientID[clientId]
@@ -272,8 +277,10 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func reloadAll() async {
+        await ensurePublicKeyPublished()
         await restoreCachedStateFromDatabase()
         restoreCachedState()
+        scheduleEncryptedMessageDecryptionForCachedConversations()
         await loadConversationListState()
         await loadConversations(silent: true)
         await loadSettings(silent: true)
@@ -285,6 +292,14 @@ final class MessengerViewModel: ObservableObject {
             await processPendingMediaQueue()
         }
         updateNetworkBannerState()
+    }
+
+    private func scheduleEncryptedMessageDecryptionForCachedConversations() {
+        for (_, messages) in messagesByConversation {
+            for message in messages where message.isEncrypted && message.type == .text {
+                scheduleEncryptedMessageDecryptionIfNeeded(message)
+            }
+        }
     }
 
     @discardableResult
@@ -415,7 +430,11 @@ final class MessengerViewModel: ObservableObject {
 
         do {
             let messages = try await messageService.listMessages(conversationID: conversationID)
-            messagesByConversation[conversationID] = messages.sorted(by: { $0.createdAt < $1.createdAt })
+            let sortedMessages = messages.sorted(by: { $0.createdAt < $1.createdAt })
+            messagesByConversation[conversationID] = sortedMessages
+            for message in sortedMessages where message.isEncrypted && message.type == .text {
+                scheduleEncryptedMessageDecryptionIfNeeded(message)
+            }
             persistMessagesCache()
             await markCurrentAsSeen()
             return true
@@ -570,15 +589,18 @@ final class MessengerViewModel: ObservableObject {
 
         let clientId = "ios-\(UUID().uuidString)"
         let normalizedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let localMediaURL = savePendingMediaFile(data: data, fileName: fileName, clientId: clientId)
+        guard let localMediaURL = await savePendingMediaFile(data: data, fileName: fileName, clientId: clientId) else {
+            activeError = "Couldn't prepare media file. Please try another file."
+            return
+        }
 
         let queued = PendingMediaMessage(
             conversationId: conversation.conversationId,
             participantId: conversation.participantId,
             type: type,
-            fileData: data,
             fileName: fileName,
             mimeType: mimeType,
+            mediaSize: data.count,
             body: normalizedBody,
             replyToMessageId: normalizedReplyToMessageId(pendingReplyMessage?.id),
             clientId: clientId,
@@ -658,6 +680,7 @@ final class MessengerViewModel: ObservableObject {
         guard var messages = messagesByConversation[conversationID] else { return }
         messages.removeAll { $0.id == messageID }
         messagesByConversation[conversationID] = messages
+        decryptedMessageBodyByID.removeValue(forKey: messageID)
         persistMessagesCache()
 
         guard let conversationIndex = conversations.firstIndex(where: { $0.conversationId == conversationID }) else {
@@ -916,6 +939,7 @@ final class MessengerViewModel: ObservableObject {
             disconnectSocket()
             conversations = []
             messagesByConversation = [:]
+            decryptedMessageBodyByID = [:]
             pendingTextQueue = []
             pendingMediaQueue = []
             mediaUploadProgressByClientID = [:]
@@ -938,6 +962,7 @@ final class MessengerViewModel: ObservableObject {
         }
         conversations = []
         messagesByConversation = [:]
+        decryptedMessageBodyByID = [:]
         pendingTextQueue = []
         pendingMediaQueue = []
         mediaUploadProgressByClientID = [:]
@@ -1082,9 +1107,13 @@ final class MessengerViewModel: ObservableObject {
             throw PendingQueueError.conversationUnavailable
         }
 
+        guard let fileData = await loadPendingMediaData(path: item.localMediaURL) else {
+            throw APIError.server(statusCode: 422, message: "Pending media file is unavailable")
+        }
+
         return try await messageService.sendMediaMessage(
             conversationID: item.conversationId,
-            fileData: item.fileData,
+            fileData: fileData,
             fileName: item.fileName,
             mimeType: item.mimeType,
             type: item.type,
@@ -1119,6 +1148,11 @@ final class MessengerViewModel: ObservableObject {
                 replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
             )
         } catch {
+            if requiresEncryptedTextPayload(error) {
+                AppLogger.debug("Server requires encrypted text payload, retrying with E2EE body for \(item.clientId)")
+                return try await sendEncryptedTextMessage(item, conversation: conversation)
+            }
+
             // Keep socket as a compatibility fallback only.
             if socketManager.isConnected {
                 AppLogger.debug("REST send failed for \(item.clientId), trying socket fallback.")
@@ -1130,6 +1164,54 @@ final class MessengerViewModel: ObservableObject {
                 )
             }
             throw error
+        }
+    }
+
+    private func requiresEncryptedTextPayload(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError else { return false }
+        guard case .server(_, let message) = apiError else { return false }
+        let lowered = message.lowercased()
+        return lowered.contains("encrypted text payload is required")
+            || lowered.contains("encrypted payload is required")
+    }
+
+    private func sendEncryptedTextMessage(
+        _ item: PendingTextMessage,
+        conversation: Conversation
+    ) async throws -> Message {
+        guard let userID = currentUserID else {
+            throw APIError.unauthorized
+        }
+
+        await ensurePublicKeyPublished()
+
+        let peerPublicKey = try await resolvePeerPublicKey(
+            conversationID: conversation.conversationId,
+            participantID: conversation.participantId
+        )
+
+        let payload = try await cryptoService.encryptText(
+            plaintext: item.plainText,
+            userID: userID,
+            peerUserID: conversation.participantId,
+            peerPublicKeyJWK: peerPublicKey
+        )
+
+        return try await messageService.sendEncryptedTextMessage(
+            conversationID: conversation.conversationId,
+            payload: payload,
+            clientID: item.clientId,
+            replyToMessageID: normalizedReplyToMessageId(item.replyToMessageId)
+        )
+    }
+
+    private func ensurePublicKeyPublished() async {
+        guard let userID = currentUserID else { return }
+        do {
+            let key = try await cryptoService.ensureIdentity(for: userID)
+            try await settingsService.upsertPublicKey(key)
+        } catch {
+            AppLogger.error("Failed to publish E2EE identity key: \(error.localizedDescription)")
         }
     }
 
@@ -1233,6 +1315,11 @@ final class MessengerViewModel: ObservableObject {
             current.sort(by: { $0.createdAt < $1.createdAt })
         }
         messagesByConversation[message.conversationId] = current
+        if !message.isEncrypted {
+            decryptedMessageBodyByID.removeValue(forKey: message.id)
+        } else {
+            scheduleEncryptedMessageDecryptionIfNeeded(message)
+        }
         persistMessagesCache()
 
         if let conversationIndex = conversations.firstIndex(where: { $0.conversationId == message.conversationId }) {
@@ -1252,6 +1339,67 @@ final class MessengerViewModel: ObservableObject {
 
         conversations.sort(by: { ($0.lastMessageCreatedAt ?? "") > ($1.lastMessageCreatedAt ?? "") })
         persistConversationsCache()
+    }
+
+    private func scheduleEncryptedMessageDecryptionIfNeeded(_ message: Message) {
+        guard message.type == .text else { return }
+        guard decryptedMessageBodyByID[message.id] == nil else { return }
+
+        Task { [weak self] in
+            await self?.attemptDecryptMessageForDisplay(message)
+        }
+    }
+
+    private func attemptDecryptMessageForDisplay(_ message: Message) async {
+        guard let payload = extractEncryptedPayload(from: message.body) else { return }
+        guard let userID = currentUserID else { return }
+
+        let peerUserID = message.senderId == userID ? message.recipientId : message.senderId
+
+        let peerPublicKey: PublicKeyJWK
+        if let conversation = conversations.first(where: { $0.conversationId == message.conversationId }),
+           let key = conversation.participantPublicKeyJwk
+        {
+            peerPublicKey = key
+        } else {
+            guard let key = try? await resolvePeerPublicKey(
+                conversationID: message.conversationId,
+                participantID: peerUserID
+            ) else {
+                return
+            }
+            peerPublicKey = key
+        }
+
+        guard let plain = try? await cryptoService.decryptText(
+            payload: payload,
+            userID: userID,
+            peerUserID: peerUserID,
+            peerPublicKeyJWK: peerPublicKey
+        ) else {
+            return
+        }
+
+        let normalized = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        decryptedMessageBodyByID[message.id] = normalized
+    }
+
+    private func extractEncryptedPayload(from body: JSONValue?) -> EncryptedPayload? {
+        guard let body else { return nil }
+
+        let data: Data?
+        switch body {
+        case .object(let object):
+            data = try? JSONEncoder().encode(object)
+        case .string(let raw):
+            data = raw.data(using: .utf8)
+        default:
+            data = nil
+        }
+
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(EncryptedPayload.self, from: data)
     }
 
     private func patchLifecycle(_ update: MessageLifecycleUpdate, kind: LifecycleKind) {
@@ -1575,7 +1723,7 @@ final class MessengerViewModel: ObservableObject {
             mediaUrl: queued.localMediaURL,
             mediaName: queued.fileName,
             mediaMime: queued.mimeType,
-            mediaSize: queued.fileData.count,
+            mediaSize: queued.mediaSize,
             voiceDurationMs: nil,
             clientId: queued.clientId,
             createdAt: queued.createdAtISO,
@@ -1599,29 +1747,37 @@ final class MessengerViewModel: ObservableObject {
         upsertMessage(localMessage)
     }
 
-    private func savePendingMediaFile(data: Data, fileName: String, clientId: String) -> String? {
-        let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        guard let baseURL else { return nil }
+    private func savePendingMediaFile(data: Data, fileName: String, clientId: String) async -> String? {
+        await Task.detached(priority: .utility) {
+            let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            guard let baseURL else { return nil }
 
-        let folder = baseURL.appendingPathComponent("pingy-pending-media", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        } catch {
-            AppLogger.error("Failed to create pending media directory: \(error.localizedDescription)")
-            return nil
-        }
+            let folder = baseURL.appendingPathComponent("pingy-pending-media", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            } catch {
+                AppLogger.error("Failed to create pending media directory: \(error.localizedDescription)")
+                return nil
+            }
 
-        let ext = URL(fileURLWithPath: fileName).pathExtension
-        let resolvedExt = ext.isEmpty ? "jpg" : ext
-        let target = folder.appendingPathComponent("\(clientId).\(resolvedExt)")
+            let ext = URL(fileURLWithPath: fileName).pathExtension
+            let resolvedExt = ext.isEmpty ? "jpg" : ext
+            let target = folder.appendingPathComponent("\(clientId).\(resolvedExt)")
 
-        do {
-            try data.write(to: target, options: .atomic)
-            return target.path
-        } catch {
-            AppLogger.error("Failed to cache pending media file: \(error.localizedDescription)")
-            return nil
-        }
+            do {
+                try data.write(to: target, options: .atomic)
+                return target.path
+            } catch {
+                AppLogger.error("Failed to cache pending media file: \(error.localizedDescription)")
+                return nil
+            }
+        }.value
+    }
+
+    private func loadPendingMediaData(path: String) async -> Data? {
+        await Task.detached(priority: .utility) {
+            try? Data(contentsOf: URL(fileURLWithPath: path), options: [.mappedIfSafe])
+        }.value
     }
 
     private func cleanupPendingMediaFile(path: String?) {
@@ -1962,6 +2118,10 @@ final class MessengerViewModel: ObservableObject {
                 }
                 if lowered.contains("public key not found") {
                     activeError = "Secure key exchange is not ready with this user yet."
+                    return
+                }
+                if lowered.contains("encrypted text payload is required") {
+                    activeError = "Secure chat session is still syncing. Please retry in a moment."
                     return
                 }
                 if lowered.contains("validation failed") {

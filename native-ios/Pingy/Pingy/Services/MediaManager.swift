@@ -41,21 +41,22 @@ actor MediaManager {
         let format = detectImageFormat(from: data)
         let mimeType = mimeType(for: format)
         let dimensions = imageDimensions(image: image)
+        let previewImage = resizedImage(image, maxDimension: 2200)
 
         let optimizedImage = resizedImage(image, maxDimension: 1700)
         let hdImage = resizedImage(image, maxDimension: 3200)
 
-        guard let optimizedData = encode(image: optimizedImage, preferredFormat: format, quality: 0.72),
-              let hdData = encode(image: hdImage, preferredFormat: format, quality: 0.92)
-        else {
+        guard let optimizedData = encode(image: optimizedImage, preferredFormat: format, quality: 0.72) else {
             return nil
         }
+        let hdDataCandidate = encode(image: hdImage, preferredFormat: format, quality: 0.92) ?? optimizedData
+        let hdData = hdDataCandidate.count > 8_000_000 ? optimizedData : hdDataCandidate
 
         let fileName = "media-\(UUID().uuidString).\(fileExtension(for: format))"
 
         return MediaComposerItem(
-            previewImage: image,
-            originalData: data,
+            previewImage: previewImage,
+            originalSizeBytes: data.count,
             optimizedData: optimizedData,
             hdData: hdData,
             mimeType: mimeType,
