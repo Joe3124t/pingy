@@ -317,45 +317,9 @@ struct AppearanceSettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("Theme") {
-                Picker("Appearance", selection: $themeManager.appearanceMode) {
-                    ForEach(ThemeMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section("Chat layout") {
-                Toggle("Enter to send", isOn: $enterToSend)
-                    .tint(PingyTheme.primary)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Font size")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(PingyTheme.textSecondary)
-                    Slider(value: $chatFontScale, in: 0.85 ... 1.25, step: 0.05)
-                        .tint(PingyTheme.primary)
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section("Wallpaper") {
-                TextField("Default wallpaper URL (optional)", text: $defaultWallpaperURL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onSubmit {
-                        scheduleChatAutosave(immediate: true)
-                    }
-
-                PhotosPicker(selection: $wallpaperItem, matching: .images) {
-                    Label("Upload default wallpaper", systemImage: "photo")
-                        .foregroundStyle(PingyTheme.primaryStrong)
-                }
-                .buttonStyle(PingyPressableButtonStyle())
-            } footer: {
-                Text("Changes in this section are saved automatically.")
-            }
+            themeSection
+            chatLayoutSection
+            wallpaperSection
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -390,6 +354,52 @@ struct AppearanceSettingsSectionView: View {
         }
         .onDisappear {
             saveTask?.cancel()
+        }
+    }
+
+    private var themeSection: some View {
+        Section("Theme") {
+            Picker("Appearance", selection: $themeManager.appearanceMode) {
+                ForEach(ThemeMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var chatLayoutSection: some View {
+        Section("Chat layout") {
+            Toggle("Enter to send", isOn: $enterToSend)
+                .tint(PingyTheme.primary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Font size")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+                Slider(value: $chatFontScale, in: 0.85 ... 1.25, step: 0.05)
+                    .tint(PingyTheme.primary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var wallpaperSection: some View {
+        Section("Wallpaper") {
+            TextField("Default wallpaper URL (optional)", text: $defaultWallpaperURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .onSubmit {
+                    scheduleChatAutosave(immediate: true)
+                }
+
+            PhotosPicker(selection: $wallpaperItem, matching: .images) {
+                Label("Upload default wallpaper", systemImage: "photo")
+                    .foregroundStyle(PingyTheme.primaryStrong)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+        } footer: {
+            Text("Changes in this section are saved automatically.")
         }
     }
 
