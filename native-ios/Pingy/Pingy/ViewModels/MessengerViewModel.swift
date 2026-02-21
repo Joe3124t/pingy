@@ -2281,11 +2281,11 @@ final class MessengerViewModel: ObservableObject {
             case .decodingError:
                 activeError = "Server response format changed. Please retry in a moment."
             case .network:
-                let message = apiError.errorDescription
+                let message = apiError.errorDescription ?? (fallback ?? "Network error. Please try again.")
                 activeError = message
                 showTransientNotice(message, style: .warning)
             case .invalidURL, .invalidResponse:
-                let message = fallback ?? apiError.errorDescription
+                let message = fallback ?? apiError.errorDescription ?? "Request is temporarily unavailable."
                 activeError = message
                 showTransientNotice(message, style: .warning)
             case .server(let statusCode, let message):
