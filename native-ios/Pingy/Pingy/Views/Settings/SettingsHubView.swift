@@ -98,7 +98,7 @@ struct SettingsHubView: View {
     }
 
     private var appVersionString: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.7"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.7.1"
     }
 }
 
