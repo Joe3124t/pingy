@@ -385,7 +385,7 @@ struct AppearanceSettingsSectionView: View {
     }
 
     private var wallpaperSection: some View {
-        Section("Wallpaper") {
+        Section {
             TextField("Default wallpaper URL (optional)", text: $defaultWallpaperURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -398,6 +398,8 @@ struct AppearanceSettingsSectionView: View {
                     .foregroundStyle(PingyTheme.primaryStrong)
             }
             .buttonStyle(PingyPressableButtonStyle())
+        } header: {
+            Text("Wallpaper")
         } footer: {
             Text("Changes in this section are saved automatically.")
         }
