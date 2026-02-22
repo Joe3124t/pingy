@@ -9,7 +9,7 @@ final class MessageService {
 
     func listMessages(
         conversationID: String,
-        limit: Int = 60,
+        limit: Int = 120,
         beforeISO: String? = nil
     ) async throws -> [Message] {
         var queryItems = [URLQueryItem(name: "limit", value: String(limit))]

@@ -101,6 +101,7 @@ final class MessengerViewModel: ObservableObject {
     private var isProcessingTextQueue = false
     private var isProcessingMediaQueue = false
     private var openConversationTasks: [String: Task<Void, Never>] = [:]
+    private var messageRefreshTasks: [String: Task<Void, Never>] = [:]
     private var syncedContactMatches: [ContactSearchResult] = []
     private let conversationListStateStore = ConversationListStateStore.shared
     private var onlineSinceByUserID: [String: Date] = [:]
@@ -245,6 +246,7 @@ final class MessengerViewModel: ObservableObject {
         activeDurationTimer?.invalidate()
         typingExpiryTasks.values.forEach { $0.cancel() }
         recordingExpiryTasks.values.forEach { $0.cancel() }
+        messageRefreshTasks.values.forEach { $0.cancel() }
         networkMonitor.cancel()
     }
 
@@ -569,19 +571,80 @@ final class MessengerViewModel: ObservableObject {
         force: Bool = false,
         suppressNetworkAlert: Bool = false
     ) async -> Bool {
-        if !force, messagesByConversation[conversationID] != nil {
+        if !force,
+           let cachedMessages = messagesByConversation[conversationID],
+           !cachedMessages.isEmpty
+        {
             await markCurrentAsSeen()
+            scheduleBackgroundMessageRefresh(
+                conversationID: conversationID,
+                suppressNetworkAlert: true
+            )
             return true
         }
 
-        isLoadingMessages = true
-        defer { isLoadingMessages = false }
+        let fetchLimit = force ? 220 : 140
+        return await refreshMessagesFromServer(
+            conversationID: conversationID,
+            suppressNetworkAlert: suppressNetworkAlert,
+            showLoading: true,
+            limit: fetchLimit
+        )
+    }
+
+    private func scheduleBackgroundMessageRefresh(
+        conversationID: String,
+        suppressNetworkAlert: Bool
+    ) {
+        guard messageRefreshTasks[conversationID] == nil else { return }
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.refreshMessagesFromServer(
+                conversationID: conversationID,
+                suppressNetworkAlert: suppressNetworkAlert,
+                showLoading: false,
+                limit: 160
+            )
+
+            await MainActor.run {
+                self.messageRefreshTasks[conversationID] = nil
+            }
+        }
+
+        messageRefreshTasks[conversationID] = task
+    }
+
+    @discardableResult
+    private func refreshMessagesFromServer(
+        conversationID: String,
+        suppressNetworkAlert: Bool,
+        showLoading: Bool,
+        limit: Int
+    ) async -> Bool {
+        if showLoading {
+            isLoadingMessages = true
+        }
+        defer {
+            if showLoading {
+                isLoadingMessages = false
+            }
+        }
 
         do {
-            let messages = try await messageService.listMessages(conversationID: conversationID)
-            let sortedMessages = messages.sorted(by: { $0.createdAt < $1.createdAt })
-            messagesByConversation[conversationID] = sortedMessages
-            for message in sortedMessages where message.isEncrypted && message.type == .text {
+            let messages = try await messageService.listMessages(
+                conversationID: conversationID,
+                limit: max(limit, 40)
+            )
+            let serverMessages = sortMessagesChronologically(messages)
+            let existingMessages = messagesByConversation[conversationID] ?? []
+            let mergedMessages = mergeMessagesKeepingHistory(
+                existing: existingMessages,
+                incoming: serverMessages
+            )
+
+            messagesByConversation[conversationID] = mergedMessages
+            for message in mergedMessages where message.isEncrypted && message.type == .text {
                 scheduleEncryptedMessageDecryptionIfNeeded(message)
             }
             persistMessagesCache()
@@ -1689,6 +1752,44 @@ final class MessengerViewModel: ObservableObject {
         case seen
     }
 
+    private func sortMessagesChronologically(_ messages: [Message]) -> [Message] {
+        messages.sorted { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt {
+                return lhs.id < rhs.id
+            }
+            return lhs.createdAt < rhs.createdAt
+        }
+    }
+
+    private func mergeMessagesKeepingHistory(existing: [Message], incoming: [Message]) -> [Message] {
+        var byID: [String: Message] = [:]
+        var idByClientID: [String: String] = [:]
+
+        for message in existing {
+            byID[message.id] = message
+            if let clientId = message.clientId, !clientId.isEmpty {
+                idByClientID[clientId] = message.id
+            }
+        }
+
+        for message in incoming {
+            if let clientId = message.clientId,
+               !clientId.isEmpty,
+               let previousID = idByClientID[clientId],
+               previousID != message.id
+            {
+                byID.removeValue(forKey: previousID)
+            }
+
+            byID[message.id] = message
+            if let clientId = message.clientId, !clientId.isEmpty {
+                idByClientID[clientId] = message.id
+            }
+        }
+
+        return sortMessagesChronologically(Array(byID.values))
+    }
+
     private func upsertMessage(_ message: Message) {
         if let clientId = message.clientId {
             failedTextClientIDs.remove(clientId)
@@ -1703,8 +1804,8 @@ final class MessengerViewModel: ObservableObject {
             current[pendingIndex] = message
         } else {
             current.append(message)
-            current.sort(by: { $0.createdAt < $1.createdAt })
         }
+        current = sortMessagesChronologically(current)
         messagesByConversation[message.conversationId] = current
         if shouldAttemptEncryptedDecryption(for: message) {
             scheduleEncryptedMessageDecryptionIfNeeded(message)

@@ -135,12 +135,10 @@ final class SocketIOWebSocketManager: ObservableObject {
             let conversationId: String
             let toUserId: String
         }
-        Task {
-            try? await emit(
-                event: "call:invite",
-                payload: InvitePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
-            )
-        }
+        emitCallControl(
+            event: "call:invite",
+            payload: InvitePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+        )
     }
 
     func sendCallAccept(callId: String, conversationId: String, toUserId: String) {
@@ -149,12 +147,10 @@ final class SocketIOWebSocketManager: ObservableObject {
             let conversationId: String
             let toUserId: String
         }
-        Task {
-            try? await emit(
-                event: "call:accept",
-                payload: AcceptPayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
-            )
-        }
+        emitCallControl(
+            event: "call:accept",
+            payload: AcceptPayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+        )
     }
 
     func sendCallDecline(callId: String, conversationId: String, toUserId: String) {
@@ -163,12 +159,10 @@ final class SocketIOWebSocketManager: ObservableObject {
             let conversationId: String
             let toUserId: String
         }
-        Task {
-            try? await emit(
-                event: "call:decline",
-                payload: DeclinePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
-            )
-        }
+        emitCallControl(
+            event: "call:decline",
+            payload: DeclinePayload(callId: callId, conversationId: conversationId, toUserId: toUserId)
+        )
     }
 
     func sendCallEnd(callId: String, conversationId: String, toUserId: String, status: CallSignalStatus) {
@@ -178,17 +172,15 @@ final class SocketIOWebSocketManager: ObservableObject {
             let toUserId: String
             let status: String
         }
-        Task {
-            try? await emit(
-                event: "call:end",
-                payload: EndPayload(
-                    callId: callId,
-                    conversationId: conversationId,
-                    toUserId: toUserId,
-                    status: status.rawValue
-                )
+        emitCallControl(
+            event: "call:end",
+            payload: EndPayload(
+                callId: callId,
+                conversationId: conversationId,
+                toUserId: toUserId,
+                status: status.rawValue
             )
-        }
+        )
     }
 
     func sendSeen(conversationId: String, messageIds: [String] = []) {
@@ -520,6 +512,53 @@ final class SocketIOWebSocketManager: ObservableObject {
         ackHandlers.removeAll()
         handlers.forEach { handler in
             handler(.failure(error))
+        }
+    }
+
+    private func emitCallControl<T: Encodable>(event: String, payload: T) {
+        Task { [weak self] in
+            guard let self else { return }
+            let maxAttempts = 8
+
+            for attempt in 1 ... maxAttempts {
+                connectIfNeeded()
+
+                if !isConnected {
+                    let waitMs = min(250 * attempt, 1500)
+                    try? await Task.sleep(nanoseconds: UInt64(waitMs) * 1_000_000)
+                    continue
+                }
+
+                do {
+                    let ack = try await emitWithAck(event: event, payload: payload)
+                    if let ackObject = ack.objectValue,
+                       let ok = ackObject["ok"]?.boolValue,
+                       !ok
+                    {
+                        let message = ackObject["message"]?.stringValue ?? "Call signaling failed"
+                        AppLogger.error("Call signaling rejected: \(event) - \(message)")
+                        return
+                    }
+                    return
+                } catch let apiError as APIError {
+                    if case .server(_, let message) = apiError {
+                        AppLogger.error("Call signaling server error: \(event) - \(message)")
+                        return
+                    }
+                } catch {
+                    if attempt == maxAttempts {
+                        do {
+                            try await emit(event: event, payload: payload)
+                            return
+                        } catch {
+                            AppLogger.error("Call signaling emit failed: \(event) - \(error.localizedDescription)")
+                        }
+                    }
+
+                    let waitMs = min(300 * attempt, 2000)
+                    try? await Task.sleep(nanoseconds: UInt64(waitMs) * 1_000_000)
+                }
+            }
         }
     }
 }

@@ -20,6 +20,8 @@ const {
   markDeliveredIfRecipientOnline,
   sendPushToRecipientIfOffline,
 } = require('../services/messageService');
+const { findConversationParticipants } = require('../models/conversationModel');
+const { assertUsersCanInteract } = require('../services/blockService');
 const { signMediaUrlsInMessage } = require('../services/mediaAccessService');
 
 const parseSocketToken = (socket) => {
@@ -58,6 +60,32 @@ const emitMessageCreated = (io, message) => {
   io.to(`conversation:${signedMessage.conversationId}`).emit('message:new', signedMessage);
   io.to(`user:${signedMessage.senderId}`).emit('message:new', signedMessage);
   io.to(`user:${signedMessage.recipientId}`).emit('message:new', signedMessage);
+};
+
+const allowedCallEndStatuses = new Set(['ended', 'missed', 'declined']);
+
+const normalizeCallStatus = (socketEventName, rawStatus) => {
+  if (socketEventName === 'call:invite') {
+    return 'ringing';
+  }
+  if (socketEventName === 'call:accept') {
+    return 'connected';
+  }
+  if (socketEventName === 'call:decline') {
+    return 'declined';
+  }
+  if (socketEventName === 'call:end') {
+    const normalized = String(rawStatus || '').trim().toLowerCase();
+    return allowedCallEndStatuses.has(normalized) ? normalized : 'ended';
+  }
+  return null;
+};
+
+const emitCallSignal = (io, signal) => {
+  const eventName = `call:${signal.status}`;
+  io.to(`user:${signal.fromUserId}`).emit(eventName, signal);
+  io.to(`user:${signal.toUserId}`).emit(eventName, signal);
+  io.to(`conversation:${signal.conversationId}`).emit(eventName, signal);
 };
 
 const emitPresenceSnapshot = async (socket, userId) => {
@@ -296,6 +324,59 @@ const createSocketServer = (server) => {
         }
       }
     });
+
+    const handleCallSignal = async (socketEventName, payload = {}, acknowledge) => {
+      try {
+        const conversationId = String(payload.conversationId || '').trim();
+        const toUserId = String(payload.toUserId || '').trim();
+        const callId = String(payload.callId || '').trim();
+        const status = normalizeCallStatus(socketEventName, payload.status);
+
+        if (!conversationId || !toUserId || !callId || !status) {
+          throw new Error('Invalid call signal payload');
+        }
+
+        await assertConversationAccess({ conversationId, userId: user.id });
+
+        const participants = await findConversationParticipants(conversationId);
+        if (!participants.includes(toUserId) || toUserId === user.id) {
+          throw new Error('Call recipient is not part of this conversation');
+        }
+
+        await assertUsersCanInteract({
+          firstUserId: user.id,
+          secondUserId: toUserId,
+        });
+
+        const signal = {
+          callId,
+          conversationId,
+          fromUserId: user.id,
+          toUserId,
+          status,
+          createdAt: new Date().toISOString(),
+        };
+
+        emitCallSignal(io, signal);
+
+        if (typeof acknowledge === 'function') {
+          acknowledge({ ok: true, signal });
+        }
+      } catch (error) {
+        if (typeof acknowledge === 'function') {
+          acknowledge({ ok: false, message: error.message || 'Call signal failed' });
+        }
+      }
+    };
+
+    socket.on('call:invite', (payload = {}, acknowledge) =>
+      handleCallSignal('call:invite', payload, acknowledge));
+    socket.on('call:accept', (payload = {}, acknowledge) =>
+      handleCallSignal('call:accept', payload, acknowledge));
+    socket.on('call:decline', (payload = {}, acknowledge) =>
+      handleCallSignal('call:decline', payload, acknowledge));
+    socket.on('call:end', (payload = {}, acknowledge) =>
+      handleCallSignal('call:end', payload, acknowledge));
 
     socket.on('disconnect', async () => {
       const removed = removeSocketConnection(user.id, socket.id);

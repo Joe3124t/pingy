@@ -22,9 +22,13 @@ struct ChatDetailView: View {
     @State private var isContactInfoPresented = false
     @State private var mediaViewerState: ChatMediaViewerState?
     @State private var isMicGestureActive = false
+    @State private var shouldScrollToInitialPosition = true
+    @State private var scrollViewportHeight: CGFloat = 0
+    @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
+    private let chatBottomAnchorID = "chat-bottom-anchor"
 
     var body: some View {
         ZStack {
@@ -52,6 +56,8 @@ struct ChatDetailView: View {
                 viewModel.isCompactChatDetailPresented = true
             }
             draft = ""
+            shouldScrollToInitialPosition = true
+            bottomAnchorY = .greatestFiniteMagnitude
             Task {
                 await viewModel.loadMessages(conversationID: conversation.conversationId)
                 await viewModel.markCurrentAsSeen()
@@ -249,72 +255,116 @@ struct ChatDetailView: View {
     }
 
     private func messagesList(bottomInset: CGFloat) -> some View {
-        ScrollViewReader { reader in
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    if viewModel.isLoadingMessages, viewModel.activeMessages.isEmpty {
-                        ProgressView("Loading messages...")
-                            .padding(.top, 32)
-                            .foregroundStyle(PingyTheme.textSecondary)
+        GeometryReader { container in
+            ScrollViewReader { reader in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        LazyVStack(spacing: 6) {
+                            if viewModel.isLoadingMessages, viewModel.activeMessages.isEmpty {
+                                ProgressView("Loading messages...")
+                                    .padding(.top, 32)
+                                    .foregroundStyle(PingyTheme.textSecondary)
+                            }
+
+                            ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
+                                MessageBubbleView(
+                                    message: message,
+                                    conversation: conversation,
+                                    currentUserID: viewModel.currentUserID,
+                                    isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
+                                    decryptedText: viewModel.decryptedBody(for: message),
+                                    uploadProgress: viewModel.mediaUploadProgress(for: message),
+                                    canRetryUpload: viewModel.canRetryMediaUpload(for: message),
+                                    outgoingState: viewModel.outgoingState(for: message),
+                                    canRetryText: viewModel.canRetryTextMessage(for: message),
+                                    onReply: {
+                                        viewModel.setReplyTarget(message)
+                                    },
+                                    onReact: { emoji in
+                                        Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
+                                    },
+                                    onRetryUpload: {
+                                        viewModel.retryPendingMediaUpload(for: message)
+                                    },
+                                    onRetryText: {
+                                        viewModel.retryPendingTextMessage(for: message)
+                                    },
+                                    onOpenImage: { tappedMessage, _ in
+                                        openMediaViewer(for: tappedMessage)
+                                    }
+                                )
+                                .id(message.id)
+                            }
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id(chatBottomAnchorID)
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: ChatBottomAnchorPreferenceKey.self,
+                                            value: geo.frame(in: .named("chat-scroll-space")).minY
+                                        )
+                                    }
+                                )
+                        }
+                        .padding(.horizontal, PingySpacing.sm)
+                        .padding(.top, PingySpacing.md)
+                        .padding(.bottom, bottomInset)
+                    }
+                    .coordinateSpace(name: "chat-scroll-space")
+                    .scrollDismissesKeyboard(.immediately)
+                    .refreshable {
+                        await viewModel.loadMessages(
+                            conversationID: conversation.conversationId,
+                            force: true,
+                            suppressNetworkAlert: true
+                        )
+                    }
+                    .onTapGesture {
+                        isComposerFocused = false
+                    }
+                    .onAppear {
+                        scrollViewportHeight = container.size.height
+                        performInitialScrollIfNeeded(using: reader)
+                    }
+                    .onChange(of: container.size.height) { newHeight in
+                        scrollViewportHeight = newHeight
+                    }
+                    .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
+                        bottomAnchorY = value
+                    }
+                    .onChange(of: viewModel.activeMessages.count) { _ in
+                        performInitialScrollIfNeeded(using: reader)
+
+                        if shouldAutoScrollToLatest {
+                            scrollToLatest(using: reader, animated: true)
+                        }
+
+                        Task { await viewModel.markCurrentAsSeen() }
+                    }
+                    .onChange(of: isComposerFocused) { focused in
+                        if focused {
+                            scrollToLatest(using: reader, animated: true)
+                        }
                     }
 
-                    ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
-                        MessageBubbleView(
-                            message: message,
-                            conversation: conversation,
-                            currentUserID: viewModel.currentUserID,
-                            isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
-                            decryptedText: viewModel.decryptedBody(for: message),
-                            uploadProgress: viewModel.mediaUploadProgress(for: message),
-                            canRetryUpload: viewModel.canRetryMediaUpload(for: message),
-                            outgoingState: viewModel.outgoingState(for: message),
-                            canRetryText: viewModel.canRetryTextMessage(for: message),
-                            onReply: {
-                                viewModel.setReplyTarget(message)
-                            },
-                            onReact: { emoji in
-                                Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
-                            },
-                            onRetryUpload: {
-                                viewModel.retryPendingMediaUpload(for: message)
-                            },
-                            onRetryText: {
-                                viewModel.retryPendingTextMessage(for: message)
-                            },
-                            onOpenImage: { tappedMessage, _ in
-                                openMediaViewer(for: tappedMessage)
-                            }
-                        )
-                        .id(message.id)
-                    }
-                }
-                .padding(.horizontal, PingySpacing.sm)
-                .padding(.top, PingySpacing.md)
-                .padding(.bottom, bottomInset)
-            }
-            .scrollDismissesKeyboard(.immediately)
-            .refreshable {
-                await viewModel.loadMessages(
-                    conversationID: conversation.conversationId,
-                    force: true,
-                    suppressNetworkAlert: true
-                )
-            }
-            .onTapGesture {
-                isComposerFocused = false
-            }
-            .onChange(of: viewModel.activeMessages.count) { _ in
-                if let id = viewModel.activeMessages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        reader.scrollTo(id, anchor: .bottom)
-                    }
-                }
-                Task { await viewModel.markCurrentAsSeen() }
-            }
-            .onChange(of: isComposerFocused) { focused in
-                if focused, let id = viewModel.activeMessages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        reader.scrollTo(id, anchor: .bottom)
+                    if shouldShowJumpToLatestButton {
+                        Button {
+                            scrollToLatest(using: reader, animated: true)
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(PingyTheme.primaryStrong)
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.35), radius: 10, x: 0, y: 4)
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+                        .padding(.trailing, PingySpacing.md)
+                        .padding(.bottom, 18)
+                        .transition(.scale.combined(with: .opacity))
                     }
                 }
             }
@@ -498,6 +548,62 @@ struct ChatDetailView: View {
         viewModel.activeMessages
     }
 
+    private var firstUnreadMessageID: String? {
+        renderedMessages.first(where: { message in
+            message.senderId != viewModel.currentUserID && message.seenAt == nil
+        })?.id
+    }
+
+    private var isNearBottom: Bool {
+        guard scrollViewportHeight > 0 else { return true }
+        return bottomAnchorY <= (scrollViewportHeight + 28)
+    }
+
+    private var shouldShowJumpToLatestButton: Bool {
+        !renderedMessages.isEmpty && !isNearBottom
+    }
+
+    private var shouldAutoScrollToLatest: Bool {
+        if isNearBottom {
+            return true
+        }
+        guard let lastMessage = renderedMessages.last else { return false }
+        return lastMessage.senderId == viewModel.currentUserID
+    }
+
+    private func performInitialScrollIfNeeded(using reader: ScrollViewProxy) {
+        guard shouldScrollToInitialPosition else { return }
+        guard !renderedMessages.isEmpty else { return }
+
+        shouldScrollToInitialPosition = false
+
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.22)) {
+                if let firstUnreadMessageID {
+                    reader.scrollTo(firstUnreadMessageID, anchor: .top)
+                } else if let lastID = renderedMessages.last?.id {
+                    reader.scrollTo(lastID, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private func scrollToLatest(using reader: ScrollViewProxy, animated: Bool) {
+        guard let lastID = renderedMessages.last?.id else { return }
+
+        let action = {
+            reader.scrollTo(lastID, anchor: .bottom)
+        }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.22)) {
+                action()
+            }
+        } else {
+            action()
+        }
+    }
+
     private func isGrouped(index: Int, messages: [Message]) -> Bool {
         guard index > 0 else { return false }
 
@@ -647,5 +753,13 @@ struct ChatDetailView: View {
             entries: entries,
             initialIndex: index
         )
+    }
+}
+
+private struct ChatBottomAnchorPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = .greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
