@@ -24,6 +24,19 @@ router.post(
   validateRequest(createMediaStatusSchema),
   createMediaStatus,
 );
+// Backward-compatible publish route for older native builds.
+// If multipart file exists => media status, otherwise => text status.
+router.post(
+  '/',
+  statusUpload.single('file'),
+  (req, res, next) => {
+    if (req.file) {
+      return createMediaStatus(req, res, next);
+    }
+
+    return createTextStatus(req, res, next);
+  },
+);
 router.post('/:storyId/view', validateRequest(statusStoryParamsSchema, 'params'), markStatusViewed);
 router.delete('/:storyId', validateRequest(statusStoryParamsSchema, 'params'), deleteStatus);
 

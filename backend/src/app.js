@@ -62,6 +62,8 @@ app.use('/api/messages', apiRateLimiter, authMiddleware, messageRoutes);
 app.use('/api/users', apiRateLimiter, authMiddleware, userRoutes);
 app.use('/api/crypto', apiRateLimiter, authMiddleware, cryptoRoutes);
 app.use('/api/status', apiRateLimiter, authMiddleware, statusRoutes);
+// Backward-compatible alias for legacy clients.
+app.use('/api/stories', apiRateLimiter, authMiddleware, statusRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);
