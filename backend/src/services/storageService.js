@@ -24,9 +24,19 @@ const uploadBuffer = async ({ buffer, originalName, mimeType, folder = 'media' }
   const extension = normalizeExtension(originalName, mimeType);
   const key = `pingy/${folder}/${Date.now()}-${uuidv4()}.${extension}`;
 
-  const uploaded = hasS3Config
-    ? await uploadToS3({ key, buffer, mimeType })
-    : await uploadToLocal({ key, buffer, mimeType });
+  let uploaded;
+  if (hasS3Config) {
+    try {
+      uploaded = await uploadToS3({ key, buffer, mimeType });
+    } catch (error) {
+      console.error(
+        `[storage] S3 upload failed for ${key}. Falling back to local storage. Reason: ${error.message}`,
+      );
+      uploaded = await uploadToLocal({ key, buffer, mimeType });
+    }
+  } else {
+    uploaded = await uploadToLocal({ key, buffer, mimeType });
+  }
 
   return {
     ...uploaded,

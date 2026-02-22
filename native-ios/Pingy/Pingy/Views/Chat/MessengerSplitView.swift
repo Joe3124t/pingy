@@ -512,18 +512,30 @@ struct ConversationRowView: View {
     }
 
     private var lastPreview: String {
-        if let type = conversation.lastMessageType, type != "text" {
-            if let mediaName = conversation.lastMessageMediaName, !mediaName.isEmpty {
-                return mediaName
+        if let type = conversation.lastMessageType, type.lowercased() != "text" {
+            let captionPreview = MessageBodyFormatter.previewText(
+                from: conversation.lastMessageBody,
+                fallback: ""
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !captionPreview.isEmpty {
+                return captionPreview
             }
-            return type.capitalized
+
+            return MessageBodyFormatter.fallbackLabel(
+                forTypeRaw: type,
+                mediaName: conversation.lastMessageMediaName
+            )
         }
 
         guard let body = conversation.lastMessageBody else {
             return "No messages yet"
         }
 
-        return MessageBodyFormatter.previewText(from: body, fallback: "Message")
+        return MessageBodyFormatter.previewText(
+            from: body,
+            fallback: MessageBodyFormatter.fallbackLabel(for: .text)
+        )
     }
 
     private func formatTime(_ iso: String) -> String {

@@ -199,6 +199,56 @@ final class APIClient {
             }
         }
 
-        return String(data: data, encoding: .utf8)
+        guard let raw = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty
+        else {
+            return nil
+        }
+
+        let lowered = raw.lowercased()
+        if lowered.contains("backend write error") || lowered.contains("error 54113") {
+            return "Media upload is temporarily unavailable. Please try again in a moment."
+        }
+
+        if looksLikeHTML(raw) {
+            if let title = extractHTMLTitle(from: raw)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                !title.isEmpty
+            {
+                let normalizedTitle = title.lowercased()
+                if normalizedTitle.contains("backend write error") {
+                    return "Media upload is temporarily unavailable. Please try again in a moment."
+                }
+            }
+            return "Server is temporarily unavailable. Please try again in a moment."
+        }
+
+        if raw.count > 320 {
+            return String(raw.prefix(320)) + "..."
+        }
+
+        return raw
+    }
+
+    private static func looksLikeHTML(_ value: String) -> Bool {
+        let lowered = value.lowercased()
+        return lowered.contains("<html") || lowered.contains("<!doctype html") || lowered.contains("<body")
+    }
+
+    private static func extractHTMLTitle(from html: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "<title>(.*?)</title>", options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let fullRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        guard let match = regex.firstMatch(in: html, options: [], range: fullRange),
+              match.numberOfRanges > 1,
+              let titleRange = Range(match.range(at: 1), in: html)
+        else {
+            return nil
+        }
+
+        return String(html[titleRange])
     }
 }

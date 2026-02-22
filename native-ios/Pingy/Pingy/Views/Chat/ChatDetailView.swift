@@ -325,11 +325,11 @@ struct ChatDetailView: View {
         VStack(spacing: 8) {
             if let reply = viewModel.pendingReplyMessage {
                 let replySender = (reply.senderUsername?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-                    ? (reply.senderUsername ?? "message")
-                    : "message"
+                    ? (reply.senderUsername ?? "Unknown")
+                    : "Unknown"
                 let replyPreviewText = MessageBodyFormatter.previewText(
                     from: reply.body,
-                    fallback: reply.mediaName ?? "Message"
+                    fallback: MessageBodyFormatter.fallbackLabel(for: reply.type, mediaName: reply.mediaName)
                 )
 
                 HStack {

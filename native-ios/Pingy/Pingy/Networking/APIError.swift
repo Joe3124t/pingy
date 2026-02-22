@@ -18,6 +18,9 @@ enum APIError: LocalizedError {
             return "Session expired. Please log in again."
         case .server(_, let message):
             let lowered = message.lowercased()
+            if lowered.contains("backend write error") || lowered.contains("error 54113") {
+                return "Media upload is temporarily unavailable. Please try again in a moment."
+            }
             if lowered.contains("internal server error") {
                 return "Server is temporarily busy. Please try again in a moment."
             }

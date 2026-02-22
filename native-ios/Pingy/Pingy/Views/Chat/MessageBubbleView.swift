@@ -323,7 +323,10 @@ struct MessageBubbleView: View {
         let senderName = (reply.senderUsername?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
             ? (reply.senderUsername ?? "Unknown")
             : "Unknown"
-        let preview = MessageBodyFormatter.previewText(from: reply.body, fallback: reply.mediaName ?? "Message")
+        let preview = MessageBodyFormatter.previewText(
+            from: reply.body,
+            fallback: MessageBodyFormatter.fallbackLabel(for: reply.type, mediaName: reply.mediaName)
+        )
 
         return VStack(alignment: .leading, spacing: 2) {
             Text("From \(senderName)")
@@ -345,12 +348,21 @@ struct MessageBubbleView: View {
     }
 
     private var renderedText: String {
-        MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
+        MessageBodyFormatter.previewText(
+            from: message.body,
+            fallback: message.type == .text
+                ? ""
+                : MessageBodyFormatter.fallbackLabel(for: message.type, mediaName: message.mediaName)
+        )
     }
 
     private var resolvedText: String {
         let normalized = decryptedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? renderedText : normalized
+        let plain = normalized.isEmpty ? renderedText : normalized
+        if plain.isEmpty, message.type == .text {
+            return "..."
+        }
+        return plain
     }
 
     private func formatTime(_ iso: String) -> String {

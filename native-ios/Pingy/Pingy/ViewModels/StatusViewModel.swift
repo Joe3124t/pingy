@@ -111,17 +111,16 @@ final class StatusViewModel: ObservableObject {
 
     private func statusErrorMessage(from error: Error, fallback: String) -> String {
         if let apiError = error as? APIError {
-            switch apiError {
-            case .server(_, let message):
+            if let readable = apiError.errorDescription,
+               !readable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                return readable
+            }
+
+            if case .server(_, let message) = apiError {
                 let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !normalized.isEmpty {
                     return normalized
-                }
-            default:
-                if let readable = apiError.errorDescription,
-                   !readable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    return readable
                 }
             }
         }
