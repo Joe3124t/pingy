@@ -31,16 +31,20 @@ struct PingyTabShellView: View {
             )
             .tag(PingyRootTab.contacts)
 
-            CallsTabView(messengerViewModel: messengerViewModel)
+            NavigationStack {
+                CallsTabView(messengerViewModel: messengerViewModel)
+            }
             .tag(PingyRootTab.calls)
 
             MessengerSplitView(viewModel: messengerViewModel)
                 .tag(PingyRootTab.chats)
 
-            StatusTabView(
-                messengerViewModel: messengerViewModel,
-                statusService: statusService
-            )
+            NavigationStack {
+                StatusTabView(
+                    messengerViewModel: messengerViewModel,
+                    statusService: statusService
+                )
+            }
             .tag(PingyRootTab.status)
 
             NavigationStack {
@@ -100,7 +104,7 @@ struct PingyTabShellView: View {
     }
 
     private var shouldShowBottomBar: Bool {
-        if selectedTab == .chats, messengerViewModel.selectedConversationID != nil {
+        if selectedTab == .chats, messengerViewModel.isCompactChatDetailPresented {
             return false
         }
         return true
