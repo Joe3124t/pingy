@@ -440,7 +440,7 @@ final class MessengerViewModel: ObservableObject {
 
     private func scheduleEncryptedMessageDecryptionForCachedConversations() {
         for (_, messages) in messagesByConversation {
-            for message in messages where message.isEncrypted && message.type == .text {
+            for message in messages where shouldAttemptEncryptedDecryption(for: message) {
                 scheduleEncryptedMessageDecryptionIfNeeded(message)
             }
         }
@@ -1706,10 +1706,10 @@ final class MessengerViewModel: ObservableObject {
             current.sort(by: { $0.createdAt < $1.createdAt })
         }
         messagesByConversation[message.conversationId] = current
-        if !message.isEncrypted {
-            decryptedMessageBodyByID.removeValue(forKey: message.id)
-        } else {
+        if shouldAttemptEncryptedDecryption(for: message) {
             scheduleEncryptedMessageDecryptionIfNeeded(message)
+        } else if !message.isEncrypted {
+            decryptedMessageBodyByID.removeValue(forKey: message.id)
         }
         persistMessagesCache()
 
@@ -1733,7 +1733,7 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func scheduleEncryptedMessageDecryptionIfNeeded(_ message: Message) {
-        guard message.type == .text else { return }
+        guard shouldAttemptEncryptedDecryption(for: message) else { return }
         guard decryptedMessageBodyByID[message.id] == nil else { return }
 
         Task { [weak self] in
@@ -1791,6 +1791,14 @@ final class MessengerViewModel: ObservableObject {
 
         guard let data else { return nil }
         return try? JSONDecoder().decode(EncryptedPayload.self, from: data)
+    }
+
+    private func shouldAttemptEncryptedDecryption(for message: Message) -> Bool {
+        guard message.type == .text else { return false }
+        if message.isEncrypted {
+            return true
+        }
+        return extractEncryptedPayload(from: message.body) != nil
     }
 
     private func patchLifecycle(_ update: MessageLifecycleUpdate, kind: LifecycleKind) {

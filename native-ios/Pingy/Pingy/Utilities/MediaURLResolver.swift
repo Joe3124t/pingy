@@ -10,13 +10,13 @@ enum MediaURLResolver {
             return fileURL
         }
 
-        // Keep pending local media previews resolvable while upload is queued.
-        if trimmed.hasPrefix("/") {
-            return URL(fileURLWithPath: trimmed)
-        }
-
         if let parsed = URL(string: trimmed), parsed.scheme != nil {
             return parsed
+        }
+
+        // Keep pending local media previews resolvable while upload is queued.
+        if shouldTreatAsLocalFilePath(trimmed) {
+            return URL(fileURLWithPath: trimmed)
         }
 
         guard let origin = apiOriginURL else {
@@ -25,6 +25,21 @@ enum MediaURLResolver {
 
         let normalizedPath = trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
         return URL(string: normalizedPath, relativeTo: origin)?.absoluteURL
+    }
+
+    private static func shouldTreatAsLocalFilePath(_ value: String) -> Bool {
+        guard value.hasPrefix("/") else { return false }
+
+        // Server relative media routes must stay remote.
+        if value.hasPrefix("/uploads/") || value.hasPrefix("/api/") {
+            return false
+        }
+
+        if FileManager.default.fileExists(atPath: value) {
+            return true
+        }
+
+        return value.hasPrefix("/private/") || value.hasPrefix("/var/") || value.hasPrefix("/tmp/")
     }
 
     private static let apiOriginURL: URL? = {

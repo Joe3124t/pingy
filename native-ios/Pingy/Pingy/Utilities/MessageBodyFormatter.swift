@@ -1,39 +1,40 @@
 import Foundation
 
 enum MessageBodyFormatter {
+    private static let preferredKeys = [
+        "text",
+        "message",
+        "body",
+        "content",
+        "caption",
+        "plainText",
+        "plaintext",
+        "value",
+    ]
+    private static let ignoredMetadataKeys = Set([
+        "id",
+        "type",
+        "mime",
+        "mediaurl",
+        "medianame",
+        "mediasize",
+        "voicedurationms",
+        "isEncrypted",
+        "isencrypted",
+        "v",
+        "alg",
+        "iv",
+        "ciphertext",
+        "tag",
+        "nonce",
+        "createdat",
+        "updatedat",
+    ])
+
     static func plainText(from value: JSONValue?) -> String? {
         guard let value else { return nil }
 
-        switch value {
-        case .string(let raw):
-            return plainText(fromRawString: raw)
-        case .object(let object):
-            if isEncryptedPayload(object: object) {
-                return nil
-            }
-
-            if let text = object["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !text.isEmpty
-            {
-                return text
-            }
-
-            if let message = object["message"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !message.isEmpty
-            {
-                return message
-            }
-
-            return nil
-        case .number(let number):
-            return String(number)
-        case .bool(let boolValue):
-            return boolValue ? "true" : "false"
-        case .array:
-            return nil
-        case .null:
-            return nil
-        }
+        return extractText(from: value, depth: 0)
     }
 
     static func previewText(from value: JSONValue?, fallback: String = "Message") -> String {
@@ -50,40 +51,120 @@ enum MessageBodyFormatter {
             return nil
         }
 
-        if let decoded = parseJSONObject(from: trimmed) {
-            if isEncryptedPayload(rawObject: decoded) {
+        if let decoded = parseJSON(from: trimmed) {
+            if isEncryptedPayload(rawObject: decoded as? [String: Any] ?? [:]) {
                 return nil
             }
 
-            if let text = decoded["text"] as? String {
-                let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                return normalized.isEmpty ? nil : normalized
+            if let extracted = extractText(fromRawJSON: decoded, depth: 0) {
+                return extracted
             }
-
-            if let message = decoded["message"] as? String {
-                let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
-                return normalized.isEmpty ? nil : normalized
-            }
-
-            // Avoid showing raw JSON payloads in chat UI.
-            return nil
         }
 
         return trimmed
     }
 
-    private static func parseJSONObject(from raw: String) -> [String: Any]? {
-        guard raw.hasPrefix("{"), raw.hasSuffix("}") else {
-            return nil
-        }
-
+    private static func parseJSON(from raw: String) -> Any? {
         guard let data = raw.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+              let object = try? JSONSerialization.jsonObject(with: data)
         else {
             return nil
         }
 
         return object
+    }
+
+    private static func extractText(from value: JSONValue, depth: Int) -> String? {
+        guard depth <= 8 else { return nil }
+
+        switch value {
+        case .string(let raw):
+            return plainText(fromRawString: raw)
+
+        case .object(let object):
+            if isEncryptedPayload(object: object) {
+                return nil
+            }
+
+            for key in preferredKeys {
+                if let nested = object[key], let extracted = extractText(from: nested, depth: depth + 1) {
+                    return extracted
+                }
+            }
+
+            for (key, nested) in object {
+                if ignoredMetadataKeys.contains(key.lowercased()) {
+                    continue
+                }
+                if let extracted = extractText(from: nested, depth: depth + 1) {
+                    return extracted
+                }
+            }
+
+            return nil
+
+        case .array(let array):
+            for nested in array {
+                if let extracted = extractText(from: nested, depth: depth + 1) {
+                    return extracted
+                }
+            }
+            return nil
+
+        case .number(let number):
+            return depth == 0 ? String(number) : nil
+
+        case .bool(let boolValue):
+            return depth == 0 ? (boolValue ? "true" : "false") : nil
+
+        case .null:
+            return nil
+        }
+    }
+
+    private static func extractText(fromRawJSON value: Any, depth: Int) -> String? {
+        guard depth <= 8 else { return nil }
+
+        if let stringValue = value as? String {
+            let normalized = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? nil : normalized
+        }
+
+        if let dictionary = value as? [String: Any] {
+            if isEncryptedPayload(rawObject: dictionary) {
+                return nil
+            }
+
+            for key in preferredKeys {
+                if let nested = dictionary[key],
+                   let extracted = extractText(fromRawJSON: nested, depth: depth + 1)
+                {
+                    return extracted
+                }
+            }
+
+            for (key, nested) in dictionary {
+                if ignoredMetadataKeys.contains(key.lowercased()) {
+                    continue
+                }
+                if let extracted = extractText(fromRawJSON: nested, depth: depth + 1) {
+                    return extracted
+                }
+            }
+
+            return nil
+        }
+
+        if let array = value as? [Any] {
+            for nested in array {
+                if let extracted = extractText(fromRawJSON: nested, depth: depth + 1) {
+                    return extracted
+                }
+            }
+            return nil
+        }
+
+        return nil
     }
 
     private static func isEncryptedPayload(object: [String: JSONValue]) -> Bool {

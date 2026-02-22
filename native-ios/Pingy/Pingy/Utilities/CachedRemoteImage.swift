@@ -68,7 +68,25 @@ actor RemoteImageStore {
             return url.absoluteString
         }
 
-        components.query = nil
+        if components.path == "/api/media/access" {
+            let mediaToken = components.queryItems?.first(where: { $0.name == "m" })?.value
+            if let mediaToken, !mediaToken.isEmpty {
+                components.queryItems = [URLQueryItem(name: "m", value: mediaToken)]
+            } else {
+                components.queryItems = nil
+            }
+            components.fragment = nil
+            return components.url?.absoluteString ?? url.absoluteString
+        }
+
+        // Signed upload links rotate by exp/sig, cache by underlying media path.
+        if components.path.hasPrefix("/uploads/") {
+            components.queryItems = nil
+            components.fragment = nil
+            return components.url?.absoluteString ?? url.absoluteString
+        }
+
+        components.queryItems = nil
         components.fragment = nil
         return components.url?.absoluteString ?? url.absoluteString
     }
