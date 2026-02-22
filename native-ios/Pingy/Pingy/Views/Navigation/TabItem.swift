@@ -58,30 +58,30 @@ struct TabItem: View {
             PingyHaptics.softTap()
             onTap()
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: tab.isPrimary ? 17 : 15, weight: .bold))
+                    .font(.system(size: isSelected ? 21 : 19, weight: .semibold))
                     .scaleEffect(isSelected ? 1.1 : 1.0)
                     .animation(.spring(response: 0.3, dampingFraction: 0.82), value: isSelected)
 
                 Text(LocalizedStringKey(tab.title))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.system(size: 11, weight: isSelected ? .bold : .semibold, design: .rounded))
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, tab.isPrimary ? 9 : 8)
-            .foregroundStyle(isSelected ? PingyTheme.primaryStrong : PingyTheme.textSecondary)
+            .padding(.vertical, 8)
+            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.76))
             .offset(x: parallaxX)
             .overlay(alignment: .topTrailing) {
                 if tab == .chats, unreadCount > 0 {
                     Text("\(min(99, unreadCount))")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
-                        .background(Color.red)
-                        .clipShape(Capsule())
-                        .offset(x: -8, y: 3)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.9))
+                        .padding(.horizontal, 5.5)
+                        .padding(.vertical, 2)
+                        .background(Color(red: 0.14, green: 0.84, blue: 0.39))
+                        .clipShape(Circle())
+                        .offset(x: -10, y: 2)
                         .scaleEffect(unreadCount > 0 ? 1 : 0.85)
                         .animation(.spring(response: 0.28, dampingFraction: 0.72), value: unreadCount)
                 }

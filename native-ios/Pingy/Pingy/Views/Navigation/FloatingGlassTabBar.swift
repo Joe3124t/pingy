@@ -7,60 +7,84 @@ struct FloatingGlassTabBar: View {
     let compact: Bool
     let onSelect: (PingyRootTab) -> Void
 
-    @State private var dragOffsetX: CGFloat = 0
-    @State private var dragOffsetY: CGFloat = 0
-    @State private var reflectionPhase = false
+    private let accent = Color(red: 0.14, green: 0.84, blue: 0.39)
 
     var body: some View {
         GeometryReader { proxy in
             let tabs = PingyRootTab.allCases
-            let contentWidth = max(1, proxy.size.width - 16)
+            let horizontalInset: CGFloat = 10
+            let contentWidth = max(1, proxy.size.width - (horizontalInset * 2))
             let slotWidth = contentWidth / CGFloat(max(tabs.count, 1))
             let selectedIndex = CGFloat(tabs.firstIndex(of: selectedTab) ?? 0)
-            let baseBubbleWidth = max(48, slotWidth - 14)
-            let pullAmount = max(0, min(24, -dragOffsetY))
-            let bubbleWidth = baseBubbleWidth + pullAmount * 0.35
-            let barHeight = (compact ? 60.0 : 70.0) + Double(pullAmount * 0.45)
-            let highlightOpacity = compact ? 0.68 : 0.84
+            let barHeight: CGFloat = compact ? 62 : 68
+            let activeBubbleWidth = min(112, max(84, slotWidth + 24))
+            let activeBubbleHeight = barHeight + 14
 
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 31, style: .continuous)
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
                     .fill(.ultraThinMaterial)
                     .overlay(alignment: .top) {
-                        RoundedRectangle(cornerRadius: 31, style: .continuous)
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
-                            .blur(radius: 0.3)
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.20),
+                                        Color.clear,
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(height: 22)
+                            .allowsHitTesting(false)
                     }
-                    .overlay(alignment: .topLeading) {
+                    .overlay(alignment: .leading) {
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(reflectionPhase ? 0.34 : 0.24),
-                                Color.white.opacity(0.04),
+                                Color.white.opacity(0.06),
+                                Color.white.opacity(0.01),
                                 Color.clear,
                             ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                            startPoint: .leading,
+                            endPoint: .trailing
                         )
-                        .blendMode(.screen)
-                        .offset(x: dragOffsetX * 0.5, y: dragOffsetY * 0.15)
-                        .animation(.easeInOut(duration: 0.44), value: reflectionPhase)
+                        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                        .allowsHitTesting(false)
                     }
                     .overlay(
-                        RoundedRectangle(cornerRadius: 31, style: .continuous)
-                            .stroke(PingyTheme.border.opacity(0.34), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 30, style: .continuous)
+                            .stroke(Color.white.opacity(0.22), lineWidth: 0.8)
                     )
-                    .shadow(color: Color.black.opacity(0.24), radius: 18, y: 10)
+                    .shadow(color: Color.black.opacity(0.26), radius: 16, y: 8)
 
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(PingyTheme.primarySoft.opacity(highlightOpacity))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.23, green: 0.23, blue: 0.25),
+                                Color(red: 0.19, green: 0.19, blue: 0.21),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
-                    .frame(width: bubbleWidth, height: compact ? 44 : 50)
-                    .offset(x: 8 + selectedIndex * slotWidth + dragOffsetX * 0.06)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(Color.white.opacity(0.20), lineWidth: 0.9)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(accent.opacity(0.36), lineWidth: 1.2)
+                            .padding(1)
+                    )
+                    .frame(width: activeBubbleWidth, height: activeBubbleHeight)
+                    .offset(
+                        x: horizontalInset + selectedIndex * slotWidth + (slotWidth - activeBubbleWidth) / 2,
+                        y: -7
+                    )
                     .animation(.spring(response: 0.36, dampingFraction: 0.84), value: selectedTab)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.82), value: pullAmount)
+                    .shadow(color: accent.opacity(0.20), radius: 10, y: 4)
+                    .allowsHitTesting(false)
 
                 HStack(spacing: 0) {
                     ForEach(tabs) { tab in
@@ -68,39 +92,18 @@ struct FloatingGlassTabBar: View {
                             tab: tab,
                             isSelected: tab == selectedTab,
                             unreadCount: unreadCount,
-                            parallaxX: dragOffsetX * 0.04,
+                            parallaxX: 0,
                             onTap: {
                                 guard selectedTab != tab else { return }
-                                reflectionPhase.toggle()
                                 onSelect(tab)
                             }
                         )
                     }
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, horizontalInset)
             }
             .frame(height: barHeight)
-            .scaleEffect(dragOffsetY < 0 ? 1 + ((-dragOffsetY) / 650) : 1)
-            .rotation3DEffect(
-                .degrees(Double(dragOffsetX / 12)),
-                axis: (x: 0, y: 1, z: 0)
-            )
-            .offset(y: dragOffsetY < 0 ? dragOffsetY * 0.12 : 0)
-            .animation(.spring(response: 0.34, dampingFraction: 0.84), value: compact)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 4)
-                    .onChanged { value in
-                        dragOffsetX = max(-34, min(34, value.translation.width))
-                        dragOffsetY = max(-26, min(12, value.translation.height))
-                    }
-                    .onEnded { _ in
-                        withAnimation(.spring(response: 0.42, dampingFraction: 0.8)) {
-                            dragOffsetX = 0
-                            dragOffsetY = 0
-                        }
-                    }
-            )
         }
-        .frame(height: compact ? 64 : 74)
+        .frame(height: compact ? 76 : 84)
     }
 }
