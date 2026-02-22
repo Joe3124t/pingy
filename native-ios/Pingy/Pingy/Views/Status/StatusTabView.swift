@@ -8,6 +8,7 @@ struct StatusTabView: View {
     @ObservedObject var messengerViewModel: MessengerViewModel
     @StateObject private var viewModel: StatusViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var statusMediaItem: PhotosPickerItem?
     @State private var isTextComposerPresented = false
@@ -72,6 +73,13 @@ struct StatusTabView: View {
         .navigationTitle("Status")
         .onAppear {
             Task { await viewModel.reload() }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            Task { await viewModel.reload() }
+        }
+        .refreshable {
+            await viewModel.reload()
         }
         .onChange(of: statusMediaItem) { newValue in
             guard let newValue else { return }

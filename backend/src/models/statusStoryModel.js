@@ -221,8 +221,15 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
           ON cp_other.conversation_id = cp_self.conversation_id
          AND cp_other.user_id <> cp_self.user_id
         WHERE cp_self.user_id = $1
-          AND cp_self.deleted_at IS NULL
-          AND cp_other.deleted_at IS NULL
+      ),
+      message_contacts AS (
+        SELECT DISTINCT
+          CASE
+            WHEN m.sender_id = $1 THEN m.recipient_id
+            ELSE m.sender_id
+          END AS user_id
+        FROM messages m
+        WHERE m.sender_id = $1 OR m.recipient_id = $1
       ),
       synced_address_book_contacts AS (
         SELECT DISTINCT u.id AS user_id
@@ -234,6 +241,8 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
       ),
       contact_users AS (
         SELECT user_id FROM conversation_contacts
+        UNION
+        SELECT user_id FROM message_contacts
         UNION
         SELECT user_id FROM synced_address_book_contacts
       ),
@@ -295,8 +304,15 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
           ON cp_other.conversation_id = cp_self.conversation_id
          AND cp_other.user_id <> cp_self.user_id
         WHERE cp_self.user_id = $1
-          AND cp_self.deleted_at IS NULL
-          AND cp_other.deleted_at IS NULL
+      ),
+      message_contacts AS (
+        SELECT DISTINCT
+          CASE
+            WHEN m.sender_id = $1 THEN m.recipient_id
+            ELSE m.sender_id
+          END AS user_id
+        FROM messages m
+        WHERE m.sender_id = $1 OR m.recipient_id = $1
       ),
       synced_address_book_contacts AS (
         SELECT DISTINCT u.id AS user_id
@@ -308,6 +324,8 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
       ),
       contact_users AS (
         SELECT user_id FROM conversation_contacts
+        UNION
+        SELECT user_id FROM message_contacts
         UNION
         SELECT user_id FROM synced_address_book_contacts
       ),
