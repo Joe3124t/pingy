@@ -58,7 +58,11 @@ final class StatusViewModel: ObservableObject {
             )
             errorMessage = nil
         } catch {
-            errorMessage = "Couldn't publish text status right now."
+            errorMessage = statusErrorMessage(
+                from: error,
+                fallback: "Couldn't publish text status right now."
+            )
+            AppLogger.error("Text status publish failed: \(error.localizedDescription)")
         }
         stories = await service.listActiveStories()
     }
@@ -87,7 +91,11 @@ final class StatusViewModel: ObservableObject {
             stories = await service.listActiveStories()
             errorMessage = nil
         } catch {
-            errorMessage = "Couldn't publish status. Please try a different media file."
+            errorMessage = statusErrorMessage(
+                from: error,
+                fallback: "Couldn't publish status. Please try a different media file."
+            )
+            AppLogger.error("Media status publish failed: \(error.localizedDescription)")
         }
     }
 
@@ -99,5 +107,30 @@ final class StatusViewModel: ObservableObject {
     func markViewed(storyID: String, viewerID: String, viewerName: String) async {
         await service.markViewed(storyID: storyID, viewerID: viewerID, viewerName: viewerName)
         stories = await service.listActiveStories()
+    }
+
+    private func statusErrorMessage(from error: Error, fallback: String) -> String {
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .server(_, let message):
+                let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    return normalized
+                }
+            default:
+                if let readable = apiError.errorDescription,
+                   !readable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return readable
+                }
+            }
+        }
+
+        let localized = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !localized.isEmpty {
+            return localized
+        }
+
+        return fallback
     }
 }

@@ -1,5 +1,33 @@
 const { query } = require('../config/db');
 
+const contactHashesTableState = {
+  ready: false,
+};
+
+const ensureUserContactHashesTable = async () => {
+  if (contactHashesTableState.ready) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_contact_hashes (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_hash VARCHAR(64) NOT NULL,
+      contact_label VARCHAR(120) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, contact_hash)
+    )
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_user_contact_hashes_lookup
+      ON user_contact_hashes (contact_hash)
+  `);
+
+  contactHashesTableState.ready = true;
+};
+
 const USER_PUBLIC_COLUMNS = `
   id,
   username,
@@ -189,6 +217,48 @@ const listUsersVisibleToViewer = async ({ viewerUserId, limit = 5000 }) => {
   );
 
   return result.rows;
+};
+
+const upsertUserContactHashes = async ({ userId, contacts = [] }) => {
+  await ensureUserContactHashesTable();
+
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return 0;
+  }
+
+  const hashes = contacts
+    .map((entry) => String(entry?.hash || '').trim().toLowerCase())
+    .filter(Boolean);
+  const labels = contacts
+    .map((entry) => String(entry?.label || '').trim().slice(0, 120))
+    .filter(Boolean);
+
+  if (hashes.length === 0 || labels.length === 0 || hashes.length !== labels.length) {
+    return 0;
+  }
+
+  const result = await query(
+    `
+      INSERT INTO user_contact_hashes (
+        user_id,
+        contact_hash,
+        contact_label
+      )
+      SELECT
+        $1::uuid,
+        value.hash,
+        value.label
+      FROM unnest($2::text[], $3::text[]) AS value(hash, label)
+      ON CONFLICT (user_id, contact_hash)
+      DO UPDATE SET
+        contact_label = EXCLUDED.contact_label,
+        updated_at = NOW()
+      RETURNING contact_hash
+    `,
+    [userId, hashes, labels],
+  );
+
+  return result.rowCount || 0;
 };
 
 const setUserOnlineStatus = async ({ userId, isOnline }) => {
@@ -383,6 +453,7 @@ module.exports = {
   findUserByPhone,
   searchUsers,
   listUsersVisibleToViewer,
+  upsertUserContactHashes,
   setUserOnlineStatus,
   updateUserProfile,
   setUserAvatar,

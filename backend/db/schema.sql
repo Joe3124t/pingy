@@ -273,6 +273,18 @@ CREATE TABLE IF NOT EXISTS user_totp_recovery_codes (
 CREATE INDEX IF NOT EXISTS idx_user_totp_recovery_codes_user
   ON user_totp_recovery_codes (user_id, consumed_at);
 
+CREATE TABLE IF NOT EXISTS user_contact_hashes (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  contact_hash VARCHAR(64) NOT NULL,
+  contact_label VARCHAR(120) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, contact_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_contact_hashes_lookup
+  ON user_contact_hashes (contact_hash);
+
 CREATE TABLE IF NOT EXISTS status_stories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -371,6 +383,12 @@ EXECUTE FUNCTION set_updated_at();
 DROP TRIGGER IF EXISTS trg_user_push_subscriptions_updated_at ON user_push_subscriptions;
 CREATE TRIGGER trg_user_push_subscriptions_updated_at
 BEFORE UPDATE ON user_push_subscriptions
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_user_contact_hashes_updated_at ON user_contact_hashes;
+CREATE TRIGGER trg_user_contact_hashes_updated_at
+BEFORE UPDATE ON user_contact_hashes
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 

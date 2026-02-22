@@ -9,6 +9,7 @@ const {
   findUserAuthById,
   findUserByPhoneWithPassword,
   listUsersVisibleToViewer,
+  upsertUserContactHashes,
   isUsernameAvailable,
   updateUserProfile,
   updateUserPhoneNumber,
@@ -342,6 +343,11 @@ const syncContactsController = asyncHandler(async (req, res) => {
     res.status(200).json({ matches: [] });
     return;
   }
+
+  await upsertUserContactHashes({
+    userId: req.user.id,
+    contacts: Array.from(labelByHash.entries()).map(([hash, label]) => ({ hash, label })),
+  });
 
   const users = await listUsersVisibleToViewer({
     viewerUserId: req.user.id,

@@ -1,5 +1,87 @@
 const { query } = require('../config/db');
 
+const statusSchemaState = {
+  ready: false,
+};
+
+const contactHashesTableState = {
+  ready: false,
+};
+
+const ensureStatusSchema = async () => {
+  if (statusSchemaState.ready) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS status_stories (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content_type VARCHAR(12) NOT NULL CHECK (content_type IN ('text', 'image', 'video')),
+      text_content TEXT,
+      media_url TEXT,
+      background_hex VARCHAR(16),
+      privacy VARCHAR(16) NOT NULL DEFAULT 'contacts' CHECK (privacy IN ('contacts', 'custom')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+      deleted_at TIMESTAMPTZ,
+      CHECK (text_content IS NOT NULL OR media_url IS NOT NULL)
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS status_story_viewers (
+      story_id UUID NOT NULL REFERENCES status_stories(id) ON DELETE CASCADE,
+      viewer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (story_id, viewer_user_id)
+    )
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_status_stories_owner_created
+      ON status_stories (owner_user_id, created_at DESC)
+      WHERE deleted_at IS NULL
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_status_stories_expires
+      ON status_stories (expires_at)
+      WHERE deleted_at IS NULL
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_status_story_viewers_story
+      ON status_story_viewers (story_id, viewed_at DESC)
+  `);
+
+  statusSchemaState.ready = true;
+};
+
+const ensureUserContactHashesTable = async () => {
+  if (contactHashesTableState.ready) {
+    return;
+  }
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_contact_hashes (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      contact_hash VARCHAR(64) NOT NULL,
+      contact_label VARCHAR(120) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, contact_hash)
+    )
+  `);
+
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_user_contact_hashes_lookup
+      ON user_contact_hashes (contact_hash)
+  `);
+
+  contactHashesTableState.ready = true;
+};
+
 const STORY_SELECT = `
   ss.id,
   ss.owner_user_id AS "ownerUserId",
@@ -58,6 +140,8 @@ const createStatusStory = async ({
   backgroundHex = null,
   privacy = 'contacts',
 }) => {
+  await ensureStatusSchema();
+
   const result = await query(
     `
       INSERT INTO status_stories (
@@ -92,6 +176,8 @@ const createStatusStory = async ({
 };
 
 const findStatusStoryById = async (storyId) => {
+  await ensureStatusSchema();
+
   const result = await query(
     `
       SELECT
@@ -123,9 +209,12 @@ const findStatusStoryById = async (storyId) => {
 };
 
 const listVisibleStatusStories = async ({ viewerUserId }) => {
+  await ensureStatusSchema();
+  await ensureUserContactHashesTable();
+
   const result = await query(
     `
-      WITH contact_users AS (
+      WITH conversation_contacts AS (
         SELECT DISTINCT cp_other.user_id AS user_id
         FROM conversation_participants cp_self
         INNER JOIN conversation_participants cp_other
@@ -134,6 +223,19 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
         WHERE cp_self.user_id = $1
           AND cp_self.deleted_at IS NULL
           AND cp_other.deleted_at IS NULL
+      ),
+      synced_address_book_contacts AS (
+        SELECT DISTINCT u.id AS user_id
+        FROM user_contact_hashes uch
+        INNER JOIN users u
+          ON uch.contact_hash = encode(digest(COALESCE(u.phone_number, ''), 'sha256'), 'hex')
+        WHERE uch.user_id = $1
+          AND u.id <> $1
+      ),
+      contact_users AS (
+        SELECT user_id FROM conversation_contacts
+        UNION
+        SELECT user_id FROM synced_address_book_contacts
       ),
       visible_stories AS (
         SELECT ss.*
@@ -181,9 +283,12 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
 };
 
 const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
+  await ensureStatusSchema();
+  await ensureUserContactHashesTable();
+
   const result = await query(
     `
-      WITH contact_users AS (
+      WITH conversation_contacts AS (
         SELECT DISTINCT cp_other.user_id AS user_id
         FROM conversation_participants cp_self
         INNER JOIN conversation_participants cp_other
@@ -192,6 +297,19 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
         WHERE cp_self.user_id = $1
           AND cp_self.deleted_at IS NULL
           AND cp_other.deleted_at IS NULL
+      ),
+      synced_address_book_contacts AS (
+        SELECT DISTINCT u.id AS user_id
+        FROM user_contact_hashes uch
+        INNER JOIN users u
+          ON uch.contact_hash = encode(digest(COALESCE(u.phone_number, ''), 'sha256'), 'hex')
+        WHERE uch.user_id = $1
+          AND u.id <> $1
+      ),
+      contact_users AS (
+        SELECT user_id FROM conversation_contacts
+        UNION
+        SELECT user_id FROM synced_address_book_contacts
       ),
       allowed_story AS (
         SELECT ss.id
@@ -232,6 +350,8 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
 };
 
 const softDeleteStatusStory = async ({ storyId, ownerUserId }) => {
+  await ensureStatusSchema();
+
   const result = await query(
     `
       UPDATE status_stories

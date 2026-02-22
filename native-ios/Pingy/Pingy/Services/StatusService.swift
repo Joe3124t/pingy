@@ -43,23 +43,52 @@ actor StatusService {
         backgroundHex: String,
         privacy: StatusPrivacy
     ) async throws {
-        struct Payload: Encodable {
+        struct TextPayload: Encodable {
             let text: String
             let backgroundHex: String
             let privacy: String
         }
 
-        let endpoint = try Endpoint.json(
-            path: "status/text",
-            method: .post,
-            payload: Payload(
-                text: text,
-                backgroundHex: backgroundHex,
-                privacy: normalizedPrivacy(privacy)
-            )
+        struct LegacyTextPayload: Encodable {
+            let contentType: String
+            let text: String
+            let backgroundHex: String
+            let privacy: String
+        }
+
+        let normalizedPrivacyValue = normalizedPrivacy(privacy)
+        let primaryPayload = TextPayload(
+            text: text,
+            backgroundHex: backgroundHex,
+            privacy: normalizedPrivacyValue
         )
 
-        let raw = try await authService.authorizedRawData(endpoint)
+        let raw: Data
+        do {
+            let endpoint = try Endpoint.json(
+                path: "status/text",
+                method: .post,
+                payload: primaryPayload
+            )
+            raw = try await authService.authorizedRawData(endpoint)
+        } catch {
+            guard shouldAttemptLegacyStatusFallback(for: error) else {
+                throw error
+            }
+
+            let fallbackEndpoint = try Endpoint.json(
+                path: "status",
+                method: .post,
+                payload: LegacyTextPayload(
+                    contentType: "text",
+                    text: text,
+                    backgroundHex: backgroundHex,
+                    privacy: normalizedPrivacyValue
+                )
+            )
+            raw = try await authService.authorizedRawData(fallbackEndpoint)
+        }
+
         let created = try decodeStoryResponse(raw)
 
         guard let created else {
@@ -79,22 +108,46 @@ actor StatusService {
         privacy: StatusPrivacy
     ) async throws {
         let mimeType = mimeTypeForStatus(fileExtension: fileExtension, contentType: contentType)
+        let safeExtension = fileExtension.isEmpty ? defaultExtension(for: contentType) : fileExtension
+        let normalizedPrivacyValue = normalizedPrivacy(privacy)
 
-        var form = MultipartFormData()
-        form.appendFile(
-            fieldName: "file",
-            fileName: "status-\(UUID().uuidString).\(fileExtension.isEmpty ? defaultExtension(for: contentType) : fileExtension)",
-            mimeType: mimeType,
-            fileData: mediaData
-        )
-        form.appendField(name: "contentType", value: contentType.rawValue)
-        form.appendField(name: "privacy", value: normalizedPrivacy(privacy))
-        form.finalize()
+        let raw: Data
+        do {
+            raw = try await uploadMediaStory(
+                path: "status/media",
+                fileFieldName: "file",
+                fileExtension: safeExtension,
+                mimeType: mimeType,
+                mediaData: mediaData,
+                contentType: contentType,
+                privacy: normalizedPrivacyValue
+            )
+        } catch {
+            if shouldAttemptAlternativeMediaField(for: error) {
+                raw = try await uploadMediaStory(
+                    path: "status/media",
+                    fileFieldName: "media",
+                    fileExtension: safeExtension,
+                    mimeType: mimeType,
+                    mediaData: mediaData,
+                    contentType: contentType,
+                    privacy: normalizedPrivacyValue
+                )
+            } else if shouldAttemptLegacyStatusFallback(for: error) {
+                raw = try await uploadMediaStory(
+                    path: "status",
+                    fileFieldName: "file",
+                    fileExtension: safeExtension,
+                    mimeType: mimeType,
+                    mediaData: mediaData,
+                    contentType: contentType,
+                    privacy: normalizedPrivacyValue
+                )
+            } else {
+                throw error
+            }
+        }
 
-        var endpoint = Endpoint(path: "status/media", method: .post, body: form.data)
-        endpoint.headers["Content-Type"] = "multipart/form-data; boundary=\(form.boundary)"
-
-        let raw = try await authService.authorizedRawData(endpoint)
         let created = try decodeStoryResponse(raw)
 
         guard let created else {
@@ -172,6 +225,61 @@ actor StatusService {
         case .text:
             return "txt"
         }
+    }
+
+    private func uploadMediaStory(
+        path: String,
+        fileFieldName: String,
+        fileExtension: String,
+        mimeType: String,
+        mediaData: Data,
+        contentType: StatusContentType,
+        privacy: String
+    ) async throws -> Data {
+        var form = MultipartFormData()
+        form.appendFile(
+            fieldName: fileFieldName,
+            fileName: "status-\(UUID().uuidString).\(fileExtension)",
+            mimeType: mimeType,
+            fileData: mediaData
+        )
+        form.appendField(name: "contentType", value: contentType.rawValue)
+        form.appendField(name: "privacy", value: privacy)
+        form.finalize()
+
+        var endpoint = Endpoint(path: path, method: .post, body: form.data)
+        endpoint.headers["Content-Type"] = "multipart/form-data; boundary=\(form.boundary)"
+        return try await authService.authorizedRawData(endpoint)
+    }
+
+    private func shouldAttemptLegacyStatusFallback(for error: Error) -> Bool {
+        guard let apiError = error as? APIError else {
+            return false
+        }
+        guard case let .server(statusCode, message) = apiError else {
+            return false
+        }
+
+        let lowered = message.lowercased()
+        return statusCode == 404
+            || statusCode == 405
+            || lowered.contains("route not found")
+            || lowered.contains("cannot post")
+            || lowered.contains("not found")
+    }
+
+    private func shouldAttemptAlternativeMediaField(for error: Error) -> Bool {
+        guard let apiError = error as? APIError else {
+            return false
+        }
+        guard case let .server(_, message) = apiError else {
+            return false
+        }
+
+        let lowered = message.lowercased()
+        return lowered.contains("unexpected field")
+            || lowered.contains("file is required")
+            || lowered.contains("status media file is required")
     }
 
     private func decodeStoriesResponse(_ raw: Data) throws -> [StatusStory] {
