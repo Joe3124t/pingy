@@ -1,6 +1,13 @@
 import Foundation
 
 final class SettingsService {
+    struct PushCapabilities: Decodable {
+        let enabled: Bool
+        let apnsEnabled: Bool?
+        let webPushEnabled: Bool?
+        let publicKey: String?
+    }
+
     private let authService: AuthorizedRequester
 
     init(apiClient _: APIClient, authService: AuthorizedRequester) {
@@ -101,6 +108,36 @@ final class SettingsService {
         return response.user
     }
 
+    func updatePresence(isOnline: Bool) async {
+        struct Payload: Encodable {
+            let isOnline: Bool
+        }
+
+        do {
+            let endpoint = try Endpoint.json(
+                path: "users/me/presence",
+                method: .patch,
+                payload: Payload(isOnline: isOnline)
+            )
+            struct PresenceAck: Decodable { let ok: Bool }
+            _ = try await authService.authorizedRequest(endpoint, as: PresenceAck.self)
+        } catch {
+            AppLogger.error("Presence update failed: \(error.localizedDescription)")
+        }
+    }
+
+    func fetchPushCapabilities() async -> PushCapabilities? {
+        do {
+            return try await authService.authorizedRequest(
+                Endpoint(path: "users/me/push/public-key", method: .get),
+                as: PushCapabilities.self
+            )
+        } catch {
+            AppLogger.error("Push capabilities fetch failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     func updateChat(themeMode: ThemeMode, defaultWallpaperURL: String?) async throws -> User {
         struct Payload: Encodable {
             let themeMode: ThemeMode
@@ -165,7 +202,8 @@ final class SettingsService {
         return key
     }
 
-    func registerAPNsToken(_ tokenHex: String) async {
+    @discardableResult
+    func registerAPNsToken(_ tokenHex: String) async -> Bool {
         struct Payload: Encodable {
             struct Subscription: Encodable {
                 struct Keys: Encodable {
@@ -193,8 +231,10 @@ final class SettingsService {
             let endpoint = try Endpoint.json(path: "users/me/push-subscriptions", method: .post, payload: payload)
             struct OK: Decodable { let ok: Bool }
             _ = try await authService.authorizedRequest(endpoint, as: OK.self)
+            return true
         } catch {
             AppLogger.error("APNs token registration failed: \(error.localizedDescription)")
+            return false
         }
     }
 }

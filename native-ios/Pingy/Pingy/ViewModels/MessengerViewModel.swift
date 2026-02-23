@@ -110,6 +110,18 @@ final class MessengerViewModel: ObservableObject {
     private var typingExpiryTasks: [String: Task<Void, Never>] = [:]
     private var recordingExpiryTasks: [String: Task<Void, Never>] = [:]
 
+    private static let serverISO8601WithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let serverISO8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
     private struct PendingTextMessage: Codable {
         let conversationId: String
         let participantId: String
@@ -1734,7 +1746,8 @@ final class MessengerViewModel: ObservableObject {
                 onlineSinceByUserID.removeValue(forKey: update.userId)
             }
             refreshConversationPresence()
-            updateConversationLastSeen(userID: update.userId, lastSeen: update.lastSeen)
+            let fallbackLastSeen = update.lastSeen ?? Self.serverISO8601WithFractional.string(from: Date())
+            updateConversationLastSeen(userID: update.userId, lastSeen: fallbackLastSeen)
         case .profileUpdate(let profile):
             applyProfileUpdate(profile)
         case .conversationWallpaper(let event):
@@ -2079,8 +2092,7 @@ final class MessengerViewModel: ObservableObject {
         guard let value = iso else {
             return String(localized: "last seen recently")
         }
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: value) else {
+        guard let date = parseServerTimestamp(value) else {
             return String(localized: "last seen recently")
         }
 
@@ -2098,6 +2110,29 @@ final class MessengerViewModel: ObservableObject {
 
         output.dateStyle = .medium
         return "\(String(localized: "last seen")) \(output.string(from: date))"
+    }
+
+    private func parseServerTimestamp(_ raw: String) -> Date? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let withFractional = Self.serverISO8601WithFractional.date(from: value) {
+            return withFractional
+        }
+
+        if let withoutFractional = Self.serverISO8601.date(from: value) {
+            return withoutFractional
+        }
+
+        let normalized = value.replacingOccurrences(of: " ", with: "T")
+        if let normalizedFractional = Self.serverISO8601WithFractional.date(from: normalized) {
+            return normalizedFractional
+        }
+        if let normalizedNoFractional = Self.serverISO8601.date(from: normalized) {
+            return normalizedNoFractional
+        }
+
+        return nil
     }
 
     private func formattedDuration(_ totalSeconds: Int) -> String {

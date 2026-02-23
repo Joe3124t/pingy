@@ -11,6 +11,8 @@ const {
   listUsersVisibleToViewer,
   upsertUserContactHashes,
   isUsernameAvailable,
+  setUserOnlineStatus,
+  filterVisiblePresenceUserIds,
   updateUserProfile,
   updateUserPhoneNumber,
   setUserAvatar,
@@ -34,9 +36,11 @@ const { signMediaUrl, signMediaUrlsInUser } = require('../services/mediaAccessSe
 const { normalizePhoneNumber } = require('../utils/phone');
 const {
   isWebPushConfigured,
+  isAPNsConfigured,
   isPushDeliveryConfigured,
   getWebPushPublicKey,
 } = require('../services/pushService');
+const { getOnlineUserIds } = require('../services/presenceService');
 
 const sha256Hex = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -59,6 +63,68 @@ const emitProfileUpdateToContacts = async (req, user) => {
 
   conversationIds.forEach((conversationId) => {
     io.to(`conversation:${conversationId}`).emit('profile:update', payload);
+  });
+};
+
+const toISOStringSafe = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  const candidate = new Date(value);
+  if (!Number.isNaN(candidate.getTime())) {
+    return candidate.toISOString();
+  }
+
+  return null;
+};
+
+const emitPresenceUpdateToVisibleViewers = async ({
+  req,
+  subjectUserId,
+  isOnline,
+  lastSeen,
+}) => {
+  const io = req.app?.locals?.io;
+  if (!io || !subjectUserId) {
+    return;
+  }
+
+  const onlineViewerIds = getOnlineUserIds();
+  if (!onlineViewerIds.length) {
+    return;
+  }
+
+  const checks = await Promise.all(
+    onlineViewerIds.map(async (viewerUserId) => {
+      const visible = await filterVisiblePresenceUserIds({
+        viewerUserId,
+        candidateUserIds: [subjectUserId],
+      });
+
+      return {
+        viewerUserId,
+        canSee: visible.length > 0,
+      };
+    }),
+  );
+
+  const normalizedLastSeen = toISOStringSafe(lastSeen) || new Date().toISOString();
+
+  checks.forEach((entry) => {
+    if (!entry.canSee) {
+      return;
+    }
+
+    io.to(`user:${entry.viewerUserId}`).emit('presence:update', {
+      userId: subjectUserId,
+      isOnline: Boolean(isOnline),
+      lastSeen: isOnline ? null : normalizedLastSeen,
+    });
   });
 };
 
@@ -267,6 +333,29 @@ const updatePrivacySettings = asyncHandler(async (req, res) => {
   });
 });
 
+const updateMyPresenceController = asyncHandler(async (req, res) => {
+  const isOnline = Boolean(req.body?.isOnline);
+  const user = await setUserOnlineStatus({
+    userId: req.user.id,
+    isOnline,
+  });
+
+  await emitPresenceUpdateToVisibleViewers({
+    req,
+    subjectUserId: req.user.id,
+    isOnline,
+    lastSeen: user?.lastSeen || null,
+  });
+
+  res.status(200).json({
+    ok: true,
+    presence: {
+      isOnline,
+      lastSeen: isOnline ? null : toISOStringSafe(user?.lastSeen) || new Date().toISOString(),
+    },
+  });
+});
+
 const updateChatSettings = asyncHandler(async (req, res) => {
   const { themeMode, defaultWallpaperUrl } = req.body;
   const hasDefaultWallpaperUrl = Object.prototype.hasOwnProperty.call(
@@ -405,6 +494,7 @@ const deleteMyAccount = asyncHandler(async (req, res) => {
 const getPushPublicKeyController = asyncHandler(async (req, res) => {
   res.status(200).json({
     enabled: isPushDeliveryConfigured(),
+    apnsEnabled: isAPNsConfigured(),
     webPushEnabled: isWebPushConfigured(),
     publicKey: getWebPushPublicKey(),
   });
@@ -450,6 +540,7 @@ module.exports = {
   uploadAvatar,
   uploadDefaultWallpaper,
   updatePrivacySettings,
+  updateMyPresenceController,
   updateChatSettings,
   blockUserController,
   unblockUserController,

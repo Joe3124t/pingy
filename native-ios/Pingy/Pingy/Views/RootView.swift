@@ -37,6 +37,7 @@ struct RootView: View {
         .onChange(of: sessionStore.isAuthenticated) { isAuthenticated in
             if isAuthenticated {
                 Task {
+                    await appEnvironment.settingsService.updatePresence(isOnline: true)
                     await appEnvironment.pushManager.configure()
                 }
                 return
@@ -52,10 +53,14 @@ struct RootView: View {
             case .active:
                 messengerViewModel.bindSocket()
                 Task {
+                    await appEnvironment.settingsService.updatePresence(isOnline: true)
                     await messengerViewModel.reloadAll()
                     await appEnvironment.pushManager.configure()
                 }
             case .background:
+                Task {
+                    await appEnvironment.settingsService.updatePresence(isOnline: false)
+                }
                 messengerViewModel.disconnectSocket()
             case .inactive:
                 break

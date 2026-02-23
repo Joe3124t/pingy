@@ -88,6 +88,23 @@ const emitCallSignal = (io, signal) => {
   io.to(`conversation:${signal.conversationId}`).emit(eventName, signal);
 };
 
+const toISOStringSafe = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return null;
+};
+
 const emitPresenceSnapshot = async (socket, userId) => {
   const onlineUserIds = getOnlineUserIds();
   const visibleOnlineUserIds = await filterVisiblePresenceUserIds({
@@ -130,7 +147,7 @@ const emitPresenceUpdateToVisibleViewers = async ({
     io.to(`user:${entry.viewerUserId}`).emit('presence:update', {
       userId: subjectUserId,
       isOnline,
-      lastSeen: isOnline ? null : lastSeen || new Date().toISOString(),
+      lastSeen: isOnline ? null : toISOStringSafe(lastSeen) || new Date().toISOString(),
     });
   });
 };

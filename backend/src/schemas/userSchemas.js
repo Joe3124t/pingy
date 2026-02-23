@@ -60,6 +60,10 @@ const updatePrivacySchema = z.object({
   readReceiptsEnabled: z.boolean().optional(),
 });
 
+const updatePresenceSchema = z.object({
+  isOnline: z.boolean(),
+});
+
 const updateChatSchema = z.object({
   themeMode: z.enum(['light', 'dark', 'auto']).optional(),
   defaultWallpaperUrl: optionalWallpaperUrlSchema,
@@ -118,6 +122,7 @@ module.exports = {
   updateProfileSchema,
   changePhoneSchema,
   updatePrivacySchema,
+  updatePresenceSchema,
   updateChatSchema,
   userIdParamsSchema,
   savePushSubscriptionSchema,

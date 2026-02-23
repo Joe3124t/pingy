@@ -6,10 +6,13 @@ import UserNotifications
 final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var deviceTokenHex: String?
+    @Published private(set) var serverAPNsEnabled = true
 
     private let settingsService: SettingsService
     private let userDefaults = UserDefaults.standard
     private let tokenDefaultsKey = "pingy.apns.deviceTokenHex"
+    private let syncedTokenDefaultsKey = "pingy.apns.syncedDeviceTokenHex"
+    private var tokenSyncTask: Task<Void, Never>?
 
     init(settingsService: SettingsService) {
         self.settingsService = settingsService
@@ -22,13 +25,22 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         center.delegate = self
         authorizationStatus = await center.notificationSettings().authorizationStatus
 
+        if let capabilities = await settingsService.fetchPushCapabilities() {
+            if let apnsEnabled = capabilities.apnsEnabled {
+                serverAPNsEnabled = apnsEnabled
+            }
+            if serverAPNsEnabled == false {
+                AppLogger.error("Server APNs is disabled. Remote iOS notifications will not be delivered.")
+            }
+        }
+
         if authorizationStatus == .notDetermined {
             await requestPermission()
             authorizationStatus = await center.notificationSettings().authorizationStatus
         }
 
         if authorizationStatus == .authorized || authorizationStatus == .provisional || authorizationStatus == .ephemeral {
-            await syncStoredTokenIfNeeded()
+            scheduleTokenSync(force: false)
             UIApplication.shared.registerForRemoteNotifications()
         }
     }
@@ -50,10 +62,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         let tokenHex = token.map { String(format: "%02.2hhx", $0) }.joined()
         deviceTokenHex = tokenHex
         userDefaults.set(tokenHex, forKey: tokenDefaultsKey)
-
-        Task {
-            await settingsService.registerAPNsToken(tokenHex)
-        }
+        scheduleTokenSync(force: true)
     }
 
     func handleRemoteNotification(userInfo: [AnyHashable: Any]) {
@@ -127,11 +136,40 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         return nil
     }
 
-    private func syncStoredTokenIfNeeded() async {
+    private func normalizedStoredToken() -> String? {
         guard let token = deviceTokenHex?.trimmingCharacters(in: .whitespacesAndNewlines),
               !token.isEmpty
-        else { return }
+        else { return nil }
+        return token
+    }
 
-        await settingsService.registerAPNsToken(token)
+    private func scheduleTokenSync(force: Bool) {
+        tokenSyncTask?.cancel()
+        tokenSyncTask = Task { [weak self] in
+            await self?.syncStoredTokenIfNeeded(force: force)
+        }
+    }
+
+    private func syncStoredTokenIfNeeded(force: Bool) async {
+        guard let token = normalizedStoredToken() else { return }
+        let alreadySyncedToken = userDefaults.string(forKey: syncedTokenDefaultsKey)
+        if !force, alreadySyncedToken == token {
+            return
+        }
+
+        let maxAttempts = 4
+        for attempt in 0..<maxAttempts {
+            guard !Task.isCancelled else { return }
+
+            let success = await settingsService.registerAPNsToken(token)
+            if success {
+                userDefaults.set(token, forKey: syncedTokenDefaultsKey)
+                return
+            }
+
+            // Exponential retry (1s, 2s, 4s, 8s) to survive transient auth/network failures.
+            let delaySeconds = UInt64(1 << attempt)
+            try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
+        }
     }
 }

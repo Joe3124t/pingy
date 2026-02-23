@@ -7,6 +7,7 @@ const {
   uploadAvatar,
   uploadDefaultWallpaper,
   updatePrivacySettings,
+  updateMyPresenceController,
   updateChatSettings,
   blockUserController,
   unblockUserController,
@@ -23,6 +24,7 @@ const {
   updateProfileSchema,
   changePhoneSchema,
   updatePrivacySchema,
+  updatePresenceSchema,
   updateChatSchema,
   userIdParamsSchema,
   savePushSubscriptionSchema,
@@ -42,6 +44,7 @@ router.patch('/me/phone', validateRequest(changePhoneSchema), changePhoneNumberC
 router.post('/me/avatar', avatarUpload.single('avatar'), uploadAvatar);
 router.post('/me/chat/wallpaper', wallpaperUpload.single('wallpaper'), uploadDefaultWallpaper);
 router.patch('/me/privacy', validateRequest(updatePrivacySchema), updatePrivacySettings);
+router.patch('/me/presence', validateRequest(updatePresenceSchema), updateMyPresenceController);
 router.patch('/me/chat', validateRequest(updateChatSchema), updateChatSettings);
 router.get('/me/push/public-key', getPushPublicKeyController);
 router.post('/me/push-subscriptions', validateRequest(savePushSubscriptionSchema), saveMyPushSubscriptionController);
