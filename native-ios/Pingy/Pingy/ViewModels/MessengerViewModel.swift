@@ -575,7 +575,8 @@ final class MessengerViewModel: ObservableObject {
         }
 
         socketManager.joinConversation(conversationID)
-        await loadMessages(conversationID: conversationID)
+        _ = await loadMessages(conversationID: conversationID)
+        await ensureConversationTailIsSynced(conversationID: conversationID)
     }
 
     @discardableResult
@@ -589,6 +590,19 @@ final class MessengerViewModel: ObservableObject {
            !cachedMessages.isEmpty
         {
             await markCurrentAsSeen()
+            if shouldForceRefreshCachedConversation(
+                conversationID: conversationID,
+                cachedMessages: cachedMessages
+            ) {
+                messageRefreshTasks[conversationID]?.cancel()
+                messageRefreshTasks[conversationID] = nil
+                return await refreshMessagesFromServer(
+                    conversationID: conversationID,
+                    suppressNetworkAlert: true,
+                    showLoading: false,
+                    limit: 240
+                )
+            }
             scheduleBackgroundMessageRefresh(
                 conversationID: conversationID,
                 suppressNetworkAlert: true
@@ -681,6 +695,66 @@ final class MessengerViewModel: ObservableObject {
             setError(from: error)
             return false
         }
+    }
+
+    private func shouldForceRefreshCachedConversation(
+        conversationID: String,
+        cachedMessages: [Message]
+    ) -> Bool {
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
+            return false
+        }
+
+        if conversation.unreadCount > 0 {
+            return true
+        }
+
+        guard let lastMessageID = conversation.lastMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !lastMessageID.isEmpty
+        else {
+            return false
+        }
+
+        if !cachedMessages.contains(where: { $0.id == lastMessageID }) {
+            return true
+        }
+
+        let latestCachedCreatedAt = cachedMessages.last?.createdAt ?? ""
+        let latestConversationCreatedAt =
+            conversation.lastMessageCreatedAt
+            ?? conversation.lastMessageAt
+            ?? conversation.updatedAt
+            ?? ""
+
+        if !latestConversationCreatedAt.isEmpty, latestConversationCreatedAt > latestCachedCreatedAt {
+            return true
+        }
+
+        return false
+    }
+
+    private func ensureConversationTailIsSynced(conversationID: String) async {
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
+            return
+        }
+
+        guard let expectedLastMessageID = conversation.lastMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !expectedLastMessageID.isEmpty
+        else {
+            return
+        }
+
+        let currentMessages = messagesByConversation[conversationID] ?? []
+        if currentMessages.contains(where: { $0.id == expectedLastMessageID }) {
+            return
+        }
+
+        _ = await refreshMessagesFromServer(
+            conversationID: conversationID,
+            suppressNetworkAlert: true,
+            showLoading: false,
+            limit: 280
+        )
     }
 
     func searchUsers() async {
