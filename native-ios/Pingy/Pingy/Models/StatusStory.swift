@@ -61,3 +61,10 @@ struct StatusStory: Codable, Identifiable, Equatable {
     let expiresAt: Date
     var viewers: [StatusViewer]
 }
+
+struct StatusUpdateEvent: Codable, Equatable {
+    let action: String
+    let storyId: String?
+    let ownerUserID: String
+    let createdAt: String?
+}

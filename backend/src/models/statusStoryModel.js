@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { query } = require('../config/db');
 
 const statusSchemaState = {
@@ -132,6 +133,27 @@ const normalizeStoryRow = (row) => {
   };
 };
 
+const sha256Hex = (value) => crypto.createHash('sha256').update(String(value || '')).digest('hex');
+
+const getUserPhoneHash = async (userId) => {
+  const result = await query(
+    `
+      SELECT phone_number AS "phoneNumber"
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [userId],
+  );
+
+  const phoneNumber = String(result.rows[0]?.phoneNumber || '').trim();
+  if (!phoneNumber) {
+    return null;
+  }
+
+  return sha256Hex(phoneNumber);
+};
+
 const createStatusStory = async ({
   ownerUserId,
   contentType,
@@ -211,6 +233,7 @@ const findStatusStoryById = async (storyId) => {
 const listVisibleStatusStories = async ({ viewerUserId }) => {
   await ensureStatusSchema();
   await ensureUserContactHashesTable();
+  const viewerPhoneHash = await getUserPhoneHash(viewerUserId);
 
   const result = await query(
     `
@@ -231,20 +254,19 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
         FROM messages m
         WHERE m.sender_id = $1 OR m.recipient_id = $1
       ),
-      synced_address_book_contacts AS (
-        SELECT DISTINCT u.id AS user_id
+      reverse_synced_address_book_contacts AS (
+        SELECT DISTINCT uch.user_id AS user_id
         FROM user_contact_hashes uch
-        INNER JOIN users u
-          ON uch.contact_hash = encode(digest(COALESCE(u.phone_number, ''), 'sha256'), 'hex')
-        WHERE uch.user_id = $1
-          AND u.id <> $1
+        WHERE $2::text IS NOT NULL
+          AND uch.contact_hash = $2
+          AND uch.user_id <> $1
       ),
       contact_users AS (
         SELECT user_id FROM conversation_contacts
         UNION
         SELECT user_id FROM message_contacts
         UNION
-        SELECT user_id FROM synced_address_book_contacts
+        SELECT user_id FROM reverse_synced_address_book_contacts
       ),
       visible_stories AS (
         SELECT ss.*
@@ -285,7 +307,7 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
       GROUP BY ss.id, owner.username, owner.avatar_url
       ORDER BY ss.created_at DESC
     `,
-    [viewerUserId],
+    [viewerUserId, viewerPhoneHash],
   );
 
   return result.rows.map(normalizeStoryRow);
@@ -294,6 +316,7 @@ const listVisibleStatusStories = async ({ viewerUserId }) => {
 const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
   await ensureStatusSchema();
   await ensureUserContactHashesTable();
+  const viewerPhoneHash = await getUserPhoneHash(viewerUserId);
 
   const result = await query(
     `
@@ -314,20 +337,19 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
         FROM messages m
         WHERE m.sender_id = $1 OR m.recipient_id = $1
       ),
-      synced_address_book_contacts AS (
-        SELECT DISTINCT u.id AS user_id
+      reverse_synced_address_book_contacts AS (
+        SELECT DISTINCT uch.user_id AS user_id
         FROM user_contact_hashes uch
-        INNER JOIN users u
-          ON uch.contact_hash = encode(digest(COALESCE(u.phone_number, ''), 'sha256'), 'hex')
-        WHERE uch.user_id = $1
-          AND u.id <> $1
+        WHERE $3::text IS NOT NULL
+          AND uch.contact_hash = $3
+          AND uch.user_id <> $1
       ),
       contact_users AS (
         SELECT user_id FROM conversation_contacts
         UNION
         SELECT user_id FROM message_contacts
         UNION
-        SELECT user_id FROM synced_address_book_contacts
+        SELECT user_id FROM reverse_synced_address_book_contacts
       ),
       allowed_story AS (
         SELECT ss.id
@@ -361,7 +383,7 @@ const markStatusStoryViewed = async ({ storyId, viewerUserId }) => {
       DO UPDATE SET viewed_at = EXCLUDED.viewed_at
       RETURNING story_id AS "storyId"
     `,
-    [viewerUserId, storyId],
+    [viewerUserId, storyId, viewerPhoneHash],
   );
 
   return Boolean(result.rows[0]?.storyId);

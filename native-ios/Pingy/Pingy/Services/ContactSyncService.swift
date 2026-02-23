@@ -11,11 +11,11 @@ enum ContactSyncError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .permissionDenied, .permissionRequired:
-            return "Enable contact access to find friends."
+            return String(localized: "Enable contact access to find friends.")
         case .noContacts:
-            return "No contacts found on this device."
+            return String(localized: "No contacts found on this device.")
         case .routeUnavailable:
-            return "Contact sync route is not available on this backend yet."
+            return String(localized: "Contact sync route is not available on this backend yet.")
         }
     }
 }

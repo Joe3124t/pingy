@@ -202,7 +202,7 @@ const markDeliveredIfRecipientOnline = async (message) => {
 };
 
 const sendPushToRecipientIfOffline = async (message) => {
-  if (!message?.recipientId || isUserOnline(message.recipientId)) {
+  if (!message?.recipientId) {
     return {
       sent: 0,
       attempted: 0,

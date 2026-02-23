@@ -3,6 +3,7 @@ import Foundation
 import Network
 import SwiftUI
 import UIKit
+import UserNotifications
 
 enum NetworkBannerState: Equatable {
     case hidden
@@ -365,19 +366,19 @@ final class MessengerViewModel: ObservableObject {
 
     func presenceStatus(for conversation: Conversation) -> (text: String, highlighted: Bool) {
         if let recording = recordingByConversation[conversation.conversationId], !recording.isEmpty {
-            return ("recording audio...", true)
+            return (String(localized: "recording audio..."), true)
         }
 
         if typingByConversation[conversation.conversationId] != nil {
-            return ("typing...", true)
+            return (String(localized: "typing..."), true)
         }
 
         if conversation.participantIsOnline {
             if let since = onlineSinceByUserID[conversation.participantId] {
                 let elapsed = max(0, Int(Date().timeIntervalSince(since)))
-                return ("Active for \(formattedDuration(elapsed))", false)
+                return ("\(String(localized: "Active for")) \(formattedDuration(elapsed))", false)
             }
-            return ("Online", false)
+            return (String(localized: "Online"), false)
         }
 
         return (formatLastSeen(conversation.participantLastSeen), false)
@@ -1694,6 +1695,7 @@ final class MessengerViewModel: ObservableObject {
         switch event {
         case .messageNew(let message):
             upsertMessage(message)
+            notifyIncomingMessageIfNeeded(message)
         case .messageDelivered(let update):
             patchLifecycle(update, kind: .delivered)
         case .messageSeen(let update):
@@ -1743,6 +1745,16 @@ final class MessengerViewModel: ObservableObject {
                 signal,
                 currentUserID: currentUserID,
                 profile: callProfile(for: signal, currentUserID: currentUserID)
+            )
+        case .statusUpdate(let event):
+            NotificationCenter.default.post(
+                name: .pingyStatusUpdated,
+                object: nil,
+                userInfo: [
+                    "action": event.action,
+                    "storyId": event.storyId ?? "",
+                    "ownerUserID": event.ownerUserID,
+                ]
             )
         }
     }
@@ -2033,11 +2045,11 @@ final class MessengerViewModel: ObservableObject {
             contactSearchResults = []
             switch contactError {
             case .permissionDenied, .permissionRequired:
-                contactSearchHint = "Enable contact access to find friends."
+                contactSearchHint = String(localized: "Enable contact access to find friends.")
             case .noContacts:
-                contactSearchHint = "No contacts found on this device."
+                contactSearchHint = String(localized: "No contacts found on this device.")
             case .routeUnavailable:
-                contactSearchHint = "Contact sync isn't available on this server yet."
+                contactSearchHint = String(localized: "Contact sync isn't available on this server yet.")
             }
         } catch {
             if syncedContactMatches.isEmpty {
@@ -2045,7 +2057,7 @@ final class MessengerViewModel: ObservableObject {
             }
             contactSearchResults = []
             if syncedContactMatches.isEmpty {
-                contactSearchHint = "Couldn't sync contacts right now. Please try again."
+                contactSearchHint = String(localized: "Couldn't sync contacts right now. Please try again.")
             } else {
                 contactSearchHint = nil
             }
@@ -2065,11 +2077,11 @@ final class MessengerViewModel: ObservableObject {
 
     private func formatLastSeen(_ iso: String?) -> String {
         guard let value = iso else {
-            return "last seen recently"
+            return String(localized: "last seen recently")
         }
         let formatter = ISO8601DateFormatter()
         guard let date = formatter.date(from: value) else {
-            return "last seen recently"
+            return String(localized: "last seen recently")
         }
 
         let output = DateFormatter()
@@ -2077,15 +2089,15 @@ final class MessengerViewModel: ObservableObject {
         output.timeStyle = .short
 
         if Calendar.current.isDateInToday(date) {
-            return "last seen today at \(output.string(from: date))"
+            return "\(String(localized: "last seen today at")) \(output.string(from: date))"
         }
 
         if Calendar.current.isDateInYesterday(date) {
-            return "last seen yesterday at \(output.string(from: date))"
+            return "\(String(localized: "last seen yesterday at")) \(output.string(from: date))"
         }
 
         output.dateStyle = .medium
-        return "last seen \(output.string(from: date))"
+        return "\(String(localized: "last seen")) \(output.string(from: date))"
     }
 
     private func formattedDuration(_ totalSeconds: Int) -> String {
@@ -2100,6 +2112,38 @@ final class MessengerViewModel: ObservableObject {
             return "\(minutes)m \(seconds)s"
         }
         return "\(seconds)s"
+    }
+
+    private func notifyIncomingMessageIfNeeded(_ message: Message) {
+        guard message.senderId != currentUserID else { return }
+        guard UIApplication.shared.applicationState != .active else { return }
+
+        let senderName =
+            conversations.first(where: { $0.participantId == message.senderId })?.participantUsername
+            ?? message.senderUsername
+            ?? String(localized: "New message")
+        let preview = MessageBodyFormatter.previewText(from: message.body, fallback: String(localized: "New message"))
+
+        let content = UNMutableNotificationContent()
+        content.title = senderName
+        content.body = preview
+        content.sound = .default
+        content.userInfo = [
+            "conversationId": message.conversationId,
+            "messageId": message.id,
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "socket-\(message.id)",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                AppLogger.error("Failed to schedule local incoming-message notification: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func scheduleTypingExpiry(for conversationID: String) {

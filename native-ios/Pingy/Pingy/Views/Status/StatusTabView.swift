@@ -15,6 +15,7 @@ struct StatusTabView: View {
     @State private var textStatus = ""
     @State private var textStatusColorHex = "#0A7E8C"
     @State private var selectedStory: StatusStory?
+    @State private var statusRefreshTimer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     init(messengerViewModel: MessengerViewModel, statusService: StatusService) {
         self.messengerViewModel = messengerViewModel
@@ -72,6 +73,13 @@ struct StatusTabView: View {
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle("Status")
         .onAppear {
+            Task { await viewModel.reload() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pingyStatusUpdated)) { _ in
+            Task { await viewModel.reload() }
+        }
+        .onReceive(statusRefreshTimer) { _ in
+            guard scenePhase == .active else { return }
             Task { await viewModel.reload() }
         }
         .onChange(of: scenePhase) { phase in

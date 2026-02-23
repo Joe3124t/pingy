@@ -22,12 +22,13 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         center.delegate = self
         authorizationStatus = await center.notificationSettings().authorizationStatus
 
+        if authorizationStatus == .notDetermined {
+            await requestPermission()
+            authorizationStatus = await center.notificationSettings().authorizationStatus
+        }
+
         if authorizationStatus == .authorized || authorizationStatus == .provisional || authorizationStatus == .ephemeral {
-            if let token = deviceTokenHex, !token.isEmpty {
-                Task {
-                    await settingsService.registerAPNsToken(token)
-                }
-            }
+            await syncStoredTokenIfNeeded()
             UIApplication.shared.registerForRemoteNotifications()
         }
     }
@@ -76,7 +77,11 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
         if let badge = extractBadge(from: notification.request.content.userInfo) {
             UIApplication.shared.applicationIconBadgeNumber = badge
         }
-        completionHandler([.banner, .list, .sound, .badge])
+        if UIApplication.shared.applicationState == .active {
+            completionHandler([.badge])
+        } else {
+            completionHandler([.banner, .list, .sound, .badge])
+        }
     }
 
     func userNotificationCenter(
@@ -120,5 +125,13 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
             }
         }
         return nil
+    }
+
+    private func syncStoredTokenIfNeeded() async {
+        guard let token = deviceTokenHex?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty
+        else { return }
+
+        await settingsService.registerAPNsToken(token)
     }
 }

@@ -34,6 +34,7 @@ enum SocketEvent {
     case profileUpdate(ProfileUpdateEvent)
     case conversationWallpaper(ConversationWallpaperEvent)
     case callSignal(CallSignalEvent)
+    case statusUpdate(StatusUpdateEvent)
 }
 
 @MainActor
@@ -416,6 +417,9 @@ final class SocketIOWebSocketManager: ObservableObject {
             case "call:ringing", "call:connected", "call:declined", "call:ended", "call:missed":
                 let value: CallSignalEvent = try decodePayload(payload, as: CallSignalEvent.self)
                 onEvent?(.callSignal(value))
+            case "status:update":
+                let value: StatusUpdateEvent = try decodePayload(payload, as: StatusUpdateEvent.self)
+                onEvent?(.statusUpdate(value))
             default:
                 break
             }

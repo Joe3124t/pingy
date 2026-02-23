@@ -25,6 +25,21 @@ const normalizeBackgroundHex = (value) => {
   return trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
 };
 
+const emitStatusUpdate = (req, { action, story }) => {
+  const io = req.app?.locals?.io;
+
+  if (!io) {
+    return;
+  }
+
+  io.emit('status:update', {
+    action,
+    storyId: story?.id || null,
+    ownerUserID: story?.ownerUserId || req.user.id,
+    createdAt: story?.createdAt || new Date().toISOString(),
+  });
+};
+
 const toStoryPayload = (story, viewerUserId) => ({
   id: story.id,
   ownerUserID: story.ownerUserId,
@@ -71,6 +86,8 @@ const createTextStatus = asyncHandler(async (req, res) => {
     throw new HttpError(500, 'Could not create status');
   }
 
+  emitStatusUpdate(req, { action: 'created', story: created });
+
   res.status(201).json({
     story: toStoryPayload(created, req.user.id),
   });
@@ -109,6 +126,8 @@ const createMediaStatus = asyncHandler(async (req, res) => {
     throw new HttpError(500, 'Could not create status');
   }
 
+  emitStatusUpdate(req, { action: 'created', story: created });
+
   res.status(201).json({
     story: toStoryPayload(created, req.user.id),
   });
@@ -130,6 +149,8 @@ const markStatusViewed = asyncHandler(async (req, res) => {
     if (!viewed) {
       throw new HttpError(404, 'Status not available');
     }
+
+    emitStatusUpdate(req, { action: 'viewed', story });
   }
 
   const refreshed = await findStatusStoryById(req.params.storyId);
@@ -140,6 +161,7 @@ const markStatusViewed = asyncHandler(async (req, res) => {
 });
 
 const deleteStatus = asyncHandler(async (req, res) => {
+  const story = await findStatusStoryById(req.params.storyId);
   const removed = await softDeleteStatusStory({
     storyId: req.params.storyId,
     ownerUserId: req.user.id,
@@ -148,6 +170,8 @@ const deleteStatus = asyncHandler(async (req, res) => {
   if (!removed) {
     throw new HttpError(404, 'Status not found');
   }
+
+  emitStatusUpdate(req, { action: 'deleted', story });
 
   res.status(204).send();
 });
