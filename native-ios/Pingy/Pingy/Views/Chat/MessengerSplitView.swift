@@ -44,11 +44,8 @@ private struct MessengerCompactContainer: View {
             ConversationListContent(
                 viewModel: viewModel,
                 onSelectConversation: { conversation in
-                    Task {
-                        await viewModel.selectConversation(conversation.conversationId)
-                        if path.last != conversation.conversationId {
-                            path.append(conversation.conversationId)
-                        }
+                    if path.last != conversation.conversationId {
+                        path.append(conversation.conversationId)
                     }
                 },
                 onSelectSearchUser: { user in
@@ -62,7 +59,7 @@ private struct MessengerCompactContainer: View {
                     }
                 }
             )
-            .navigationTitle("Chats")
+            .navigationTitle(String(localized: "Chats"))
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -103,7 +100,7 @@ private struct MessengerRegularContainer: View {
                     }
                 }
             )
-            .navigationTitle("Chats")
+            .navigationTitle(String(localized: "Chats"))
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -132,7 +129,7 @@ private struct ConversationListContent: View {
 
             if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if viewModel.isSyncingContacts {
-                    ProgressView("Syncing contacts...")
+                    ProgressView(String(localized: "Syncing contacts..."))
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -166,7 +163,7 @@ private struct ConversationListContent: View {
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                 } else {
-                    Text("No matching contacts found on Pingy.")
+                    Text(String(localized: "No matching contacts found on Pingy."))
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(PingyTheme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -190,7 +187,7 @@ private struct ConversationListContent: View {
                             } label: {
                                 HStack {
                                     Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
-                                    Text("Archived (\(archivedConversations.count))")
+                                    Text("\(String(localized: "Archived")) (\(archivedConversations.count))")
                                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                                     Spacer()
                                     Image(systemName: showArchived ? "chevron.down" : "chevron.right")
@@ -226,7 +223,7 @@ private struct ConversationListContent: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            TextField("Search contacts", text: $viewModel.searchQuery)
+            TextField(String(localized: "Search contacts"), text: $viewModel.searchQuery)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -282,9 +279,6 @@ private struct ConversationListContent: View {
         let displayName = viewModel.contactDisplayName(for: conversation)
         return Button {
             onSelectConversation(conversation)
-            if conversation.unreadCount > 0 {
-                viewModel.markConversationRead(conversation.conversationId)
-            }
         } label: {
             ConversationRowView(
                 conversation: conversation,
@@ -299,14 +293,14 @@ private struct ConversationListContent: View {
                 Button {
                     viewModel.markConversationRead(conversation.conversationId)
                 } label: {
-                    Label("Read", systemImage: "envelope.open")
+                    Label(String(localized: "Read"), systemImage: "envelope.open")
                 }
                 .tint(.green)
             } else {
                 Button {
                     viewModel.markConversationUnread(conversation.conversationId)
                 } label: {
-                    Label("Unread", systemImage: "envelope.badge")
+                    Label(String(localized: "Unread"), systemImage: "envelope.badge")
                 }
                 .tint(.blue)
             }
@@ -316,7 +310,7 @@ private struct ConversationListContent: View {
                 viewModel.togglePinConversation(conversation.conversationId)
             } label: {
                 Label(
-                    viewModel.isConversationPinned(conversation.conversationId) ? "Unpin" : "Pin",
+                    viewModel.isConversationPinned(conversation.conversationId) ? String(localized: "Unpin") : String(localized: "Pin"),
                     systemImage: viewModel.isConversationPinned(conversation.conversationId) ? "pin.slash" : "pin"
                 )
             }
@@ -326,7 +320,7 @@ private struct ConversationListContent: View {
                 viewModel.toggleArchiveConversation(conversation.conversationId)
             } label: {
                 Label(
-                    viewModel.isConversationArchived(conversation.conversationId) ? "Unarchive" : "Archive",
+                    viewModel.isConversationArchived(conversation.conversationId) ? String(localized: "Unarchive") : String(localized: "Archive"),
                     systemImage: viewModel.isConversationArchived(conversation.conversationId) ? "tray.and.arrow.up" : "archivebox"
                 )
             }
@@ -338,7 +332,7 @@ private struct ConversationListContent: View {
                     await viewModel.deleteSelectedConversation(forEveryone: false)
                 }
             } label: {
-                Label("Delete", systemImage: "trash")
+                Label(String(localized: "Delete"), systemImage: "trash")
             }
         }
         .listRowSeparator(.hidden)
@@ -351,8 +345,8 @@ private struct ConversationListContent: View {
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            if hint.lowercased().contains("enable contact access") {
-                Button("Enable contacts") {
+            if shouldShowEnableContactsButton(for: hint) {
+                Button(String(localized: "Enable contacts")) {
                     Task {
                         await viewModel.requestContactAccessAndSync()
                     }
@@ -364,11 +358,8 @@ private struct ConversationListContent: View {
                 .foregroundStyle(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .buttonStyle(PingyPressableButtonStyle())
-            } else if hint.lowercased().contains("sync contacts")
-                || hint.lowercased().contains("couldn't")
-                || hint.lowercased().contains("isn't available")
-            {
-                Button("Retry") {
+            } else if shouldShowRetryContactsButton(for: hint) {
+                Button(String(localized: "Retry")) {
                     Task {
                         await viewModel.requestContactAccessAndSync()
                     }
@@ -386,6 +377,30 @@ private struct ConversationListContent: View {
         .padding(.horizontal, PingySpacing.sm)
         .padding(.top, PingySpacing.sm)
     }
+
+    private func shouldShowEnableContactsButton(for hint: String) -> Bool {
+        if hint == String(localized: "Enable contact access to find friends.") {
+            return true
+        }
+        return hint.lowercased().contains("enable contact access")
+    }
+
+    private func shouldShowRetryContactsButton(for hint: String) -> Bool {
+        let localizedRetryHints = Set([
+            String(localized: "Couldn't sync contacts right now. Please try again."),
+            String(localized: "Contact sync isn't available on this server yet."),
+            String(localized: "Contact sync route is not available on this backend yet.")
+        ])
+
+        if localizedRetryHints.contains(hint) {
+            return true
+        }
+
+        let hintLower = hint.lowercased()
+        return hintLower.contains("sync contacts")
+            || hintLower.contains("couldn't")
+            || hintLower.contains("isn't available")
+    }
 }
 
 private struct ConversationDetailHost: View {
@@ -397,22 +412,33 @@ private struct ConversationDetailHost: View {
             if let conversation = viewModel.conversations.first(where: { $0.conversationId == conversationID }) {
                 ChatDetailView(viewModel: viewModel, conversation: conversation)
             } else if viewModel.isLoadingConversations {
-                ProgressView("Loading chat...")
+                ProgressView(String(localized: "Loading chat..."))
                     .font(.system(.body, design: .rounded))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(PingyTheme.background)
             } else {
-                NoConversationView(message: "Conversation is unavailable.")
+                NoConversationView(message: String(localized: "Conversation is unavailable."))
             }
         }
         .task(id: conversationID) {
-            await viewModel.selectConversation(conversationID)
+            let (hasUnread, needsSelection, isMessageCacheEmpty) = await MainActor.run {
+                let unread = (viewModel.conversations.first(where: { $0.conversationId == conversationID })?.unreadCount ?? 0) > 0
+                let needsSelect = viewModel.selectedConversationID != conversationID
+                let cacheEmpty = viewModel.messages(for: conversationID).isEmpty
+                return (unread, needsSelect, cacheEmpty)
+            }
+
+            if needsSelection || isMessageCacheEmpty || hasUnread {
+                await viewModel.selectConversation(conversationID)
+            } else {
+                await viewModel.markCurrentAsSeen()
+            }
         }
     }
 }
 
 private struct NoConversationView: View {
-    var message: String = "Select a chat from the sidebar to start messaging."
+    var message: String = String(localized: "Select a chat from the sidebar to start messaging.")
 
     var body: some View {
         VStack(spacing: PingySpacing.lg) {
@@ -422,7 +448,7 @@ private struct NoConversationView: View {
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-            Text("No active chat")
+            Text(String(localized: "No active chat"))
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
@@ -529,7 +555,7 @@ struct ConversationRowView: View {
         }
 
         guard let body = conversation.lastMessageBody else {
-            return "No messages yet"
+            return String(localized: "No messages yet")
         }
 
         return MessageBodyFormatter.previewText(

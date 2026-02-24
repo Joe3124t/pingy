@@ -574,11 +574,21 @@ final class MessengerViewModel: ObservableObject {
             return
         }
 
-        let hasUnread = conversations.first(where: { $0.conversationId == conversationID })?.unreadCount ?? 0 > 0
+        let conversationSnapshot = conversations.first(where: { $0.conversationId == conversationID })
+        let hasUnread = (conversationSnapshot?.unreadCount ?? 0) > 0
+        let cachedMessages = messagesByConversation[conversationID] ?? []
+        let expectedLastMessageID = conversationSnapshot?
+            .lastMessageId?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isMissingConversationTail =
+            !expectedLastMessageID.isEmpty &&
+            !cachedMessages.contains(where: { $0.id == expectedLastMessageID })
+        let shouldForceRefresh = hasUnread || cachedMessages.isEmpty || isMissingConversationTail
+
         socketManager.joinConversation(conversationID)
         _ = await loadMessages(
             conversationID: conversationID,
-            force: hasUnread,
+            force: shouldForceRefresh,
             suppressNetworkAlert: true
         )
         await ensureConversationTailIsSynced(conversationID: conversationID)

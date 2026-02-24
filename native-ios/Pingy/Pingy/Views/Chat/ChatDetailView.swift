@@ -25,6 +25,7 @@ struct ChatDetailView: View {
     @State private var shouldScrollToInitialPosition = true
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
+    @State private var chatOpenedAt: Date = .distantPast
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
@@ -58,6 +59,7 @@ struct ChatDetailView: View {
             draft = ""
             shouldScrollToInitialPosition = true
             bottomAnchorY = .greatestFiniteMagnitude
+            chatOpenedAt = Date()
             Task {
                 _ = await viewModel.loadMessages(
                     conversationID: conversation.conversationId,
@@ -338,14 +340,21 @@ struct ChatDetailView: View {
                     .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
                         bottomAnchorY = value
                     }
-                    .onChange(of: viewModel.activeMessages.count) { _ in
-                        performInitialScrollIfNeeded(using: reader)
-
-                        if shouldAutoScrollToLatest {
+                    .onChange(of: renderedMessages.count) { _ in
+                        if shouldScrollToInitialPosition {
+                            performInitialScrollIfNeeded(using: reader)
+                        } else if shouldAutoScrollToLatest {
                             scrollToLatest(using: reader, animated: true)
                         }
 
                         Task { await viewModel.markCurrentAsSeen() }
+                    }
+                    .onChange(of: renderedMessages.last?.id) { _ in
+                        if shouldScrollToInitialPosition {
+                            performInitialScrollIfNeeded(using: reader)
+                        } else if shouldAutoScrollToLatest {
+                            scrollToLatest(using: reader, animated: true)
+                        }
                     }
                     .onChange(of: isComposerFocused) { focused in
                         if focused {
@@ -549,7 +558,7 @@ struct ChatDetailView: View {
     }
 
     private var renderedMessages: [Message] {
-        viewModel.activeMessages
+        viewModel.messages(for: conversation.conversationId)
     }
 
     private var isNearBottom: Bool {
@@ -562,6 +571,9 @@ struct ChatDetailView: View {
     }
 
     private var shouldAutoScrollToLatest: Bool {
+        if Date().timeIntervalSince(chatOpenedAt) < 2 {
+            return true
+        }
         if isNearBottom {
             return true
         }
@@ -571,13 +583,17 @@ struct ChatDetailView: View {
 
     private func performInitialScrollIfNeeded(using reader: ScrollViewProxy) {
         guard shouldScrollToInitialPosition else { return }
-        guard !renderedMessages.isEmpty else { return }
+        guard let lastID = renderedMessages.last?.id else { return }
 
         shouldScrollToInitialPosition = false
 
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.22)) {
-                if let lastID = renderedMessages.last?.id {
+            reader.scrollTo(lastID, anchor: .bottom)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                reader.scrollTo(lastID, anchor: .bottom)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                withAnimation(.easeOut(duration: 0.18)) {
                     reader.scrollTo(lastID, anchor: .bottom)
                 }
             }
