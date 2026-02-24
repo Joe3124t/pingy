@@ -63,13 +63,11 @@ struct ChatDetailView: View {
             bottomAnchorY = .greatestFiniteMagnitude
             chatOpenedAt = Date()
             Task {
-                _ = await viewModel.loadMessages(
-                    conversationID: conversation.conversationId,
-                    force: false,
-                    suppressNetworkAlert: true
-                )
-                await viewModel.resyncConversationOnOpen(conversationID: conversation.conversationId)
-                await viewModel.markCurrentAsSeen()
+                if viewModel.selectedConversationID != conversation.conversationId {
+                    await viewModel.selectConversation(conversation.conversationId)
+                } else {
+                    await viewModel.markCurrentAsSeen()
+                }
             }
         }
         .onDisappear {

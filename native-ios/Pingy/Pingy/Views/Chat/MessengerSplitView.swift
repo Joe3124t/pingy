@@ -44,8 +44,12 @@ private struct MessengerCompactContainer: View {
             ConversationListContent(
                 viewModel: viewModel,
                 onSelectConversation: { conversation in
-                    if path.last != conversation.conversationId {
-                        path.append(conversation.conversationId)
+                    let conversationID = conversation.conversationId
+                    if path.last != conversationID {
+                        path.append(conversationID)
+                    }
+                    Task {
+                        await viewModel.selectConversation(conversationID)
                     }
                 },
                 onSelectSearchUser: { user in
@@ -421,18 +425,7 @@ private struct ConversationDetailHost: View {
             }
         }
         .task(id: conversationID) {
-            let (hasUnread, needsSelection, isMessageCacheEmpty) = await MainActor.run {
-                let unread = (viewModel.conversations.first(where: { $0.conversationId == conversationID })?.unreadCount ?? 0) > 0
-                let needsSelect = viewModel.selectedConversationID != conversationID
-                let cacheEmpty = viewModel.messages(for: conversationID).isEmpty
-                return (unread, needsSelect, cacheEmpty)
-            }
-
-            if needsSelection || isMessageCacheEmpty || hasUnread {
-                await viewModel.selectConversation(conversationID)
-            } else {
-                await viewModel.markCurrentAsSeen()
-            }
+            await viewModel.selectConversation(conversationID)
         }
     }
 }

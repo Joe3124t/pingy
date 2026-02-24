@@ -13,7 +13,9 @@ final class MessageService {
         beforeISO: String? = nil,
         afterISO: String? = nil
     ) async throws -> [Message] {
-        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        // Keep list limit compatible with older backends that validate query limit <= 100.
+        let safeLimit = min(max(limit, 1), 100)
+        var queryItems = [URLQueryItem(name: "limit", value: String(safeLimit))]
         if let beforeISO {
             queryItems.append(URLQueryItem(name: "before", value: beforeISO))
         }
