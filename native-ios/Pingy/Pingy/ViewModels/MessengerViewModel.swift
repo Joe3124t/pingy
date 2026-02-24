@@ -502,7 +502,7 @@ final class MessengerViewModel: ObservableObject {
             pinnedConversationIDs.remove(conversationID)
         } else {
             if pinnedConversationIDs.count >= 5 {
-                activeError = "You can pin up to 5 chats."
+                activeError = String(localized: "You can pin up to 5 chats.")
                 return
             }
             pinnedConversationIDs.insert(conversationID)
@@ -574,8 +574,13 @@ final class MessengerViewModel: ObservableObject {
             return
         }
 
+        let hasUnread = conversations.first(where: { $0.conversationId == conversationID })?.unreadCount ?? 0 > 0
         socketManager.joinConversation(conversationID)
-        _ = await loadMessages(conversationID: conversationID)
+        _ = await loadMessages(
+            conversationID: conversationID,
+            force: hasUnread,
+            suppressNetworkAlert: true
+        )
         await ensureConversationTailIsSynced(conversationID: conversationID)
     }
 
@@ -734,27 +739,46 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func ensureConversationTailIsSynced(conversationID: String) async {
-        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
-            return
-        }
+        let maxAttempts = 4
+        var attempt = 0
 
-        guard let expectedLastMessageID = conversation.lastMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !expectedLastMessageID.isEmpty
-        else {
-            return
-        }
+        while attempt < maxAttempts {
+            attempt += 1
 
-        let currentMessages = messagesByConversation[conversationID] ?? []
-        if currentMessages.contains(where: { $0.id == expectedLastMessageID }) {
-            return
-        }
+            guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
+                return
+            }
 
-        _ = await refreshMessagesFromServer(
-            conversationID: conversationID,
-            suppressNetworkAlert: true,
-            showLoading: false,
-            limit: 280
-        )
+            guard let expectedLastMessageID = conversation.lastMessageId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !expectedLastMessageID.isEmpty
+            else {
+                return
+            }
+
+            let currentMessages = messagesByConversation[conversationID] ?? []
+            if currentMessages.contains(where: { $0.id == expectedLastMessageID }) {
+                return
+            }
+
+            let synced = await refreshMessagesFromServer(
+                conversationID: conversationID,
+                suppressNetworkAlert: true,
+                showLoading: false,
+                limit: 320
+            )
+
+            let refreshedMessages = messagesByConversation[conversationID] ?? []
+            if refreshedMessages.contains(where: { $0.id == expectedLastMessageID }) {
+                return
+            }
+
+            if !synced && !isInternetReachable {
+                return
+            }
+
+            let delay = UInt64(min(300 * attempt, 1200)) * 1_000_000
+            try? await Task.sleep(nanoseconds: delay)
+        }
     }
 
     func searchUsers() async {
@@ -961,6 +985,7 @@ final class MessengerViewModel: ObservableObject {
 
         guard !unseenIDs.isEmpty else { return }
 
+        markConversationRead(conversationID)
         socketManager.sendSeen(conversationId: conversationID, messageIds: unseenIDs)
         do {
             try await messageService.markSeen(conversationID: conversationID, messageIDs: unseenIDs)
@@ -2210,17 +2235,18 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func formattedDuration(_ totalSeconds: Int) -> String {
-        let hours = totalSeconds / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        let seconds = totalSeconds % 60
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.zeroFormattingBehavior = [.dropLeading]
+        formatter.maximumUnitCount = 3
+        formatter.calendar = .autoupdatingCurrent
 
-        if hours > 0 {
-            return "\(hours)h \(minutes)m \(seconds)s"
+        if let formatted = formatter.string(from: TimeInterval(max(0, totalSeconds))), !formatted.isEmpty {
+            return formatted
         }
-        if minutes > 0 {
-            return "\(minutes)m \(seconds)s"
-        }
-        return "\(seconds)s"
+
+        return "\(max(0, totalSeconds))"
     }
 
     private func notifyIncomingMessageIfNeeded(_ message: Message) {

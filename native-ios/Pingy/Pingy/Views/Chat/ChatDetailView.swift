@@ -59,7 +59,11 @@ struct ChatDetailView: View {
             shouldScrollToInitialPosition = true
             bottomAnchorY = .greatestFiniteMagnitude
             Task {
-                await viewModel.loadMessages(conversationID: conversation.conversationId)
+                _ = await viewModel.loadMessages(
+                    conversationID: conversation.conversationId,
+                    force: true,
+                    suppressNetworkAlert: true
+                )
                 await viewModel.markCurrentAsSeen()
             }
         }
@@ -548,12 +552,6 @@ struct ChatDetailView: View {
         viewModel.activeMessages
     }
 
-    private var firstUnreadMessageID: String? {
-        renderedMessages.first(where: { message in
-            message.senderId != viewModel.currentUserID && message.seenAt == nil
-        })?.id
-    }
-
     private var isNearBottom: Bool {
         guard scrollViewportHeight > 0 else { return true }
         return bottomAnchorY <= (scrollViewportHeight + 28)
@@ -579,9 +577,7 @@ struct ChatDetailView: View {
 
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.22)) {
-                if let firstUnreadMessageID {
-                    reader.scrollTo(firstUnreadMessageID, anchor: .top)
-                } else if let lastID = renderedMessages.last?.id {
+                if let lastID = renderedMessages.last?.id {
                     reader.scrollTo(lastID, anchor: .bottom)
                 }
             }

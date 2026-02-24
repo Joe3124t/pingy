@@ -22,8 +22,73 @@ final class MessageService {
             method: .get,
             queryItems: queryItems
         )
-        let response: MessageListResponse = try await authService.authorizedRequest(endpoint, as: MessageListResponse.self)
-        return response.messages
+        let rawData = try await authService.authorizedRawData(endpoint)
+        guard !rawData.isEmpty else {
+            throw APIError.decodingError
+        }
+
+        do {
+            let response = try JSONDecoder().decode(MessageListResponse.self, from: rawData)
+            return response.messages
+        } catch {
+            if let lossy = decodeMessagesLossy(from: rawData), !lossy.isEmpty {
+                AppLogger.error(
+                    "Message list used lossy decoding for conversation \(conversationID)."
+                )
+                return lossy
+            }
+
+            AppLogger.error(
+                "Failed to decode message list for conversation \(conversationID): \(error.localizedDescription)"
+            )
+            throw APIError.decodingError
+        }
+    }
+
+    private func decodeMessagesLossy(from data: Data) -> [Message]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data, options: []),
+              let object = root as? [String: Any],
+              let rawMessages = object["messages"] as? [Any]
+        else {
+            return nil
+        }
+
+        var decoded: [Message] = []
+        let decoder = JSONDecoder()
+
+        for (index, raw) in rawMessages.enumerated() {
+            if let message = decodeSingleMessage(raw, decoder: decoder) {
+                decoded.append(message)
+                continue
+            }
+            AppLogger.error("Skipping malformed message at index \(index).")
+        }
+
+        if !rawMessages.isEmpty, decoded.isEmpty {
+            return nil
+        }
+
+        return decoded
+    }
+
+    private func decodeSingleMessage(_ raw: Any, decoder: JSONDecoder) -> Message? {
+        if JSONSerialization.isValidJSONObject(raw),
+           let rawData = try? JSONSerialization.data(withJSONObject: raw, options: []),
+           let message = try? decoder.decode(Message.self, from: rawData)
+        {
+            return message
+        }
+
+        if let envelope = raw as? [String: Any],
+           let nested = envelope["message"],
+           JSONSerialization.isValidJSONObject(nested),
+           let nestedData = try? JSONSerialization.data(withJSONObject: nested, options: []),
+           let message = try? decoder.decode(Message.self, from: nestedData)
+        {
+            return message
+        }
+
+        return nil
     }
 
     func sendTextMessage(

@@ -379,16 +379,32 @@ final class SocketIOWebSocketManager: ObservableObject {
         do {
             switch eventName {
             case "message:new":
-                let value: Message = try decodePayload(payload, as: Message.self)
+                let value: Message = try decodePayloadWithFallback(
+                    payload,
+                    as: Message.self,
+                    wrappedKeys: ["message", "data"]
+                )
                 onEvent?(.messageNew(value))
             case "message:delivered":
-                let value: MessageLifecycleUpdate = try decodePayload(payload, as: MessageLifecycleUpdate.self)
+                let value: MessageLifecycleUpdate = try decodePayloadWithFallback(
+                    payload,
+                    as: MessageLifecycleUpdate.self,
+                    wrappedKeys: ["update", "data"]
+                )
                 onEvent?(.messageDelivered(value))
             case "message:seen":
-                let value: MessageLifecycleUpdate = try decodePayload(payload, as: MessageLifecycleUpdate.self)
+                let value: MessageLifecycleUpdate = try decodePayloadWithFallback(
+                    payload,
+                    as: MessageLifecycleUpdate.self,
+                    wrappedKeys: ["update", "data"]
+                )
                 onEvent?(.messageSeen(value))
             case "message:reaction":
-                let value: ReactionUpdate = try decodePayload(payload, as: ReactionUpdate.self)
+                let value: ReactionUpdate = try decodePayloadWithFallback(
+                    payload,
+                    as: ReactionUpdate.self,
+                    wrappedKeys: ["update", "data"]
+                )
                 onEvent?(.messageReaction(value))
             case "typing:start":
                 let value: TypingEvent = try decodePayload(payload, as: TypingEvent.self)
@@ -443,6 +459,29 @@ final class SocketIOWebSocketManager: ObservableObject {
     private func decodePayload<T: Decodable>(_ payload: Any, as type: T.Type) throws -> T {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [])
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func decodePayloadWithFallback<T: Decodable>(
+        _ payload: Any,
+        as type: T.Type,
+        wrappedKeys: [String]
+    ) throws -> T {
+        do {
+            return try decodePayload(payload, as: type)
+        } catch {
+            guard let object = payload as? [String: Any] else {
+                throw error
+            }
+
+            for key in wrappedKeys {
+                guard let nested = object[key] else { continue }
+                if let decoded: T = try? decodePayload(nested, as: type) {
+                    return decoded
+                }
+            }
+
+            throw error
+        }
     }
 
     private func sendRaw(_ value: String) async throws {
