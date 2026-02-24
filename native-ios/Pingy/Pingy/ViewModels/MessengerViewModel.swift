@@ -625,7 +625,6 @@ final class MessengerViewModel: ObservableObject {
            let cachedMessages = messagesByConversation[conversationID],
            !cachedMessages.isEmpty
         {
-            await markCurrentAsSeen()
             let shouldForceFullRefresh = shouldForceRefreshCachedConversation(
                 conversationID: conversationID,
                 cachedMessages: cachedMessages
@@ -751,7 +750,7 @@ final class MessengerViewModel: ObservableObject {
         fallbackToFullFetch: Bool
     ) async -> Bool {
         let existingMessages = messagesByConversation[conversationID] ?? []
-        guard let afterISO = existingMessages.last?.createdAt,
+        guard let afterISO = latestServerCreatedAt(in: existingMessages),
               !afterISO.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             if fallbackToFullFetch {
@@ -839,6 +838,20 @@ final class MessengerViewModel: ObservableObject {
             return true
         }
 
+        if let expectedTailISO =
+            conversation.lastMessageCreatedAt ??
+            conversation.lastMessageAt ??
+            conversation.updatedAt,
+           let expectedTailDate = parseServerTimestamp(expectedTailISO)
+        {
+            guard let mergedTailDate = latestServerDate(in: mergedMessages) else {
+                return true
+            }
+            if expectedTailDate > mergedTailDate {
+                return true
+            }
+        }
+
         if conversation.unreadCount > 0 && selectedConversationID == conversationID {
             return true
         }
@@ -868,18 +881,48 @@ final class MessengerViewModel: ObservableObject {
             return true
         }
 
-        let latestCachedCreatedAt = cachedMessages.last?.createdAt ?? ""
         let latestConversationCreatedAt =
             conversation.lastMessageCreatedAt
             ?? conversation.lastMessageAt
             ?? conversation.updatedAt
-            ?? ""
 
-        if !latestConversationCreatedAt.isEmpty, latestConversationCreatedAt > latestCachedCreatedAt {
-            return true
+        if let latestConversationCreatedAt,
+           let latestConversationDate = parseServerTimestamp(latestConversationCreatedAt)
+        {
+            guard let latestCachedDate = latestServerDate(in: cachedMessages) else {
+                return true
+            }
+            if latestConversationDate > latestCachedDate {
+                return true
+            }
         }
 
         return false
+    }
+
+    private func latestServerCreatedAt(in messages: [Message]) -> String? {
+        messages
+            .filter { !$0.id.hasPrefix("local-") }
+            .max { lhs, rhs in
+                compareMessageCreatedAt(lhs.createdAt, rhs.createdAt) == .orderedAscending
+            }?
+            .createdAt
+    }
+
+    private func latestServerDate(in messages: [Message]) -> Date? {
+        guard let createdAt = latestServerCreatedAt(in: messages) else { return nil }
+        return parseServerTimestamp(createdAt)
+    }
+
+    private func compareMessageCreatedAt(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        if let lhsDate = parseServerTimestamp(lhs),
+           let rhsDate = parseServerTimestamp(rhs)
+        {
+            if lhsDate == rhsDate { return .orderedSame }
+            return lhsDate < rhsDate ? .orderedAscending : .orderedDescending
+        }
+        if lhs == rhs { return .orderedSame }
+        return lhs < rhs ? .orderedAscending : .orderedDescending
     }
 
     private func ensureConversationTailIsSynced(conversationID: String) async {

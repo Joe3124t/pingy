@@ -23,6 +23,7 @@ struct ChatDetailView: View {
     @State private var mediaViewerState: ChatMediaViewerState?
     @State private var isMicGestureActive = false
     @State private var shouldScrollToInitialPosition = true
+    @State private var pendingInitialJumpToLatest = false
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
     @State private var chatOpenedAt: Date = .distantPast
@@ -58,6 +59,7 @@ struct ChatDetailView: View {
             }
             draft = ""
             shouldScrollToInitialPosition = true
+            pendingInitialJumpToLatest = true
             bottomAnchorY = .greatestFiniteMagnitude
             chatOpenedAt = Date()
             Task {
@@ -342,20 +344,12 @@ struct ChatDetailView: View {
                         bottomAnchorY = value
                     }
                     .onChange(of: renderedMessages.count) { _ in
-                        if shouldScrollToInitialPosition {
-                            performInitialScrollIfNeeded(using: reader)
-                        } else if shouldAutoScrollToLatest {
-                            scrollToLatest(using: reader, animated: true)
-                        }
+                        handleMessageListChange(using: reader)
 
                         Task { await viewModel.markCurrentAsSeen() }
                     }
                     .onChange(of: renderedMessages.last?.id) { _ in
-                        if shouldScrollToInitialPosition {
-                            performInitialScrollIfNeeded(using: reader)
-                        } else if shouldAutoScrollToLatest {
-                            scrollToLatest(using: reader, animated: true)
-                        }
+                        handleMessageListChange(using: reader)
                     }
                     .onChange(of: isComposerFocused) { focused in
                         if focused {
@@ -572,7 +566,10 @@ struct ChatDetailView: View {
     }
 
     private var shouldAutoScrollToLatest: Bool {
-        if Date().timeIntervalSince(chatOpenedAt) < 2 {
+        if pendingInitialJumpToLatest {
+            return true
+        }
+        if Date().timeIntervalSince(chatOpenedAt) < 8 {
             return true
         }
         if isNearBottom {
@@ -598,6 +595,24 @@ struct ChatDetailView: View {
                     reader.scrollTo(lastID, anchor: .bottom)
                 }
             }
+        }
+    }
+
+    private func handleMessageListChange(using reader: ScrollViewProxy) {
+        if pendingInitialJumpToLatest {
+            pendingInitialJumpToLatest = false
+            shouldScrollToInitialPosition = false
+            scrollToLatest(using: reader, animated: false)
+            return
+        }
+
+        if shouldScrollToInitialPosition {
+            performInitialScrollIfNeeded(using: reader)
+            return
+        }
+
+        if shouldAutoScrollToLatest {
+            scrollToLatest(using: reader, animated: true)
         }
     }
 
