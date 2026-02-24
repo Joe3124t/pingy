@@ -209,7 +209,13 @@ const createMessage = async ({
   };
 };
 
-const listMessages = async ({ userId, conversationId, limit = 40, before = null }) => {
+const listMessages = async ({
+  userId,
+  conversationId,
+  limit = 40,
+  before = null,
+  after = null,
+}) => {
   const result = await query(
     `
       SELECT *
@@ -256,12 +262,13 @@ const listMessages = async ({ userId, conversationId, limit = 40, before = null 
           AND m.deleted_for_everyone_at IS NULL
           AND (cp.deleted_at IS NULL OR m.created_at > cp.deleted_at)
           AND ($3::timestamptz IS NULL OR m.created_at < $3)
+          AND ($4::timestamptz IS NULL OR m.created_at >= $4)
         ORDER BY m.created_at DESC
-        LIMIT $4
+        LIMIT $5
       ) recent
       ORDER BY recent."createdAt" ASC
     `,
-    [userId, conversationId, before, limit],
+    [userId, conversationId, before, after, limit],
   );
 
   return result.rows.map(normalizeMessageRow);

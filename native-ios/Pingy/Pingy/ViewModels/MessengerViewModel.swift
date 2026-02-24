@@ -591,6 +591,27 @@ final class MessengerViewModel: ObservableObject {
             force: shouldForceRefresh,
             suppressNetworkAlert: true
         )
+        await resyncConversationOnOpen(conversationID: conversationID)
+    }
+
+    func resyncConversationOnOpen(conversationID: String) async {
+        if let conversation = conversations.first(where: { $0.conversationId == conversationID }),
+           conversation.unreadCount > 0,
+           (messagesByConversation[conversationID] ?? []).isEmpty
+        {
+            _ = await refreshMessagesFromServer(
+                conversationID: conversationID,
+                suppressNetworkAlert: true,
+                showLoading: true,
+                limit: 360
+            )
+        }
+
+        _ = await syncMessagesAfterLastKnownTimestamp(
+            conversationID: conversationID,
+            suppressNetworkAlert: true,
+            fallbackToFullFetch: true
+        )
         await ensureConversationTailIsSynced(conversationID: conversationID)
     }
 
@@ -605,19 +626,28 @@ final class MessengerViewModel: ObservableObject {
            !cachedMessages.isEmpty
         {
             await markCurrentAsSeen()
-            if shouldForceRefreshCachedConversation(
+            let shouldForceFullRefresh = shouldForceRefreshCachedConversation(
                 conversationID: conversationID,
                 cachedMessages: cachedMessages
-            ) {
+            )
+
+            let syncedIncremental = await syncMessagesAfterLastKnownTimestamp(
+                conversationID: conversationID,
+                suppressNetworkAlert: true,
+                fallbackToFullFetch: shouldForceFullRefresh
+            )
+
+            if shouldForceFullRefresh && !syncedIncremental {
                 messageRefreshTasks[conversationID]?.cancel()
                 messageRefreshTasks[conversationID] = nil
                 return await refreshMessagesFromServer(
                     conversationID: conversationID,
                     suppressNetworkAlert: true,
                     showLoading: false,
-                    limit: 240
+                    limit: 300
                 )
             }
+
             scheduleBackgroundMessageRefresh(
                 conversationID: conversationID,
                 suppressNetworkAlert: true
@@ -662,7 +692,8 @@ final class MessengerViewModel: ObservableObject {
         conversationID: String,
         suppressNetworkAlert: Bool,
         showLoading: Bool,
-        limit: Int
+        limit: Int,
+        afterISO: String? = nil
     ) async -> Bool {
         if showLoading {
             isLoadingMessages = true
@@ -676,7 +707,8 @@ final class MessengerViewModel: ObservableObject {
         do {
             let messages = try await messageService.listMessages(
                 conversationID: conversationID,
-                limit: max(limit, 40)
+                limit: max(limit, 40),
+                afterISO: afterISO
             )
             let serverMessages = sortMessagesChronologically(messages)
             let existingMessages = messagesByConversation[conversationID] ?? []
@@ -710,6 +742,108 @@ final class MessengerViewModel: ObservableObject {
             setError(from: error)
             return false
         }
+    }
+
+    @discardableResult
+    private func syncMessagesAfterLastKnownTimestamp(
+        conversationID: String,
+        suppressNetworkAlert: Bool,
+        fallbackToFullFetch: Bool
+    ) async -> Bool {
+        let existingMessages = messagesByConversation[conversationID] ?? []
+        guard let afterISO = existingMessages.last?.createdAt,
+              !afterISO.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            if fallbackToFullFetch {
+                return await refreshMessagesFromServer(
+                    conversationID: conversationID,
+                    suppressNetworkAlert: suppressNetworkAlert,
+                    showLoading: false,
+                    limit: 220
+                )
+            }
+            return true
+        }
+
+        do {
+            let fetched = try await messageService.listMessages(
+                conversationID: conversationID,
+                limit: 220,
+                afterISO: afterISO
+            )
+            let serverMessages = sortMessagesChronologically(fetched)
+            let mergedMessages = mergeMessagesKeepingHistory(
+                existing: existingMessages,
+                incoming: serverMessages
+            )
+
+            messagesByConversation[conversationID] = mergedMessages
+            for message in mergedMessages where message.isEncrypted && message.type == .text {
+                scheduleEncryptedMessageDecryptionIfNeeded(message)
+            }
+            persistMessagesCache()
+
+            if selectedConversationID == conversationID {
+                await markCurrentAsSeen()
+            }
+
+            if fallbackToFullFetch,
+               shouldRunFullResyncAfterIncremental(
+                   conversationID: conversationID,
+                   mergedMessages: mergedMessages,
+                   fetchedMessages: serverMessages
+               )
+            {
+                return await refreshMessagesFromServer(
+                    conversationID: conversationID,
+                    suppressNetworkAlert: suppressNetworkAlert,
+                    showLoading: false,
+                    limit: 360
+                )
+            }
+
+            return true
+        } catch {
+            if suppressNetworkAlert {
+                AppLogger.debug("Suppressing incremental sync alert for \(conversationID): \(error.localizedDescription)")
+                return false
+            }
+            if isTransientNetworkError(error) || isLikelyOfflineError(error) {
+                AppLogger.debug("Keeping cached messages for \(conversationID) due incremental sync failure.")
+                return false
+            }
+            setError(from: error)
+            return false
+        }
+    }
+
+    private func shouldRunFullResyncAfterIncremental(
+        conversationID: String,
+        mergedMessages: [Message],
+        fetchedMessages: [Message]
+    ) -> Bool {
+        if !fetchedMessages.isEmpty {
+            return false
+        }
+
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else {
+            return false
+        }
+
+        let expectedLastMessageID = conversation.lastMessageId?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if !expectedLastMessageID.isEmpty,
+           !mergedMessages.contains(where: { $0.id == expectedLastMessageID })
+        {
+            return true
+        }
+
+        if conversation.unreadCount > 0 && selectedConversationID == conversationID {
+            return true
+        }
+
+        return false
     }
 
     private func shouldForceRefreshCachedConversation(
@@ -2426,15 +2560,7 @@ final class MessengerViewModel: ObservableObject {
     private func performReconnectSync() async -> Bool {
         let conversationsSynced = await loadConversations(silent: true)
         let settingsSynced = await loadSettings(silent: true)
-
-        var messagesSynced = true
-        if let selectedConversationID {
-            messagesSynced = await loadMessages(
-                conversationID: selectedConversationID,
-                force: true,
-                suppressNetworkAlert: true
-            )
-        }
+        let messagesSynced = await resyncAllConversationsAfterReconnect()
 
         var queueSynced = true
         if !pendingTextQueue.isEmpty {
@@ -2452,6 +2578,34 @@ final class MessengerViewModel: ObservableObject {
             && queueSynced
             && isInternetReachable
             && isSocketConnected
+    }
+
+    private func resyncAllConversationsAfterReconnect() async -> Bool {
+        let conversationIDs = conversations.map(\.conversationId)
+        var allSynced = true
+
+        for conversationID in conversationIDs {
+            let synced = await syncMessagesAfterLastKnownTimestamp(
+                conversationID: conversationID,
+                suppressNetworkAlert: true,
+                fallbackToFullFetch: conversationID == selectedConversationID
+            )
+            allSynced = allSynced && synced
+        }
+
+        if let selectedConversationID,
+           messagesByConversation[selectedConversationID] == nil
+        {
+            let selectedLoaded = await refreshMessagesFromServer(
+                conversationID: selectedConversationID,
+                suppressNetworkAlert: true,
+                showLoading: false,
+                limit: 320
+            )
+            allSynced = allSynced && selectedLoaded
+        }
+
+        return allSynced
     }
 
     private func scheduleReconnectSyncRetry() {

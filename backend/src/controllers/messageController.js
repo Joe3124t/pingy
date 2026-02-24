@@ -5,7 +5,6 @@ const {
   createConversationMessage,
   listConversationMessages,
   markConversationSeenForUser,
-  markDeliveredIfRecipientOnline,
   sendPushToRecipientIfOffline,
 } = require('../services/messageService');
 const { toggleReactionForMessage } = require('../services/messageReactionService');
@@ -36,13 +35,14 @@ const emitSeenUpdates = (io, updates) => {
 
 const listMessages = asyncHandler(async (req, res) => {
   const { conversationId } = req.params;
-  const { limit = 40, before } = req.query;
+  const { limit = 40, before, after } = req.query;
 
   const messages = await listConversationMessages({
     userId: req.user.id,
     conversationId,
     limit,
     before: before ? new Date(before).toISOString() : null,
+    after: after ? new Date(after).toISOString() : null,
   });
 
   res.status(200).json({
@@ -63,11 +63,9 @@ const sendTextMessage = asyncHandler(async (req, res) => {
     clientId,
   });
 
-  const deliveredUpdates = await markDeliveredIfRecipientOnline(message);
   const io = req.app.locals.io;
 
   emitMessageCreated(io, message);
-  emitDeliveredUpdates(io, deliveredUpdates);
   await sendPushToRecipientIfOffline(message);
 
   res.status(201).json({
@@ -111,11 +109,9 @@ const sendUploadedMessage = asyncHandler(async (req, res) => {
     clientId,
   });
 
-  const deliveredUpdates = await markDeliveredIfRecipientOnline(message);
   const io = req.app.locals.io;
 
   emitMessageCreated(io, message);
-  emitDeliveredUpdates(io, deliveredUpdates);
   await sendPushToRecipientIfOffline(message);
 
   res.status(201).json({

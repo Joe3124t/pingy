@@ -10,11 +10,15 @@ final class MessageService {
     func listMessages(
         conversationID: String,
         limit: Int = 120,
-        beforeISO: String? = nil
+        beforeISO: String? = nil,
+        afterISO: String? = nil
     ) async throws -> [Message] {
         var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
         if let beforeISO {
             queryItems.append(URLQueryItem(name: "before", value: beforeISO))
+        }
+        if let afterISO {
+            queryItems.append(URLQueryItem(name: "after", value: afterISO))
         }
 
         let endpoint = Endpoint(

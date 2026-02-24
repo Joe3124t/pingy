@@ -14,6 +14,7 @@ const messageIdParamsSchema = z.object({
 const listMessagesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(40),
   before: z.string().datetime({ offset: true }).optional(),
+  after: z.string().datetime({ offset: true }).optional(),
 });
 
 const markSeenSchema = z.object({

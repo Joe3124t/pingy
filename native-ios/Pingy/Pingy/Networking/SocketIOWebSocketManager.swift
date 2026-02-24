@@ -384,6 +384,7 @@ final class SocketIOWebSocketManager: ObservableObject {
                     as: Message.self,
                     wrappedKeys: ["message", "data"]
                 )
+                acknowledgeDeliveryIfNeeded(for: value)
                 onEvent?(.messageNew(value))
             case "message:delivered":
                 let value: MessageLifecycleUpdate = try decodePayloadWithFallback(
@@ -601,6 +602,31 @@ final class SocketIOWebSocketManager: ObservableObject {
                     let waitMs = min(300 * attempt, 2000)
                     try? await Task.sleep(nanoseconds: UInt64(waitMs) * 1_000_000)
                 }
+            }
+        }
+    }
+
+    private func acknowledgeDeliveryIfNeeded(for message: Message) {
+        guard let myUserID = authService.sessionStore.currentUser?.id else { return }
+        guard message.recipientId == myUserID else { return }
+
+        struct AckPayload: Encodable {
+            let conversationId: String
+            let messageId: String
+        }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.emit(
+                    event: "message:ack",
+                    payload: AckPayload(
+                        conversationId: message.conversationId,
+                        messageId: message.id
+                    )
+                )
+            } catch {
+                AppLogger.error("message:ack failed for \(message.id): \(error.localizedDescription)")
             }
         }
     }

@@ -136,7 +136,13 @@ const createConversationMessage = async ({
   return message;
 };
 
-const listConversationMessages = async ({ userId, conversationId, limit, before }) => {
+const listConversationMessages = async ({
+  userId,
+  conversationId,
+  limit,
+  before,
+  after,
+}) => {
   await assertConversationAccess({ conversationId, userId });
 
   return listMessages({
@@ -144,6 +150,7 @@ const listConversationMessages = async ({ userId, conversationId, limit, before 
     conversationId,
     limit,
     before,
+    after,
   });
 };
 

@@ -69,7 +69,7 @@ struct SettingsHubView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Settings")
+        .navigationTitle(String(localized: "Settings"))
     }
 
     private var profileHeaderRow: some View {
@@ -82,11 +82,11 @@ struct SettingsHubView: View {
             )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(messengerViewModel.currentUserSettings?.username ?? "Pingy User")
+                Text(messengerViewModel.currentUserSettings?.username ?? String(localized: "Pingy User"))
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
 
-                Text(messengerViewModel.currentUserSettings?.bio?.isEmpty == false ? messengerViewModel.currentUserSettings?.bio ?? "" : "Open profile")
+                Text(messengerViewModel.currentUserSettings?.bio?.isEmpty == false ? messengerViewModel.currentUserSettings?.bio ?? "" : String(localized: "Open profile"))
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
                     .lineLimit(1)
@@ -98,7 +98,7 @@ struct SettingsHubView: View {
     }
 
     private var appVersionString: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.7.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "3.7.4"
     }
 }
 
@@ -113,7 +113,7 @@ private struct SettingsSectionRow: View {
                 .foregroundStyle(PingyTheme.primaryStrong)
                 .frame(width: 24)
 
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 

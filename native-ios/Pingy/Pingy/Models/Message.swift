@@ -8,6 +8,14 @@ enum MessageType: String, Codable, CaseIterable {
     case voice
 }
 
+enum DeliveryState: String, Codable, CaseIterable {
+    case sending
+    case sent
+    case delivered
+    case read
+    case failed
+}
+
 struct MessageReply: Codable, Equatable {
     let id: String
     let senderId: String

@@ -17,7 +17,6 @@ const {
   markConversationSeenForUser,
   markAllDeliveredForUser,
   markConversationDeliveredForUser,
-  markDeliveredIfRecipientOnline,
   sendPushToRecipientIfOffline,
 } = require('../services/messageService');
 const { findConversationParticipants } = require('../models/conversationModel');
@@ -261,9 +260,6 @@ const createSocketServer = (server) => {
         });
 
         emitMessageCreated(io, message);
-
-        const deliveredUpdates = await markDeliveredIfRecipientOnline(message);
-        emitDeliveredUpdates(io, deliveredUpdates);
         await sendPushToRecipientIfOffline(message);
 
         if (typeof acknowledge === 'function') {
@@ -272,6 +268,33 @@ const createSocketServer = (server) => {
       } catch (error) {
         if (typeof acknowledge === 'function') {
           acknowledge({ ok: false, message: error.message || 'Message send failed' });
+        }
+      }
+    });
+
+    socket.on('message:ack', async (payload = {}, acknowledge) => {
+      try {
+        const conversationId = String(payload.conversationId || '').trim();
+        const messageId = String(payload.messageId || '').trim();
+
+        if (!conversationId || !messageId) {
+          throw new Error('conversationId and messageId are required');
+        }
+
+        const updates = await markConversationDeliveredForUser({
+          userId: user.id,
+          conversationId,
+          messageIds: [messageId],
+        });
+
+        emitDeliveredUpdates(io, updates);
+
+        if (typeof acknowledge === 'function') {
+          acknowledge({ ok: true, updates });
+        }
+      } catch (error) {
+        if (typeof acknowledge === 'function') {
+          acknowledge({ ok: false, message: error.message || 'Failed to acknowledge message' });
         }
       }
     });

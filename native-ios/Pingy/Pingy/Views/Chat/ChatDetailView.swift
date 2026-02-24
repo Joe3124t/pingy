@@ -63,9 +63,10 @@ struct ChatDetailView: View {
             Task {
                 _ = await viewModel.loadMessages(
                     conversationID: conversation.conversationId,
-                    force: true,
+                    force: false,
                     suppressNetworkAlert: true
                 )
+                await viewModel.resyncConversationOnOpen(conversationID: conversation.conversationId)
                 await viewModel.markCurrentAsSeen()
             }
         }
