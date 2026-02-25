@@ -57,7 +57,6 @@ final class ChatLockService {
         let normalized = passcode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
         guard let storedHash = try? keychain.string(for: passcodeKey(for: conversationID)),
-              let storedHash,
               !storedHash.isEmpty
         else {
             return false
@@ -70,7 +69,7 @@ final class ChatLockService {
         guard let value = try? keychain.string(for: passcodeKey(for: conversationID)) else {
             return false
         }
-        return !(value ?? "").isEmpty
+        return !value.isEmpty
     }
 
     private func enabledKey(for conversationID: String) -> String {
