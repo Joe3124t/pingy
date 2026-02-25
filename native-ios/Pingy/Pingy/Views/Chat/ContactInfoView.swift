@@ -14,6 +14,7 @@ struct ContactInfoView: View {
     @State private var showClearChatConfirm = false
     @State private var showReportConfirm = false
     @State private var showAvatarPreview = false
+    @State private var showEditActions = false
 
     private var muteKey: String {
         "pingy.chat.muted.\(conversation.conversationId)"
@@ -35,7 +36,9 @@ struct ContactInfoView: View {
         ScrollView {
             VStack(spacing: PingySpacing.md) {
                 headerSection
+                contactDetailsSection
                 quickActionsSection
+                commonGroupsSection
                 mediaSection
                 chatSettingsSection
                 actionsSection
@@ -48,14 +51,26 @@ struct ContactInfoView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("Contact info")
+                Text(contactDisplayName)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
                     .lineLimit(1)
             }
 
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 18, weight: .bold))
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") { dismiss() }
+                Button("Edit") {
+                    showEditActions = true
+                }
                     .buttonStyle(PingyPressableButtonStyle())
             }
         }
@@ -90,6 +105,21 @@ struct ContactInfoView: View {
         .confirmationDialog("Report this contact?", isPresented: $showReportConfirm) {
             Button("Report", role: .destructive) {
                 viewModel.showTransientNotice("Report sent. Thank you.", style: .success)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Edit contact", isPresented: $showEditActions) {
+            Button(isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                isFavorite.toggle()
+                PingyHaptics.softTap()
+            }
+            Button("Chat settings") {
+                viewModel.isChatSettingsPresented = true
+                dismiss()
+            }
+            Button(isMuted ? "Unmute notifications" : "Mute notifications") {
+                isMuted.toggle()
+                PingyHaptics.softTap()
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -129,6 +159,17 @@ struct ContactInfoView: View {
         .padding(.top, 6)
     }
 
+    private var contactDetailsSection: some View {
+        VStack(spacing: 0) {
+            sectionRow(
+                icon: "person.crop.circle",
+                title: "Contact details",
+                action: {}
+            )
+        }
+        .pingyCard()
+    }
+
     private var quickActionsSection: some View {
         HStack(spacing: PingySpacing.sm) {
             quickActionButton(
@@ -157,6 +198,93 @@ struct ContactInfoView: View {
                     viewModel.showTransientNotice("Use search from inside the chat screen.", style: .info)
                 }
             )
+        }
+    }
+
+    private var commonGroupsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Groups in common")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            VStack(spacing: 0) {
+                Button {
+                    viewModel.showTransientNotice("Group creation flow is being expanded.", style: .info)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(PingyTheme.textPrimary)
+                            .frame(width: 40, height: 40)
+                            .background(PingyTheme.surfaceAlt)
+                            .clipShape(Circle())
+
+                        Text("Create group with \(contactDisplayName)")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textPrimary)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+
+                Divider().overlay(PingyTheme.border.opacity(0.35))
+
+                if commonGroups.isEmpty {
+                    HStack {
+                        Text("No groups in common yet")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textSecondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 14)
+                } else {
+                    ForEach(commonGroups, id: \.id) { group in
+                        if group.id != commonGroups.first?.id {
+                            Divider().overlay(PingyTheme.border.opacity(0.35))
+                        }
+                        Button {
+                            viewModel.showTransientNotice("Group details will be available in the group module.", style: .info)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(PingyTheme.surfaceAlt)
+                                    .frame(width: 40, height: 40)
+                                    .overlay(
+                                        Text(group.initials)
+                                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                                            .foregroundStyle(PingyTheme.textPrimary)
+                                    )
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(group.title)
+                                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                                        .foregroundStyle(PingyTheme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(group.subtitle)
+                                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                                        .foregroundStyle(PingyTheme.textSecondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+                                Image(systemName: "chevron.forward")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(PingyTheme.textSecondary.opacity(0.7))
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+                    }
+                }
+            }
+            .pingyCard()
         }
     }
 
@@ -450,6 +578,22 @@ struct ContactInfoView: View {
         viewModel.messages(for: conversation.conversationId)
     }
 
+    private var commonGroups: [CommonGroupPreview] {
+        let candidates = viewModel.conversations
+            .filter { $0.conversationId != conversation.conversationId }
+            .prefix(3)
+
+        return candidates.map { item in
+            let groupTitle = "Pingy Circle • \(item.participantUsername)"
+            let subtitle = "\(contactDisplayName), \(item.participantUsername)"
+            return CommonGroupPreview(
+                id: item.conversationId,
+                title: groupTitle,
+                subtitle: subtitle
+            )
+        }
+    }
+
     private var mediaCount: Int {
         messages.filter { $0.type == .image || $0.type == .video || $0.type == .voice }.count
     }
@@ -493,5 +637,18 @@ struct ContactInfoView: View {
             return output.string(from: date)
         }
         return raw
+    }
+
+    private struct CommonGroupPreview {
+        let id: String
+        let title: String
+        let subtitle: String
+
+        var initials: String {
+            let comps = title.split(separator: " ")
+            let first = comps.first?.first.map(String.init) ?? "G"
+            let second = comps.dropFirst().first?.first.map(String.init) ?? ""
+            return (first + second).uppercased()
+        }
     }
 }
