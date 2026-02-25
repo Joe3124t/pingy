@@ -182,6 +182,10 @@ final class MessengerViewModel: ObservableObject {
         static func settings(userID: String) -> String {
             "pingy.cache.settings.\(userID)"
         }
+
+        static func aliases(userID: String) -> String {
+            "pingy.cache.contactAliases.\(userID)"
+        }
     }
 
     init(
@@ -291,11 +295,39 @@ final class MessengerViewModel: ObservableObject {
     func contactDisplayName(for participantId: String, fallback: String) -> String {
         let normalizedFallback = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackValue = normalizedFallback.isEmpty ? "Pingy User" : normalizedFallback
+        if let alias = localAliasByUserId[participantId], !alias.isEmpty {
+            return alias
+        }
         return contactNameByUserId[participantId] ?? fallbackValue
     }
 
     func contactPhoneNumber(for participantId: String) -> String? {
         contactPhoneByUserId[participantId]
+    }
+
+    func localAlias(for participantId: String) -> String? {
+        localAliasByUserId[participantId]
+    }
+
+    func setLocalAlias(_ alias: String?, for participantId: String) {
+        guard let userID = currentUserID else { return }
+        let key = CacheKeys.aliases(userID: userID)
+        var mapping = (userDefaults.dictionary(forKey: key) as? [String: String]) ?? [:]
+
+        let normalized = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if normalized.isEmpty {
+            mapping.removeValue(forKey: participantId)
+        } else {
+            mapping[participantId] = normalized
+        }
+
+        userDefaults.set(mapping, forKey: key)
+
+        // Force refresh for list/header labels that read contactDisplayName(...)
+        conversations = conversations
+        searchResults = searchResults
+        contactSearchResults = contactSearchResults
+        objectWillChange.send()
     }
 
     func messages(for conversationId: String) -> [Message] {
@@ -2961,6 +2993,7 @@ final class MessengerViewModel: ObservableObject {
         userDefaults.removeObject(forKey: CacheKeys.pendingQueue(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.contactMatches(userID: userID))
         userDefaults.removeObject(forKey: CacheKeys.settings(userID: userID))
+        userDefaults.removeObject(forKey: CacheKeys.aliases(userID: userID))
         Task { [localCache] in
             await localCache.removeUserData(userID: userID)
         }
@@ -2991,6 +3024,12 @@ final class MessengerViewModel: ObservableObject {
             }
         }
         return mapping
+    }
+
+    private var localAliasByUserId: [String: String] {
+        guard let userID = currentUserID else { return [:] }
+        let key = CacheKeys.aliases(userID: userID)
+        return (userDefaults.dictionary(forKey: key) as? [String: String]) ?? [:]
     }
 
     private func localConversationSearchResults(query: String) -> [ContactSearchResult] {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContactInfoView: View {
     @ObservedObject var viewModel: MessengerViewModel
@@ -10,11 +11,18 @@ struct ContactInfoView: View {
     @State private var saveToPhotos = false
     @State private var lockChat = false
     @State private var isFavorite = false
+
     @State private var showBlockConfirm = false
     @State private var showClearChatConfirm = false
     @State private var showReportConfirm = false
     @State private var showAvatarPreview = false
-    @State private var showEditActions = false
+    @State private var showRenameAlert = false
+    @State private var renameDraft = ""
+    @State private var showSetLockAlert = false
+    @State private var showDisableLockAlert = false
+    @State private var newLockPasscode = ""
+    @State private var confirmLockPasscode = ""
+    @State private var disableLockPasscode = ""
 
     private var muteKey: String {
         "pingy.chat.muted.\(conversation.conversationId)"
@@ -22,10 +30,6 @@ struct ContactInfoView: View {
 
     private var saveToPhotosKey: String {
         "pingy.chat.save-to-photos.\(conversation.conversationId)"
-    }
-
-    private var lockChatKey: String {
-        "pingy.chat.locked.\(conversation.conversationId)"
     }
 
     private var favoriteKey: String {
@@ -38,7 +42,6 @@ struct ContactInfoView: View {
                 headerSection
                 contactDetailsSection
                 quickActionsSection
-                commonGroupsSection
                 mediaSection
                 chatSettingsSection
                 actionsSection
@@ -69,20 +72,21 @@ struct ContactInfoView: View {
 
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Edit") {
-                    showEditActions = true
+                    renameDraft = viewModel.localAlias(for: conversation.participantId) ?? contactDisplayName
+                    showRenameAlert = true
                 }
-                    .buttonStyle(PingyPressableButtonStyle())
+                .buttonStyle(PingyPressableButtonStyle())
             }
         }
         .onAppear {
             isMuted = UserDefaults.standard.bool(forKey: muteKey)
             saveToPhotos = UserDefaults.standard.bool(forKey: saveToPhotosKey)
-            lockChat = UserDefaults.standard.bool(forKey: lockChatKey)
+            lockChat = ChatLockService.shared.isChatLocked(conversationID: conversation.conversationId)
             isFavorite = UserDefaults.standard.bool(forKey: favoriteKey)
+            renameDraft = viewModel.localAlias(for: conversation.participantId) ?? contactDisplayName
         }
         .onChange(of: isMuted) { UserDefaults.standard.set($0, forKey: muteKey) }
         .onChange(of: saveToPhotos) { UserDefaults.standard.set($0, forKey: saveToPhotosKey) }
-        .onChange(of: lockChat) { UserDefaults.standard.set($0, forKey: lockChatKey) }
         .onChange(of: isFavorite) { UserDefaults.standard.set($0, forKey: favoriteKey) }
         .confirmationDialog("Block this contact?", isPresented: $showBlockConfirm) {
             Button("Block", role: .destructive) {
@@ -108,20 +112,42 @@ struct ContactInfoView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Edit contact", isPresented: $showEditActions) {
-            Button(isFavorite ? "Remove from Favorites" : "Add to Favorites") {
-                isFavorite.toggle()
-                PingyHaptics.softTap()
+        .alert("Rename contact", isPresented: $showRenameAlert) {
+            TextField("Custom name", text: $renameDraft)
+            Button("Save") {
+                let normalized = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                viewModel.setLocalAlias(normalized.isEmpty ? nil : normalized, for: conversation.participantId)
+                viewModel.showTransientNotice("Contact name updated on this device.", style: .success)
             }
-            Button("Chat settings") {
-                viewModel.isChatSettingsPresented = true
-                dismiss()
-            }
-            Button(isMuted ? "Unmute notifications" : "Mute notifications") {
-                isMuted.toggle()
-                PingyHaptics.softTap()
+            Button("Reset", role: .destructive) {
+                viewModel.setLocalAlias(nil, for: conversation.participantId)
+                renameDraft = contactDisplayName
             }
             Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This name is private to your account on this device.")
+        }
+        .alert("Set chat password", isPresented: $showSetLockAlert) {
+            SecureField("New password", text: $newLockPasscode)
+            SecureField("Confirm password", text: $confirmLockPasscode)
+            Button("Save") { enableChatLock() }
+            Button("Cancel", role: .cancel) {
+                newLockPasscode = ""
+                confirmLockPasscode = ""
+                lockChat = false
+            }
+        } message: {
+            Text("Use at least 4 characters. You will need it every time you open this chat.")
+        }
+        .alert("Disable chat lock", isPresented: $showDisableLockAlert) {
+            SecureField("Current password", text: $disableLockPasscode)
+            Button("Disable", role: .destructive) { disableChatLock() }
+            Button("Cancel", role: .cancel) {
+                disableLockPasscode = ""
+                lockChat = true
+            }
+        } message: {
+            Text("Enter the current password to disable lock for this chat.")
         }
         .sheet(isPresented: $showAvatarPreview) {
             avatarPreviewSheet
@@ -164,7 +190,13 @@ struct ContactInfoView: View {
             sectionRow(
                 icon: "person.crop.circle",
                 title: "Contact details",
-                action: {}
+                action: {
+                    let valueToCopy = contactPhoneNumber == String(localized: "Phone number hidden")
+                        ? contactDisplayName
+                        : contactPhoneNumber
+                    UIPasteboard.general.string = valueToCopy
+                    viewModel.showTransientNotice("Copied to clipboard.", style: .success)
+                }
             )
         }
         .pingyCard()
@@ -174,7 +206,7 @@ struct ContactInfoView: View {
         HStack(spacing: PingySpacing.sm) {
             quickActionButton(
                 icon: "phone.fill",
-                title: "Audio",
+                title: "Call",
                 action: {
                     PingyHaptics.softTap()
                     viewModel.startCall(from: conversation)
@@ -182,109 +214,23 @@ struct ContactInfoView: View {
             )
 
             quickActionButton(
-                icon: "video.fill",
-                title: "Video",
+                icon: "pencil",
+                title: "Rename",
                 action: {
                     PingyHaptics.softTap()
-                    viewModel.showTransientNotice("Video calling is coming soon.", style: .info)
+                    renameDraft = viewModel.localAlias(for: conversation.participantId) ?? contactDisplayName
+                    showRenameAlert = true
                 }
             )
 
             quickActionButton(
-                icon: "magnifyingglass",
-                title: "Search",
+                icon: isMuted ? "bell.fill" : "bell.slash.fill",
+                title: isMuted ? "Unmute" : "Mute",
                 action: {
                     PingyHaptics.softTap()
-                    viewModel.showTransientNotice("Use search from inside the chat screen.", style: .info)
+                    isMuted.toggle()
                 }
             )
-        }
-    }
-
-    private var commonGroupsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Groups in common")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            VStack(spacing: 0) {
-                Button {
-                    viewModel.showTransientNotice("Group creation flow is being expanded.", style: .info)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(PingyTheme.textPrimary)
-                            .frame(width: 40, height: 40)
-                            .background(PingyTheme.surfaceElevated)
-                            .clipShape(Circle())
-
-                        Text("Create group with \(contactDisplayName)")
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                            .foregroundStyle(PingyTheme.textPrimary)
-
-                        Spacer()
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 14)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PingyPressableButtonStyle())
-
-                Divider().overlay(PingyTheme.border.opacity(0.35))
-
-                if commonGroups.isEmpty {
-                    HStack {
-                        Text("No groups in common yet")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundStyle(PingyTheme.textSecondary)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 14)
-                } else {
-                    ForEach(commonGroups, id: \.id) { group in
-                        if group.id != commonGroups.first?.id {
-                            Divider().overlay(PingyTheme.border.opacity(0.35))
-                        }
-                        Button {
-                            viewModel.showTransientNotice("Group details will be available in the group module.", style: .info)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(PingyTheme.surfaceElevated)
-                                    .frame(width: 40, height: 40)
-                                    .overlay(
-                                        Text(group.initials)
-                                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                                            .foregroundStyle(PingyTheme.textPrimary)
-                                    )
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(group.title)
-                                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                                        .foregroundStyle(PingyTheme.textPrimary)
-                                        .lineLimit(1)
-                                    Text(group.subtitle)
-                                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                                        .foregroundStyle(PingyTheme.textSecondary)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer()
-                                Image(systemName: "chevron.forward")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(PingyTheme.textSecondary.opacity(0.7))
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 12)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PingyPressableButtonStyle())
-                    }
-                }
-            }
-            .pingyCard()
         }
     }
 
@@ -294,7 +240,9 @@ struct ContactInfoView: View {
                 icon: "photo.on.rectangle.angled",
                 title: "Media, links and docs",
                 detail: "\(mediaCount + linksCount + documentCount)",
-                action: {}
+                action: {
+                    viewModel.showTransientNotice("Media browser will open here next.", style: .info)
+                }
             )
 
             Divider().overlay(PingyTheme.border.opacity(0.35))
@@ -332,16 +280,14 @@ struct ContactInfoView: View {
             Divider().overlay(PingyTheme.border.opacity(0.35))
 
             sectionRow(
-                icon: "timer",
-                title: "Disappearing messages",
-                detail: "Off",
+                icon: lockChat ? "lock.fill" : "lock.open",
+                title: "Lock chat",
+                detail: lockChat ? "On" : "Off",
+                tint: PingyTheme.textPrimary,
                 action: {
-                    viewModel.showTransientNotice("Disappearing messages will be added soon.", style: .info)
+                    handleLockToggle(!lockChat)
                 }
             )
-            Divider().overlay(PingyTheme.border.opacity(0.35))
-
-            toggleRow(icon: "lock", title: "Lock chat", isOn: $lockChat)
         }
         .pingyCard()
     }
@@ -349,7 +295,7 @@ struct ContactInfoView: View {
     private var actionsSection: some View {
         VStack(spacing: 0) {
             ShareLink(item: contactShareText) {
-                sectionLabel(icon: "person.crop.circle.badge.plus", title: "Share contact", tint: PingyTheme.success)
+                sectionLabel(icon: "person.crop.circle.badge.plus", title: "Share contact", tint: PingyTheme.primaryStrong)
             }
             .buttonStyle(PingyPressableButtonStyle())
 
@@ -362,7 +308,7 @@ struct ContactInfoView: View {
                 sectionLabel(
                     icon: isFavorite ? "heart.slash" : "heart",
                     title: isFavorite ? "Remove from Favorites" : "Add to Favorites",
-                    tint: PingyTheme.success
+                    tint: PingyTheme.primaryStrong
                 )
             }
             .buttonStyle(PingyPressableButtonStyle())
@@ -370,7 +316,7 @@ struct ContactInfoView: View {
             Divider().overlay(PingyTheme.border.opacity(0.35))
 
             ShareLink(item: exportedChatText) {
-                sectionLabel(icon: "square.and.arrow.up", title: "Export chat", tint: PingyTheme.success)
+                sectionLabel(icon: "square.and.arrow.up", title: "Export chat", tint: PingyTheme.primaryStrong)
             }
             .buttonStyle(PingyPressableButtonStyle())
 
@@ -412,7 +358,7 @@ struct ContactInfoView: View {
             VStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(PingyTheme.success)
+                    .foregroundStyle(PingyTheme.primaryStrong)
                 Text(title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
@@ -455,7 +401,7 @@ struct ContactInfoView: View {
                         .foregroundStyle(PingyTheme.textSecondary)
                 }
 
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.forward")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(PingyTheme.textSecondary.opacity(0.75))
             }
@@ -578,22 +524,6 @@ struct ContactInfoView: View {
         viewModel.messages(for: conversation.conversationId)
     }
 
-    private var commonGroups: [CommonGroupPreview] {
-        let candidates = viewModel.conversations
-            .filter { $0.conversationId != conversation.conversationId }
-            .prefix(3)
-
-        return candidates.map { item in
-            let groupTitle = "Pingy Circle • \(item.participantUsername)"
-            let subtitle = "\(contactDisplayName), \(item.participantUsername)"
-            return CommonGroupPreview(
-                id: item.conversationId,
-                title: groupTitle,
-                subtitle: subtitle
-            )
-        }
-    }
-
     private var mediaCount: Int {
         messages.filter { $0.type == .image || $0.type == .video || $0.type == .voice }.count
     }
@@ -639,16 +569,56 @@ struct ContactInfoView: View {
         return raw
     }
 
-    private struct CommonGroupPreview {
-        let id: String
-        let title: String
-        let subtitle: String
+    private func handleLockToggle(_ shouldLock: Bool) {
+        PingyHaptics.softTap()
+        if shouldLock {
+            newLockPasscode = ""
+            confirmLockPasscode = ""
+            showSetLockAlert = true
+            return
+        }
 
-        var initials: String {
-            let comps = title.split(separator: " ")
-            let first = comps.first?.first.map(String.init) ?? "G"
-            let second = comps.dropFirst().first?.first.map(String.init) ?? ""
-            return (first + second).uppercased()
+        disableLockPasscode = ""
+        showDisableLockAlert = true
+    }
+
+    private func enableChatLock() {
+        do {
+            guard !newLockPasscode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !confirmLockPasscode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                throw ChatLockServiceError.passcodeTooShort
+            }
+            guard newLockPasscode == confirmLockPasscode else {
+                throw ChatLockServiceError.passcodesMismatch
+            }
+
+            try ChatLockService.shared.enableLock(
+                conversationID: conversation.conversationId,
+                passcode: newLockPasscode
+            )
+            lockChat = true
+            newLockPasscode = ""
+            confirmLockPasscode = ""
+            viewModel.showTransientNotice("Chat lock enabled.", style: .success)
+        } catch {
+            lockChat = false
+            viewModel.showTransientNotice(error.localizedDescription, style: .error)
+        }
+    }
+
+    private func disableChatLock() {
+        do {
+            try ChatLockService.shared.disableLock(
+                conversationID: conversation.conversationId,
+                passcode: disableLockPasscode
+            )
+            lockChat = false
+            disableLockPasscode = ""
+            viewModel.showTransientNotice("Chat lock disabled.", style: .success)
+        } catch {
+            lockChat = true
+            viewModel.showTransientNotice(error.localizedDescription, style: .error)
         }
     }
 }

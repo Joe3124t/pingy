@@ -27,6 +27,8 @@ struct ChatDetailView: View {
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
     @State private var chatOpenedAt: Date = .distantPast
+    @State private var isChatLocked = false
+    @State private var unlockPasscode = ""
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
@@ -41,9 +43,18 @@ struct ChatDetailView: View {
                 Divider().overlay(PingyTheme.border.opacity(0.4))
                 messagesList(bottomInset: composerHeight + 16)
             }
+            .allowsHitTesting(!isChatLocked)
+            .blur(radius: isChatLocked ? 3 : 0)
+
+            if isChatLocked {
+                chatLockOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composer
+                .allowsHitTesting(!isChatLocked)
+                .opacity(isChatLocked ? 0 : 1)
                 .background(
                     GeometryReader { geometry in
                         Color.clear
@@ -62,6 +73,7 @@ struct ChatDetailView: View {
             pendingInitialJumpToLatest = true
             bottomAnchorY = .greatestFiniteMagnitude
             chatOpenedAt = Date()
+            refreshLockState()
             Task {
                 if viewModel.selectedConversationID != conversation.conversationId {
                     await viewModel.selectConversation(conversation.conversationId)
@@ -79,6 +91,11 @@ struct ChatDetailView: View {
             }
             viewModel.sendTyping(false)
             viewModel.sendRecordingIndicator(false)
+        }
+        .onChange(of: isContactInfoPresented) { presented in
+            if !presented {
+                refreshLockState()
+            }
         }
         .fileImporter(
             isPresented: $isFileImporterPresented,
@@ -185,6 +202,82 @@ struct ChatDetailView: View {
         }
         .toolbar(.hidden, for: .tabBar)
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var chatLockOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.42).ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(PingyTheme.primaryStrong)
+
+                Text("This chat is locked")
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+
+                Text("Enter chat password to open conversation.")
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                SecureField("Chat password", text: $unlockPasscode)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(PingyTheme.inputBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(PingyTheme.border.opacity(0.6), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .submitLabel(.done)
+                    .onSubmit {
+                        unlockChat()
+                    }
+
+                HStack(spacing: 10) {
+                    Button {
+                        viewModel.isCompactChatDetailPresented = false
+                        dismiss()
+                    } label: {
+                        Text("Back")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(PingyTheme.surfaceElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+
+                    Button {
+                        unlockChat()
+                    } label: {
+                        Text("Unlock")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(PingyTheme.primaryStrong)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
+            }
+            .padding(PingySpacing.md)
+            .background(PingyTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous)
+                    .stroke(PingyTheme.border.opacity(0.45), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 8)
+            .padding(.horizontal, PingySpacing.lg)
+        }
     }
 
     private var topBar: some View {
@@ -741,6 +834,30 @@ struct ChatDetailView: View {
 
     private func startVoiceCall() {
         viewModel.startCall(from: conversation)
+    }
+
+    private func refreshLockState() {
+        isChatLocked = ChatLockService.shared.isChatLocked(conversationID: conversation.conversationId)
+        if !isChatLocked {
+            unlockPasscode = ""
+        }
+    }
+
+    private func unlockChat() {
+        let passcode = unlockPasscode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !passcode.isEmpty else {
+            viewModel.showTransientNotice("Enter chat password first.", style: .warning)
+            return
+        }
+
+        guard ChatLockService.shared.verify(passcode: passcode, for: conversation.conversationId) else {
+            viewModel.showTransientNotice("Incorrect chat password.", style: .error)
+            return
+        }
+
+        unlockPasscode = ""
+        isChatLocked = false
+        PingyHaptics.success()
     }
 
     @ViewBuilder
