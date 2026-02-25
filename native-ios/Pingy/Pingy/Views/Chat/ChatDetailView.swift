@@ -336,18 +336,6 @@ struct ChatDetailView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(PingyPressableButtonStyle())
-
-            Button {
-                viewModel.isChatSettingsPresented = true
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(PingyTheme.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(PingyTheme.surfaceElevated)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(PingyPressableButtonStyle())
         }
         .padding(.horizontal, PingySpacing.md)
         .padding(.vertical, 10)

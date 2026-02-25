@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct ContactInfoView: View {
     @ObservedObject var viewModel: MessengerViewModel
@@ -16,6 +15,7 @@ struct ContactInfoView: View {
     @State private var showClearChatConfirm = false
     @State private var showReportConfirm = false
     @State private var showAvatarPreview = false
+    @State private var showContactDetailsSheet = false
     @State private var showRenameAlert = false
     @State private var renameDraft = ""
     @State private var showSetLockAlert = false
@@ -152,6 +152,21 @@ struct ContactInfoView: View {
         .sheet(isPresented: $showAvatarPreview) {
             avatarPreviewSheet
         }
+        .sheet(isPresented: $showContactDetailsSheet) {
+            ContactDetailsSheet(
+                displayName: contactDisplayName,
+                phoneNumber: contactPhoneNumber,
+                avatarURL: conversation.participantAvatarUrl,
+                onMessageTap: {
+                    showContactDetailsSheet = false
+                    dismiss()
+                },
+                onCallTap: {
+                    showContactDetailsSheet = false
+                    viewModel.startCall(from: conversation)
+                }
+            )
+        }
     }
 
     private var headerSection: some View {
@@ -191,11 +206,7 @@ struct ContactInfoView: View {
                 icon: "person.crop.circle",
                 title: "Contact details",
                 action: {
-                    let valueToCopy = contactPhoneNumber == String(localized: "Phone number hidden")
-                        ? contactDisplayName
-                        : contactPhoneNumber
-                    UIPasteboard.general.string = valueToCopy
-                    viewModel.showTransientNotice("Copied to clipboard.", style: .success)
+                    showContactDetailsSheet = true
                 }
             )
         }
@@ -263,17 +274,6 @@ struct ContactInfoView: View {
     private var chatSettingsSection: some View {
         VStack(spacing: 0) {
             toggleRow(icon: "bell", title: "Notifications", isOn: $isMuted, invertMeaning: true)
-            Divider().overlay(PingyTheme.border.opacity(0.35))
-
-            sectionRow(
-                icon: "paintpalette",
-                title: "Chat theme",
-                detail: "Default",
-                action: {
-                    viewModel.isChatSettingsPresented = true
-                    dismiss()
-                }
-            )
             Divider().overlay(PingyTheme.border.opacity(0.35))
 
             toggleRow(icon: "square.and.arrow.down", title: "Save to Photos", isOn: $saveToPhotos)
@@ -620,5 +620,104 @@ struct ContactInfoView: View {
             lockChat = true
             viewModel.showTransientNotice(error.localizedDescription, style: .error)
         }
+    }
+}
+
+private struct ContactDetailsSheet: View {
+    let displayName: String
+    let phoneNumber: String
+    let avatarURL: String?
+    let onMessageTap: () -> Void
+    let onCallTap: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 22) {
+                HStack {
+                    Text("Contact details")
+                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(PingyTheme.textPrimary)
+                            .frame(width: 36, height: 36)
+                            .background(PingyTheme.surfaceElevated)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
+
+                VStack(spacing: 12) {
+                    AvatarView(url: avatarURL, fallback: displayName, size: 132, cornerRadius: 66)
+
+                    Text(displayName)
+                        .font(.system(size: 52, weight: .black, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .lineLimit(1)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("mobile")
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundStyle(PingyTheme.textSecondary)
+
+                        Text(phoneNumber)
+                            .font(.system(size: 40, weight: .heavy, design: .rounded))
+                            .foregroundStyle(PingyTheme.primaryStrong)
+                            .minimumScaleFactor(0.65)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(PingySpacing.md)
+                    .background(PingyTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous)
+                            .stroke(PingyTheme.border.opacity(0.35), lineWidth: 1)
+                    )
+                }
+
+                HStack(spacing: PingySpacing.md) {
+                    actionButton(icon: "message.fill", title: "Message", action: onMessageTap)
+                    actionButton(icon: "phone.fill", title: "Call", action: onCallTap)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, PingySpacing.md)
+            .padding(.top, PingySpacing.sm)
+            .padding(.bottom, PingySpacing.lg)
+            .background(PingyTheme.background.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .presentationDragIndicator(.visible)
+    }
+
+    private func actionButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+        } label: {
+            VStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(PingyTheme.primaryStrong)
+                Text(title)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, PingySpacing.md)
+            .background(PingyTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous)
+                    .stroke(PingyTheme.border.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PingyPressableButtonStyle())
     }
 }
