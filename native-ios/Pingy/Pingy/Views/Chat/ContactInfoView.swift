@@ -5,40 +5,70 @@ struct ContactInfoView: View {
     let conversation: Conversation
 
     @Environment(\.dismiss) private var dismiss
+
     @State private var isMuted = false
+    @State private var saveToPhotos = false
+    @State private var lockChat = false
+    @State private var isFavorite = false
     @State private var showBlockConfirm = false
     @State private var showClearChatConfirm = false
+    @State private var showReportConfirm = false
+    @State private var showAvatarPreview = false
 
     private var muteKey: String {
         "pingy.chat.muted.\(conversation.conversationId)"
     }
 
+    private var saveToPhotosKey: String {
+        "pingy.chat.save-to-photos.\(conversation.conversationId)"
+    }
+
+    private var lockChatKey: String {
+        "pingy.chat.locked.\(conversation.conversationId)"
+    }
+
+    private var favoriteKey: String {
+        "pingy.chat.favorite.\(conversation.conversationId)"
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: PingySpacing.md) {
-                profileCard
-                mediaCard
-                actionsCard
+                headerSection
+                quickActionsSection
+                mediaSection
+                chatSettingsSection
+                actionsSection
+                dangerSection
             }
-            .padding(PingySpacing.md)
+            .padding(.horizontal, PingySpacing.md)
+            .padding(.bottom, 28)
         }
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Contact Info")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Contact info")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+                    .lineLimit(1)
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
-                    dismiss()
-                }
-                .buttonStyle(PingyPressableButtonStyle())
+                Button("Done") { dismiss() }
+                    .buttonStyle(PingyPressableButtonStyle())
             }
         }
         .onAppear {
             isMuted = UserDefaults.standard.bool(forKey: muteKey)
+            saveToPhotos = UserDefaults.standard.bool(forKey: saveToPhotosKey)
+            lockChat = UserDefaults.standard.bool(forKey: lockChatKey)
+            isFavorite = UserDefaults.standard.bool(forKey: favoriteKey)
         }
-        .onChange(of: isMuted) { newValue in
-            UserDefaults.standard.set(newValue, forKey: muteKey)
-        }
+        .onChange(of: isMuted) { UserDefaults.standard.set($0, forKey: muteKey) }
+        .onChange(of: saveToPhotos) { UserDefaults.standard.set($0, forKey: saveToPhotosKey) }
+        .onChange(of: lockChat) { UserDefaults.standard.set($0, forKey: lockChatKey) }
+        .onChange(of: isFavorite) { UserDefaults.standard.set($0, forKey: favoriteKey) }
         .confirmationDialog("Block this contact?", isPresented: $showBlockConfirm) {
             Button("Block", role: .destructive) {
                 Task {
@@ -57,89 +87,357 @@ struct ContactInfoView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-    }
-
-    private var profileCard: some View {
-        VStack(spacing: 12) {
-            AvatarView(
-                url: conversation.participantAvatarUrl,
-                fallback: contactDisplayName,
-                size: 92,
-                cornerRadius: 46
-            )
-
-            Text(contactDisplayName)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-                .multilineTextAlignment(.center)
-
-            if contactDisplayName != conversation.participantUsername {
-                Text(conversation.participantUsername)
-                    .font(.system(size: 14, weight: .medium, design: .rounded))
-                    .foregroundStyle(PingyTheme.textSecondary)
+        .confirmationDialog("Report this contact?", isPresented: $showReportConfirm) {
+            Button("Report", role: .destructive) {
+                viewModel.showTransientNotice("Report sent. Thank you.", style: .success)
             }
-
-            Text(contactPhoneNumber)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(PingyTheme.textSecondary)
+            Button("Cancel", role: .cancel) {}
         }
-        .frame(maxWidth: .infinity)
-        .pingyCard()
+        .sheet(isPresented: $showAvatarPreview) {
+            avatarPreviewSheet
+        }
     }
 
-    private var mediaCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Media, Links & Docs")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            infoRow(title: "Media", value: "\(mediaCount)")
-            infoRow(title: "Links", value: "\(linksCount)")
-            infoRow(title: "Documents", value: "\(documentCount)")
-        }
-        .pingyCard()
-    }
-
-    private var actionsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Actions")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
-
-            Toggle("Mute notifications", isOn: $isMuted)
-                .tint(PingyTheme.primary)
-
+    private var headerSection: some View {
+        VStack(spacing: 14) {
             Button {
-                showBlockConfirm = true
+                if avatarURL != nil {
+                    showAvatarPreview = true
+                }
             } label: {
-                Label("Block", systemImage: "hand.raised.fill")
-                    .foregroundStyle(PingyTheme.warning)
+                AvatarView(
+                    url: conversation.participantAvatarUrl,
+                    fallback: contactDisplayName,
+                    size: 112,
+                    cornerRadius: 56
+                )
             }
             .buttonStyle(PingyPressableButtonStyle())
+
+            Text(contactDisplayName)
+                .font(.system(size: 38, weight: .heavy, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+
+            Text(contactPhoneNumber)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 6)
+    }
+
+    private var quickActionsSection: some View {
+        HStack(spacing: PingySpacing.sm) {
+            quickActionButton(
+                icon: "phone.fill",
+                title: "Audio",
+                action: {
+                    PingyHaptics.softTap()
+                    viewModel.startCall(from: conversation)
+                }
+            )
+
+            quickActionButton(
+                icon: "video.fill",
+                title: "Video",
+                action: {
+                    PingyHaptics.softTap()
+                    viewModel.showTransientNotice("Video calling is coming soon.", style: .info)
+                }
+            )
+
+            quickActionButton(
+                icon: "magnifyingglass",
+                title: "Search",
+                action: {
+                    PingyHaptics.softTap()
+                    viewModel.showTransientNotice("Use search from inside the chat screen.", style: .info)
+                }
+            )
+        }
+    }
+
+    private var mediaSection: some View {
+        VStack(spacing: 0) {
+            sectionRow(
+                icon: "photo.on.rectangle.angled",
+                title: "Media, links and docs",
+                detail: "\(mediaCount + linksCount + documentCount)",
+                action: {}
+            )
+
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            sectionRow(
+                icon: "star",
+                title: "Starred",
+                detail: isFavorite ? "Saved" : "None",
+                action: {
+                    isFavorite.toggle()
+                    PingyHaptics.softTap()
+                }
+            )
+        }
+        .pingyCard()
+    }
+
+    private var chatSettingsSection: some View {
+        VStack(spacing: 0) {
+            toggleRow(icon: "bell", title: "Notifications", isOn: $isMuted, invertMeaning: true)
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            sectionRow(
+                icon: "paintpalette",
+                title: "Chat theme",
+                detail: "Default",
+                action: {
+                    viewModel.isChatSettingsPresented = true
+                    dismiss()
+                }
+            )
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            toggleRow(icon: "square.and.arrow.down", title: "Save to Photos", isOn: $saveToPhotos)
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            sectionRow(
+                icon: "timer",
+                title: "Disappearing messages",
+                detail: "Off",
+                action: {
+                    viewModel.showTransientNotice("Disappearing messages will be added soon.", style: .info)
+                }
+            )
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            toggleRow(icon: "lock", title: "Lock chat", isOn: $lockChat)
+        }
+        .pingyCard()
+    }
+
+    private var actionsSection: some View {
+        VStack(spacing: 0) {
+            ShareLink(item: contactShareText) {
+                sectionLabel(icon: "person.crop.circle.badge.plus", title: "Share contact", tint: PingyTheme.success)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            Button {
+                isFavorite.toggle()
+                PingyHaptics.softTap()
+            } label: {
+                sectionLabel(
+                    icon: isFavorite ? "heart.slash" : "heart",
+                    title: isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                    tint: PingyTheme.success
+                )
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            ShareLink(item: exportedChatText) {
+                sectionLabel(icon: "square.and.arrow.up", title: "Export chat", tint: PingyTheme.success)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Divider().overlay(PingyTheme.border.opacity(0.35))
 
             Button {
                 showClearChatConfirm = true
             } label: {
-                Label("Clear chat", systemImage: "trash")
-                    .foregroundStyle(PingyTheme.danger)
-            }
-            .buttonStyle(PingyPressableButtonStyle())
-
-            ShareLink(item: exportedChatText) {
-                Label("Export chat", systemImage: "square.and.arrow.up")
-                    .foregroundStyle(PingyTheme.primaryStrong)
+                sectionLabel(icon: "trash", title: "Clear chat", tint: PingyTheme.danger)
             }
             .buttonStyle(PingyPressableButtonStyle())
         }
         .pingyCard()
+    }
+
+    private var dangerSection: some View {
+        VStack(spacing: 0) {
+            Button {
+                showBlockConfirm = true
+            } label: {
+                sectionLabel(icon: "hand.raised", title: "Block \(contactDisplayName)", tint: PingyTheme.danger)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            Button {
+                showReportConfirm = true
+            } label: {
+                sectionLabel(icon: "exclamationmark.bubble", title: "Report \(contactDisplayName)", tint: PingyTheme.danger)
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+        }
+        .pingyCard()
+    }
+
+    private func quickActionButton(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(PingyTheme.success)
+                Text(title)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 96)
+            .background(PingyTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous)
+                    .stroke(PingyTheme.border.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PingyPressableButtonStyle())
+    }
+
+    private func sectionRow(
+        icon: String,
+        title: String,
+        detail: String? = nil,
+        tint: Color = PingyTheme.textPrimary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 28)
+
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textPrimary)
+
+                Spacer()
+
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textSecondary)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(PingyTheme.textSecondary.opacity(0.75))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PingyPressableButtonStyle())
+    }
+
+    private func toggleRow(
+        icon: String,
+        title: String,
+        isOn: Binding<Bool>,
+        invertMeaning: Bool = false
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(PingyTheme.textPrimary)
+                .frame(width: 28)
+
+            Text(title)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textPrimary)
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { invertMeaning ? !isOn.wrappedValue : isOn.wrappedValue },
+                set: { isOn.wrappedValue = invertMeaning ? !$0 : $0 }
+            ))
+            .labelsHidden()
+            .tint(PingyTheme.primary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 14)
+    }
+
+    private func sectionLabel(icon: String, title: String, tint: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28)
+
+            Text(title)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(tint)
+
+            Spacer()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+    }
+
+    private var avatarPreviewSheet: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let avatarURL {
+                    AsyncImage(url: avatarURL) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView().tint(.white)
+                        case .success(let image):
+                            ZoomableImageView(image: image)
+                        case .failure:
+                            AvatarView(
+                                url: conversation.participantAvatarUrl,
+                                fallback: contactDisplayName,
+                                size: 180,
+                                cornerRadius: 90
+                            )
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                } else {
+                    AvatarView(
+                        url: conversation.participantAvatarUrl,
+                        fallback: contactDisplayName,
+                        size: 180,
+                        cornerRadius: 90
+                    )
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showAvatarPreview = false
+                    }
+                    .foregroundStyle(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 
     private var contactDisplayName: String {
         viewModel.contactDisplayName(for: conversation)
     }
 
+    private var avatarURL: URL? {
+        MediaURLResolver.resolve(conversation.participantAvatarUrl)
+    }
+
     private var contactPhoneNumber: String {
-        let fallback = "Phone number hidden"
+        let fallback = String(localized: "Phone number hidden")
         guard let value = viewModel.contactPhoneNumber(for: conversation.participantId),
               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
@@ -162,42 +460,38 @@ struct ContactInfoView: View {
 
     private var linksCount: Int {
         messages.reduce(into: 0) { partial, message in
-            guard let text = message.body?.stringValue?.lowercased() else { return }
-            if text.contains("http://") || text.contains("https://") {
+            let preview = MessageBodyFormatter.previewText(from: message.body, fallback: "")
+            let lowered = preview.lowercased()
+            if lowered.contains("http://") || lowered.contains("https://") {
                 partial += 1
             }
         }
     }
 
+    private var contactShareText: String {
+        "\(contactDisplayName)\n\(contactPhoneNumber)"
+    }
+
     private var exportedChatText: String {
-        let formatter = ISO8601DateFormatter()
         let rows = messages.map { message in
-            let dateLabel: String
-            if let date = formatter.date(from: message.createdAt) {
-                let output = DateFormatter()
-                output.dateStyle = .short
-                output.timeStyle = .short
-                dateLabel = output.string(from: date)
-            } else {
-                dateLabel = message.createdAt
-            }
+            let dateLabel = formattedExportTime(message.createdAt)
             let sender = message.senderUsername ?? (message.senderId == viewModel.currentUserID ? "Me" : contactDisplayName)
-            let content = message.body?.stringValue ?? message.mediaName ?? message.type.rawValue.capitalized
+            let fallback = MessageBodyFormatter.fallbackLabel(for: message.type, mediaName: message.mediaName)
+            let content = MessageBodyFormatter.previewText(from: message.body, fallback: fallback)
             return "[\(dateLabel)] \(sender): \(content)"
         }
 
         return rows.joined(separator: "\n")
     }
 
-    private func infoRow(title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(PingyTheme.textSecondary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(PingyTheme.textPrimary)
+    private func formattedExportTime(_ raw: String) -> String {
+        let isoFormatter = ISO8601DateFormatter()
+        if let date = isoFormatter.date(from: raw) {
+            let output = DateFormatter()
+            output.dateStyle = .short
+            output.timeStyle = .short
+            return output.string(from: date)
         }
+        return raw
     }
 }
