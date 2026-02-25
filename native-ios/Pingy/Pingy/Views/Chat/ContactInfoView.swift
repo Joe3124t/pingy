@@ -216,7 +216,7 @@ struct ContactInfoView: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(PingyTheme.textPrimary)
                             .frame(width: 40, height: 40)
-                            .background(PingyTheme.surfaceAlt)
+                            .background(PingyTheme.surfaceElevated)
                             .clipShape(Circle())
 
                         Text("Create group with \(contactDisplayName)")
@@ -252,7 +252,7 @@ struct ContactInfoView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 Circle()
-                                    .fill(PingyTheme.surfaceAlt)
+                                    .fill(PingyTheme.surfaceElevated)
                                     .frame(width: 40, height: 40)
                                     .overlay(
                                         Text(group.initials)
