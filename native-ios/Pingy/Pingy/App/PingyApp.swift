@@ -23,6 +23,8 @@ struct PingyApp: App {
             .environmentObject(environment.themeManager)
             .task {
                 appDelegate.pushManager = environment.pushManager
+                appDelegate.backgroundSyncService = environment.backgroundMessageSyncService
+                environment.backgroundMessageSyncService.configureBackgroundFetch()
                 await environment.bootstrap()
             }
         }

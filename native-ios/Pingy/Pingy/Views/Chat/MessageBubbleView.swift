@@ -19,6 +19,7 @@ struct MessageBubbleView: View {
     let onRetryText: () -> Void
     let onOpenImage: ((Message, URL) -> Void)?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.layoutDirection) private var appLayoutDirection
 
     @State private var isVisible = false
     @GestureState private var swipeOffsetX: CGFloat = 0
@@ -220,8 +221,9 @@ struct MessageBubbleView: View {
             Text(resolvedText)
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: 320, alignment: .leading)
+                .multilineTextAlignment(textAlignment(for: resolvedText))
+                .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
+                .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
 
         case .image:
             if let url = MediaURLResolver.resolve(message.mediaUrl) {
@@ -366,12 +368,125 @@ struct MessageBubbleView: View {
     }
 
     private func formatTime(_ iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: iso) else { return "" }
-        let output = DateFormatter()
-        output.timeStyle = .short
-        return output.string(from: date)
+        if let date = parseMessageDate(iso) {
+            return Self.timeFormatter.string(from: date)
+        }
+
+        if let fallbackRange = iso.range(of: #"\b\d{1,2}:\d{2}\b"#, options: .regularExpression) {
+            return String(iso[fallbackRange])
+        }
+
+        return Self.timeFormatter.string(from: Date())
     }
+
+    private func parseMessageDate(_ raw: String) -> Date? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let date = Self.isoFormatterWithFractional.date(from: value) {
+            return date
+        }
+
+        if let date = Self.isoFormatter.date(from: value) {
+            return date
+        }
+
+        if let date = Self.serverDateFormatter.date(from: value) {
+            return date
+        }
+
+        if let date = Self.serverDateWithTimeZoneFormatter.date(from: value) {
+            return date
+        }
+
+        let normalized = value.replacingOccurrences(of: " ", with: "T")
+        if let date = Self.isoFormatterWithFractional.date(from: normalized) {
+            return date
+        }
+        if let date = Self.isoFormatter.date(from: normalized) {
+            return date
+        }
+
+        return nil
+    }
+
+    private func inferredLayoutDirection(for text: String) -> LayoutDirection {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return appLayoutDirection }
+
+        var rtlCount = 0
+        var ltrCount = 0
+
+        for scalar in trimmed.unicodeScalars {
+            if isRTLScalar(scalar) {
+                rtlCount += 1
+            } else if scalar.properties.isAlphabetic {
+                ltrCount += 1
+            }
+        }
+
+        if rtlCount > ltrCount {
+            return .rightToLeft
+        }
+        if ltrCount > rtlCount {
+            return .leftToRight
+        }
+
+        return appLayoutDirection
+    }
+
+    private func textAlignment(for text: String) -> TextAlignment {
+        inferredLayoutDirection(for: text) == .rightToLeft ? .trailing : .leading
+    }
+
+    private func frameAlignment(for text: String) -> Alignment {
+        inferredLayoutDirection(for: text) == .rightToLeft ? .trailing : .leading
+    }
+
+    private func isRTLScalar(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x0590 ... 0x08FF,
+             0xFB1D ... 0xFDFF,
+             0xFE70 ... 0xFEFF,
+             0x1EE00 ... 0x1EEFF:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static let isoFormatterWithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let serverDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    private static let serverDateWithTimeZoneFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     private var imageSheetPresentedBinding: Binding<Bool> {
         Binding(
@@ -450,10 +565,7 @@ private struct ChatImagePreviewSheet: View {
                         ProgressView()
                             .tint(.white)
                     case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        ZoomableImageView(image: image)
                     case .failure:
                         Text("Couldn't load image")
                             .foregroundStyle(.white.opacity(0.88))

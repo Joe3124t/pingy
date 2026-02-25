@@ -61,10 +61,7 @@ struct ChatMediaViewer: View {
             TabView(selection: $selection) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     CachedRemoteImage(url: entry.url) { image in
-                        image
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        ZoomableImageView(image: image)
                     } placeholder: {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(Color.white.opacity(0.08))
