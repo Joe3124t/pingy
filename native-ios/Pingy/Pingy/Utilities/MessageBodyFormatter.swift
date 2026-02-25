@@ -37,7 +37,7 @@ enum MessageBodyFormatter {
         return extractText(from: value, depth: 0)
     }
 
-    static func previewText(from value: JSONValue?, fallback: String = "Message") -> String {
+    static func previewText(from value: JSONValue?, fallback: String = String(localized: "Message")) -> String {
         let resolved = plainText(from: value)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return resolved.isEmpty ? fallback : resolved
     }
@@ -47,17 +47,17 @@ enum MessageBodyFormatter {
 
         switch type {
         case .image:
-            return "Photo"
+            return String(localized: "Photo")
         case .video:
-            return "Video"
+            return String(localized: "Video")
         case .voice:
-            return "Voice message"
+            return String(localized: "Voice message")
         case .file:
-            return cleanedName ?? "File"
+            return cleanedName ?? String(localized: "File")
         case .text:
-            return "Message"
+            return String(localized: "Message")
         case .none:
-            return cleanedName ?? "Message"
+            return cleanedName ?? String(localized: "Message")
         }
     }
 
@@ -69,6 +69,56 @@ enum MessageBodyFormatter {
             for: MessageType(rawValue: rawType.lowercased()),
             mediaName: mediaName
         )
+    }
+
+    static func extractedLinks(from value: JSONValue?) -> [URL] {
+        let text = previewText(from: value, fallback: "")
+        return extractedLinks(fromText: text)
+    }
+
+    static func extractedLinks(fromText text: String) -> [URL] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var urls: [URL] = []
+
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            let range = NSRange(trimmed.startIndex ..< trimmed.endIndex, in: trimmed)
+            detector.matches(in: trimmed, options: [], range: range).forEach { match in
+                if let url = match.url {
+                    urls.append(url)
+                }
+            }
+        }
+
+        // Fallback for plain domains like "example.com" without scheme.
+        let domainPattern = #"\b((?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,})(/[^\s]*)?"#
+        if let regex = try? NSRegularExpression(pattern: domainPattern, options: []) {
+            let range = NSRange(trimmed.startIndex ..< trimmed.endIndex, in: trimmed)
+            regex.matches(in: trimmed, options: [], range: range).forEach { match in
+                guard let swiftRange = Range(match.range, in: trimmed) else { return }
+                let candidate = String(trimmed[swiftRange])
+                guard !candidate.lowercased().hasPrefix("http://"),
+                      !candidate.lowercased().hasPrefix("https://")
+                else {
+                    return
+                }
+
+                if let url = URL(string: "https://\(candidate)") {
+                    urls.append(url)
+                }
+            }
+        }
+
+        var seen = Set<String>()
+        return urls.filter { url in
+            let key = url.absoluteString.lowercased()
+            if seen.contains(key) {
+                return false
+            }
+            seen.insert(key)
+            return true
+        }
     }
 
     private static func plainText(fromRawString raw: String) -> String? {

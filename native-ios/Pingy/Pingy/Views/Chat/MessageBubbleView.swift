@@ -218,9 +218,10 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.type {
         case .text:
-            Text(resolvedText)
+            Text(linkifiedAttributedText(resolvedText))
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
+                .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
                 .multilineTextAlignment(textAlignment(for: resolvedText))
                 .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
                 .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
@@ -453,6 +454,36 @@ struct MessageBubbleView: View {
         default:
             return false
         }
+    }
+
+    private func linkifiedAttributedText(_ text: String) -> AttributedString {
+        let mutable = NSMutableAttributedString(string: text)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+
+        if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+            detector.matches(in: text, options: [], range: fullRange).forEach { match in
+                guard let url = match.url else { return }
+                mutable.addAttribute(.link, value: url, range: match.range)
+            }
+        }
+
+        let domainPattern = #"\b((?:www\.)?[A-Za-z0-9.-]+\.[A-Za-z]{2,})(/[^\s]*)?"#
+        if let regex = try? NSRegularExpression(pattern: domainPattern, options: []) {
+            regex.matches(in: text, options: [], range: fullRange).forEach { match in
+                guard let range = Range(match.range, in: text) else { return }
+                let candidate = String(text[range])
+                let lowered = candidate.lowercased()
+                guard !lowered.hasPrefix("http://"),
+                      !lowered.hasPrefix("https://"),
+                      let url = URL(string: "https://\(candidate)")
+                else {
+                    return
+                }
+                mutable.addAttribute(.link, value: url, range: match.range)
+            }
+        }
+
+        return AttributedString(mutable)
     }
 
     private static let isoFormatterWithFractional: ISO8601DateFormatter = {

@@ -16,6 +16,7 @@ struct ContactInfoView: View {
     @State private var showReportConfirm = false
     @State private var showAvatarPreview = false
     @State private var showContactDetailsSheet = false
+    @State private var showMediaLinksDocsSheet = false
     @State private var showRenameAlert = false
     @State private var renameDraft = ""
     @State private var showSetLockAlert = false
@@ -167,6 +168,12 @@ struct ContactInfoView: View {
                 }
             )
         }
+        .sheet(isPresented: $showMediaLinksDocsSheet) {
+            ContactMediaLinksDocsView(
+                displayName: contactDisplayName,
+                messages: messages
+            )
+        }
     }
 
     private var headerSection: some View {
@@ -252,7 +259,7 @@ struct ContactInfoView: View {
                 title: "Media, links and docs",
                 detail: "\(mediaCount + linksCount + documentCount)",
                 action: {
-                    viewModel.showTransientNotice("Media browser will open here next.", style: .info)
+                    showMediaLinksDocsSheet = true
                 }
             )
 
@@ -511,13 +518,22 @@ struct ContactInfoView: View {
     }
 
     private var contactPhoneNumber: String {
-        let fallback = String(localized: "Phone number hidden")
-        guard let value = viewModel.contactPhoneNumber(for: conversation.participantId),
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return fallback
+        if let value = viewModel.contactPhoneNumber(for: conversation.participantId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        {
+            return value
         }
-        return value
+
+        if let inferred = inferPhoneNumber(from: conversation.participantUsername) {
+            return inferred
+        }
+
+        if let inferredFromID = inferPhoneNumber(from: conversation.participantId) {
+            return inferredFromID
+        }
+
+        return String(localized: "Unavailable")
     }
 
     private var messages: [Message] {
@@ -534,12 +550,19 @@ struct ContactInfoView: View {
 
     private var linksCount: Int {
         messages.reduce(into: 0) { partial, message in
-            let preview = MessageBodyFormatter.previewText(from: message.body, fallback: "")
-            let lowered = preview.lowercased()
-            if lowered.contains("http://") || lowered.contains("https://") {
-                partial += 1
-            }
+            partial += MessageBodyFormatter.extractedLinks(from: message.body).count
         }
+    }
+
+    private func inferPhoneNumber(from rawValue: String) -> String? {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let allowed = CharacterSet(charactersIn: "+0123456789")
+        let filteredScalars = trimmed.unicodeScalars.filter { allowed.contains($0) }
+        let candidate = String(String.UnicodeScalarView(filteredScalars))
+        let digitsCount = candidate.filter(\.isNumber).count
+        return digitsCount >= 8 ? candidate : nil
     }
 
     private var contactShareText: String {
@@ -634,10 +657,10 @@ private struct ContactDetailsSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 22) {
+            VStack(spacing: 16) {
                 HStack {
                     Text("Contact details")
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                     Spacer()
                     Button {
@@ -654,12 +677,14 @@ private struct ContactDetailsSheet: View {
                 }
 
                 VStack(spacing: 12) {
-                    AvatarView(url: avatarURL, fallback: displayName, size: 132, cornerRadius: 66)
+                    AvatarView(url: avatarURL, fallback: displayName, size: 108, cornerRadius: 54)
 
                     Text(displayName)
-                        .font(.system(size: 52, weight: .black, design: .rounded))
+                        .font(.system(size: 40, weight: .black, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+                        .multilineTextAlignment(.center)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("mobile")
@@ -667,9 +692,10 @@ private struct ContactDetailsSheet: View {
                             .foregroundStyle(PingyTheme.textSecondary)
 
                         Text(phoneNumber)
-                            .font(.system(size: 40, weight: .heavy, design: .rounded))
+                            .font(.system(size: 30, weight: .heavy, design: .rounded))
                             .foregroundStyle(PingyTheme.primaryStrong)
-                            .minimumScaleFactor(0.65)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.72)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(PingySpacing.md)
@@ -719,5 +745,301 @@ private struct ContactDetailsSheet: View {
             )
         }
         .buttonStyle(PingyPressableButtonStyle())
+    }
+}
+
+private struct ContactMediaLinksDocsView: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case media = "Media"
+        case links = "Links"
+        case docs = "Docs"
+
+        var id: String { rawValue }
+    }
+
+    struct MediaItem: Identifiable {
+        let id: String
+        let url: URL
+        let createdAt: String
+    }
+
+    struct LinkItem: Identifiable {
+        let id: String
+        let url: URL
+        let preview: String
+        let createdAt: String
+    }
+
+    struct DocItem: Identifiable {
+        let id: String
+        let name: String
+        let url: URL
+        let createdAt: String
+    }
+
+    let displayName: String
+    let messages: [Message]
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTab: Tab = .media
+    @State private var selectedMediaURL: URL?
+
+    private var mediaItems: [MediaItem] {
+        messages.compactMap { message in
+            guard (message.type == .image || message.type == .video),
+                  let resolved = MediaURLResolver.resolve(message.mediaUrl)
+            else {
+                return nil
+            }
+            return MediaItem(id: message.id, url: resolved, createdAt: message.createdAt)
+        }
+    }
+
+    private var linkItems: [LinkItem] {
+        messages.flatMap { message in
+            MessageBodyFormatter.extractedLinks(from: message.body).map { url in
+                LinkItem(
+                    id: "\(message.id)-\(url.absoluteString)",
+                    url: url,
+                    preview: MessageBodyFormatter.previewText(from: message.body, fallback: url.absoluteString),
+                    createdAt: message.createdAt
+                )
+            }
+        }
+    }
+
+    private var docItems: [DocItem] {
+        messages.compactMap { message in
+            guard message.type == .file,
+                  let resolved = MediaURLResolver.resolve(message.mediaUrl)
+            else {
+                return nil
+            }
+
+            let name = message.mediaName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return DocItem(
+                id: message.id,
+                name: (name?.isEmpty == false ? (name ?? "") : "Document"),
+                url: resolved,
+                createdAt: message.createdAt
+            )
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack(spacing: PingySpacing.sm) {
+                    Picker("Tab", selection: $selectedTab) {
+                        ForEach(Tab.allCases) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Button("Select") {}
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .frame(minWidth: 60, alignment: .trailing)
+                }
+                .padding(.horizontal, PingySpacing.md)
+                .padding(.top, PingySpacing.sm)
+                .padding(.bottom, PingySpacing.sm)
+                .background(PingyTheme.surface)
+
+                content
+            }
+            .background(PingyTheme.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 18, weight: .bold))
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
+
+                ToolbarItem(placement: .principal) {
+                    Text(displayName)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                }
+            }
+            .sheet(isPresented: selectedMediaPresentedBinding) {
+                if let selectedMediaURL {
+                    ContactSharedImagePreviewSheet(url: selectedMediaURL)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch selectedTab {
+        case .media:
+            if mediaItems.isEmpty {
+                emptyState("No shared media yet.")
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 1), count: 4), spacing: 1) {
+                        ForEach(mediaItems) { item in
+                            Button {
+                                selectedMediaURL = item.url
+                            } label: {
+                                CachedRemoteImage(url: item.url) { image in
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(height: 94)
+                                        .clipped()
+                                } placeholder: {
+                                    Rectangle()
+                                        .fill(PingyTheme.surfaceElevated)
+                                        .frame(height: 94)
+                                } failure: {
+                                    Rectangle()
+                                        .fill(PingyTheme.surfaceElevated)
+                                        .frame(height: 94)
+                                        .overlay(
+                                            Image(systemName: "photo")
+                                                .foregroundStyle(PingyTheme.textSecondary)
+                                        )
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 1)
+                }
+            }
+
+        case .links:
+            if linkItems.isEmpty {
+                emptyState("No links shared yet.")
+            } else {
+                List(linkItems) { item in
+                    Link(destination: item.url) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.url.absoluteString)
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundStyle(PingyTheme.primaryStrong)
+                                .lineLimit(2)
+                            Text(item.preview)
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundStyle(PingyTheme.textSecondary)
+                                .lineLimit(2)
+                            Text(timeLabel(item.createdAt))
+                                .font(.system(size: 12, weight: .regular, design: .rounded))
+                                .foregroundStyle(PingyTheme.textSecondary.opacity(0.8))
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .listRowBackground(PingyTheme.surface)
+                }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+            }
+
+        case .docs:
+            if docItems.isEmpty {
+                emptyState("No documents shared yet.")
+            } else {
+                List(docItems) { item in
+                    Link(destination: item.url) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "doc.text.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(PingyTheme.primaryStrong)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                                    .foregroundStyle(PingyTheme.textPrimary)
+                                Text(timeLabel(item.createdAt))
+                                    .font(.system(size: 12, weight: .regular, design: .rounded))
+                                    .foregroundStyle(PingyTheme.textSecondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(PingyTheme.textSecondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .listRowBackground(PingyTheme.surface)
+                }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func emptyState(_ text: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(PingyTheme.textSecondary)
+            Text(text)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(PingyTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var selectedMediaPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { selectedMediaURL != nil },
+            set: { isPresented in
+                if !isPresented {
+                    selectedMediaURL = nil
+                }
+            }
+        )
+    }
+
+    private func timeLabel(_ iso: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: iso) else { return iso }
+        let output = DateFormatter()
+        output.dateStyle = .medium
+        output.timeStyle = .short
+        return output.string(from: date)
+    }
+}
+
+private struct ContactSharedImagePreviewSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView().tint(.white)
+                    case .success(let image):
+                        ZoomableImageView(image: image)
+                    case .failure:
+                        Text("Couldn't load image")
+                            .foregroundStyle(.white.opacity(0.9))
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundStyle(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
