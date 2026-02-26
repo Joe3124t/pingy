@@ -451,23 +451,57 @@ struct ChatDetailView: View {
                 .buttonStyle(.plain)
             }
 
-            AvatarView(
-                url: conversation.participantAvatarUrl,
-                fallback: participantDisplayName,
-                size: 64,
-                cornerRadius: 32
-            )
-            .offset(y: -31)
-            .overlay(
-                Circle()
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-            )
-            .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
+            headerAvatar
+                .offset(y: -31)
+                .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
         }
         .frame(height: 110)
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    private var headerAvatar: some View {
+        Group {
+            if let avatarURL = MediaURLResolver.resolve(conversation.participantAvatarUrl) {
+                CachedRemoteImage(url: avatarURL) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    avatarFallback
+                } failure: {
+                    avatarFallback
+                }
+            } else {
+                avatarFallback
+            }
+        }
+        .frame(width: 74, height: 74)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(Color.white.opacity(0.23), lineWidth: 1.1)
+        )
+        .background(
+            Circle()
+                .fill(Color.black.opacity(0.24))
+                .frame(width: 84, height: 84)
+        )
+    }
+
+    private var avatarFallback: some View {
+        ZStack {
+            LinearGradient(
+                colors: [PingyTheme.primary, PingyTheme.primaryStrong],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Text(String(participantDisplayName.prefix(1)).uppercased())
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+        }
     }
 
     private var searchBar: some View {

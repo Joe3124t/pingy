@@ -56,7 +56,8 @@ struct MessageBubbleView: View {
                 HStack(spacing: 6) {
                     Text(formatTime(message.createdAt))
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white.opacity(0.92) : PingyTheme.textSecondary)
+                        .foregroundStyle(isOwn ? Color.white.opacity(0.95) : Color.white.opacity(0.84))
+                        .shadow(color: Color.black.opacity(0.28), radius: 0.8, x: 0, y: 0.5)
 
                     if isOwn, let outgoingState {
                         messageStateIndicator(state: outgoingState)
@@ -67,11 +68,11 @@ struct MessageBubbleView: View {
                     HStack(spacing: 6) {
                         ForEach(message.reactions, id: \.emoji) { reaction in
                             Text("\(reaction.emoji) \(reaction.count)")
-                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(isOwn ? Color.white.opacity(0.22) : PingyTheme.reactionChipBackground)
-                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
+                                .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.95))
                                 .clipShape(Capsule())
                         }
                     }
@@ -249,8 +250,9 @@ struct MessageBubbleView: View {
         case .text:
             Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
                 .font(.system(size: 18, weight: .regular, design: .rounded))
-                .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
+                .foregroundStyle(isOwn ? Color.white.opacity(0.97) : Color.white.opacity(0.95))
                 .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
+                .shadow(color: Color.black.opacity(0.28), radius: 0.9, x: 0, y: 0.5)
                 .multilineTextAlignment(textAlignment(for: resolvedText))
                 .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
                 .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
@@ -280,7 +282,7 @@ struct MessageBubbleView: View {
                             VStack(spacing: 8) {
                                 Image(systemName: "photo")
                                     .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(isOwn ? Color.white : PingyTheme.textSecondary)
+                                    .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.9))
                                 if canRetryUpload {
                                     Button("Retry") {
                                         onRetryUpload()
@@ -290,7 +292,7 @@ struct MessageBubbleView: View {
                                 } else {
                                     Text("Tap to retry later")
                                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                                        .foregroundStyle(isOwn ? Color.white.opacity(0.88) : PingyTheme.textSecondary)
+                                        .foregroundStyle(isOwn ? Color.white.opacity(0.9) : Color.white.opacity(0.82))
                                 }
                             }
                             .frame(width: 210, height: 120)
@@ -316,11 +318,11 @@ struct MessageBubbleView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(message.mediaName ?? "Video")
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
+                                .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.94))
                                 .lineLimit(1)
                             Text("Tap to open")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundStyle(isOwn ? Color.white.opacity(0.85) : PingyTheme.textSecondary)
+                                .foregroundStyle(isOwn ? Color.white.opacity(0.88) : Color.white.opacity(0.8))
                         }
                     }
                     .frame(maxWidth: 240, alignment: .leading)
@@ -363,11 +365,11 @@ struct MessageBubbleView: View {
         return VStack(alignment: .leading, spacing: 2) {
             Text("From \(senderName)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(isOwn ? Color.white.opacity(0.9) : PingyTheme.primary)
+                .foregroundStyle(isOwn ? Color.white.opacity(0.92) : Color.white.opacity(0.92))
             Text(preview)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .lineLimit(1)
-                .foregroundStyle(isOwn ? Color.white.opacity(0.83) : PingyTheme.textSecondary)
+                .foregroundStyle(isOwn ? Color.white.opacity(0.86) : Color.white.opacity(0.8))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -740,7 +742,7 @@ struct VoiceMessagePlayerView: View {
 
                 Text(durationText)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(isOwnMessage ? Color.white.opacity(0.9) : PingyTheme.textSecondary)
+                    .foregroundStyle(isOwnMessage ? Color.white.opacity(0.92) : Color.white.opacity(0.84))
             }
         }
         .onDisappear {
