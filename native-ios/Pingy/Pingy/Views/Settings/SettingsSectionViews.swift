@@ -371,7 +371,7 @@ struct AppearanceSettingsSectionView: View {
         Section(String(localized: "Theme")) {
             Picker(String(localized: "Appearance"), selection: $themeManager.appearanceMode) {
                 ForEach(ThemeMode.allCases) { mode in
-                    Text(String(localized: mode.displayName)).tag(mode)
+                    Text(NSLocalizedString(mode.displayName, comment: "")).tag(mode)
                 }
             }
             .pickerStyle(.segmented)

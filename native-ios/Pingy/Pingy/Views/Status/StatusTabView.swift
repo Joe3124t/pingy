@@ -172,7 +172,7 @@ struct StatusTabView: View {
 
             Picker(String(localized: "Privacy"), selection: $viewModel.selectedPrivacy) {
                 ForEach(StatusPrivacy.allCases) { option in
-                    Text(String(localized: option.title)).tag(option)
+                    Text(NSLocalizedString(option.title, comment: "")).tag(option)
                 }
             }
             .pickerStyle(.segmented)
@@ -203,7 +203,7 @@ struct StatusTabView: View {
 
     private func sectionCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text(String(localized: title))
+            Text(NSLocalizedString(title, comment: ""))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
