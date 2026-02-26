@@ -18,6 +18,7 @@ struct MessageBubbleView: View {
     let onRetryUpload: () -> Void
     let onRetryText: () -> Void
     let onOpenImage: ((Message, URL) -> Void)?
+    let onLongPress: (() -> Void)?
     let searchHighlightRanges: [NSRange]
     let isStarred: Bool
     let onForward: (() -> Void)?
@@ -31,6 +32,9 @@ struct MessageBubbleView: View {
     @State private var selectedImageURL: URL?
     @State private var selectedVideoURL: URL?
 
+    private let bubbleCornerRadius: CGFloat = 22
+    private let bubbleTail = CGSize(width: 10, height: 8)
+
     private var isOwn: Bool {
         message.senderId == currentUserID
     }
@@ -43,7 +47,7 @@ struct MessageBubbleView: View {
         HStack {
             if isOwn { Spacer(minLength: 36) }
 
-            VStack(alignment: isOwn ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isOwn ? .trailing : .leading, spacing: 6) {
                 if let reply = message.replyTo {
                     replyPreview(reply)
                 }
@@ -74,13 +78,47 @@ struct MessageBubbleView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(bubbleBackground)
-            .clipShape(RoundedRectangle(cornerRadius: PingyRadius.bubble, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                GlassMessageBubbleShape(
+                    cornerRadius: bubbleCornerRadius,
+                    tailSize: bubbleTail,
+                    isOwn: isOwn
+                )
+                .fill(.ultraThinMaterial)
+            )
+            .overlay {
+                GlassMessageBubbleShape(
+                    cornerRadius: bubbleCornerRadius,
+                    tailSize: bubbleTail,
+                    isOwn: isOwn
+                )
+                .fill(bubbleTint)
+            }
             .overlay(
-                RoundedRectangle(cornerRadius: PingyRadius.bubble, style: .continuous)
-                    .stroke(isOwn ? Color.clear : PingyTheme.border, lineWidth: 1)
+                GlassMessageBubbleShape(
+                    cornerRadius: bubbleCornerRadius,
+                    tailSize: bubbleTail,
+                    isOwn: isOwn
+                )
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.9)
+            )
+            .overlay(alignment: .top) {
+                GlassMessageBubbleShape(
+                    cornerRadius: bubbleCornerRadius,
+                    tailSize: bubbleTail,
+                    isOwn: isOwn
+                )
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.24), Color.clear],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                )
+                .padding(.horizontal, 1)
+                .padding(.top, 1)
             )
             .overlay(alignment: .leading) {
                 if swipeOffsetX > 24 {
@@ -95,6 +133,10 @@ struct MessageBubbleView: View {
             .onTapGesture(count: 2) {
                 PingyHaptics.softTap()
                 onReact("\u{2764}\u{FE0F}")
+            }
+            .onLongPressGesture(minimumDuration: 0.26) {
+                PingyHaptics.softTap()
+                onLongPress?()
             }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 14)
@@ -111,56 +153,6 @@ struct MessageBubbleView: View {
                         onReply()
                     }
             )
-            .contextMenu {
-                if !renderedText.isEmpty {
-                    Button {
-                        UIPasteboard.general.string = renderedText
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                }
-
-                Button {
-                    onReply()
-                } label: {
-                    Label("Reply", systemImage: "arrowshape.turn.up.left")
-                }
-
-                Menu("React") {
-                    ForEach(reactionEmojis, id: \.self) { emoji in
-                        Button(emoji) {
-                            onReact(emoji)
-                        }
-                    }
-                }
-
-                if let onForward {
-                    Button {
-                        onForward()
-                    } label: {
-                        Label("Forward", systemImage: "arrowshape.turn.up.right")
-                    }
-                }
-
-                if let onToggleStar {
-                    Button {
-                        onToggleStar()
-                    } label: {
-                        Label(
-                            isStarred ? "Unstar" : "Star",
-                            systemImage: isStarred ? "star.slash" : "star"
-                        )
-                    }
-                }
-
-                if let onDeleteForMe {
-                    Button(role: .destructive) {
-                        onDeleteForMe()
-                    } label: {
-                        Label("Delete for me", systemImage: "trash")
-                    }
-                }
-            }
 
             if !isOwn { Spacer(minLength: 36) }
         }
@@ -184,15 +176,27 @@ struct MessageBubbleView: View {
         }
     }
 
-    private var bubbleBackground: some ShapeStyle {
+    private var bubbleTint: some ShapeStyle {
         if isOwn {
             return AnyShapeStyle(LinearGradient(
-                colors: [PingyTheme.sentBubbleStart, PingyTheme.sentBubbleEnd],
+                colors: [
+                    Color(red: 0.17, green: 0.66, blue: 0.75).opacity(0.66),
+                    Color(red: 0.10, green: 0.36, blue: 0.54).opacity(0.62),
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ))
         }
-        return AnyShapeStyle(PingyTheme.receivedBubble)
+        return AnyShapeStyle(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.18, green: 0.22, blue: 0.30).opacity(0.54),
+                    Color(red: 0.08, green: 0.11, blue: 0.18).opacity(0.50),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
     }
 
     @ViewBuilder
@@ -794,5 +798,62 @@ struct VoiceMessagePlayerView: View {
         progress = 0
         timer?.invalidate()
         timer = nil
+    }
+}
+
+private struct GlassMessageBubbleShape: Shape {
+    let cornerRadius: CGFloat
+    let tailSize: CGSize
+    let isOwn: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let tailHeight = max(6, tailSize.height)
+        let tailWidth = max(8, tailSize.width)
+        let bodyRect = CGRect(
+            x: rect.minX,
+            y: rect.minY,
+            width: rect.width,
+            height: max(1, rect.height - tailHeight)
+        )
+
+        var path = Path()
+        path.addRoundedRect(
+            in: bodyRect,
+            cornerSize: CGSize(width: cornerRadius, height: cornerRadius)
+        )
+
+        let baseY = bodyRect.maxY - 2
+
+        if isOwn {
+            let startX = bodyRect.maxX - cornerRadius * 0.55
+            path.move(to: CGPoint(x: startX, y: baseY))
+            path.addCurve(
+                to: CGPoint(x: startX + tailWidth, y: baseY + tailHeight * 0.46),
+                control1: CGPoint(x: startX + tailWidth * 0.28, y: baseY + 1),
+                control2: CGPoint(x: startX + tailWidth * 0.86, y: baseY + tailHeight * 0.22)
+            )
+            path.addCurve(
+                to: CGPoint(x: startX + tailWidth * 0.06, y: baseY + tailHeight * 0.12),
+                control1: CGPoint(x: startX + tailWidth * 0.68, y: baseY + tailHeight * 0.9),
+                control2: CGPoint(x: startX + tailWidth * 0.26, y: baseY + tailHeight * 0.46)
+            )
+            path.closeSubpath()
+        } else {
+            let startX = bodyRect.minX + cornerRadius * 0.55
+            path.move(to: CGPoint(x: startX, y: baseY))
+            path.addCurve(
+                to: CGPoint(x: startX - tailWidth, y: baseY + tailHeight * 0.46),
+                control1: CGPoint(x: startX - tailWidth * 0.28, y: baseY + 1),
+                control2: CGPoint(x: startX - tailWidth * 0.86, y: baseY + tailHeight * 0.22)
+            )
+            path.addCurve(
+                to: CGPoint(x: startX - tailWidth * 0.06, y: baseY + tailHeight * 0.12),
+                control1: CGPoint(x: startX - tailWidth * 0.68, y: baseY + tailHeight * 0.9),
+                control2: CGPoint(x: startX - tailWidth * 0.26, y: baseY + tailHeight * 0.46)
+            )
+            path.closeSubpath()
+        }
+
+        return path
     }
 }

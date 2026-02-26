@@ -38,6 +38,8 @@ struct ChatDetailView: View {
     @State private var chatOpenedAt: Date = .distantPast
     @State private var isChatLocked = false
     @State private var unlockPasscode = ""
+    @State private var contextualMessage: Message?
+    @State private var messageFramesByID: [String: CGRect] = [:]
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
@@ -62,6 +64,20 @@ struct ChatDetailView: View {
             if isChatLocked {
                 chatLockOverlay
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        .coordinateSpace(name: "chat-root-space")
+        .overlay {
+            GeometryReader { proxy in
+                if let contextualMessage,
+                   let frame = messageFramesByID[contextualMessage.id]
+                {
+                    floatingMessageContextMenu(
+                        for: contextualMessage,
+                        frame: frame,
+                        canvasSize: proxy.size
+                    )
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -106,6 +122,7 @@ struct ChatDetailView: View {
             }
             viewModel.sendTyping(false)
             viewModel.sendRecordingIndicator(false)
+            contextualMessage = nil
         }
         .onChange(of: isContactInfoPresented) { presented in
             if !presented {
@@ -326,79 +343,130 @@ struct ChatDetailView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: PingySpacing.sm) {
-            if horizontalSizeClass == .compact {
-                Button {
-                    viewModel.isCompactChatDetailPresented = false
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(PingyTheme.primaryStrong)
-                        .frame(width: 34, height: 34)
-                        .background(PingyTheme.surfaceElevated)
-                        .clipShape(Circle())
+        ZStack(alignment: .top) {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .stroke(Color.white.opacity(0.09), lineWidth: 0.9)
+                )
+                .overlay(alignment: .top) {
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.20),
+                                    Color.clear,
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(height: 24)
+                        .allowsHitTesting(false)
                 }
-                .buttonStyle(PingyPressableButtonStyle())
-            }
+                .shadow(color: Color.black.opacity(0.3), radius: 16, x: 0, y: 9)
 
-            Button {
-                isContactInfoPresented = true
-            } label: {
+            VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    AvatarView(
-                        url: conversation.participantAvatarUrl,
-                        fallback: participantDisplayName,
-                        size: 38,
-                        cornerRadius: 19
-                    )
+                    if horizontalSizeClass == .compact {
+                        Button {
+                            viewModel.isCompactChatDetailPresented = false
+                            dismiss()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(Color.white.opacity(0.95))
+                                .frame(width: 42, height: 42)
+                                .background(.ultraThinMaterial)
+                                .overlay(
+                                    Circle().stroke(Color.white.opacity(0.13), lineWidth: 0.8)
+                                )
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.2), radius: 8, y: 3)
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+                    }
 
-                    VStack(alignment: .leading, spacing: 1) {
+                    Spacer()
+
+                    HStack(spacing: 10) {
+                        Button {
+                            startVoiceCall()
+                        } label: {
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.92))
+                                .frame(width: 42, height: 42)
+                                .background(.ultraThinMaterial)
+                                .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 0.8))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.2), radius: 8, y: 3)
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+
+                        Button {
+                            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                                isSearchMode.toggle()
+                            }
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.92))
+                                .frame(width: 42, height: 42)
+                                .background(.ultraThinMaterial)
+                                .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 0.8))
+                                .clipShape(Circle())
+                                .shadow(color: Color.black.opacity(0.2), radius: 8, y: 3)
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+
+                Button {
+                    isContactInfoPresented = true
+                } label: {
+                    VStack(spacing: 3) {
                         Text(participantDisplayName)
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                            .foregroundStyle(PingyTheme.textPrimary)
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.white.opacity(0.97))
                             .lineLimit(1)
 
                         Text(headerStatusText)
                             .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .foregroundStyle(headerStatusIsTyping ? PingyTheme.primaryStrong : PingyTheme.textSecondary)
+                            .foregroundStyle(
+                                headerStatusIsTyping
+                                    ? PingyTheme.primaryStrong.opacity(0.98)
+                                    : Color.white.opacity(0.68)
+                            )
                             .lineLimit(1)
                     }
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                    .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
-            Spacer()
-
-            Button {
-                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                    isSearchMode.toggle()
-                }
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(PingyTheme.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(PingyTheme.surfaceElevated)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(PingyPressableButtonStyle())
-
-            Button {
-                startVoiceCall()
-            } label: {
-                Image(systemName: "phone.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(PingyTheme.textSecondary)
-                    .frame(width: 34, height: 34)
-                    .background(PingyTheme.surfaceElevated)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(PingyPressableButtonStyle())
+            AvatarView(
+                url: conversation.participantAvatarUrl,
+                fallback: participantDisplayName,
+                size: 64,
+                cornerRadius: 32
+            )
+            .offset(y: -31)
+            .overlay(
+                Circle()
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
         }
-        .padding(.horizontal, PingySpacing.md)
-        .padding(.vertical, 10)
-        .background(PingyTheme.surface)
+        .frame(height: 110)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 
     private var searchBar: some View {
@@ -528,6 +596,9 @@ struct ChatDetailView: View {
                                     onOpenImage: { tappedMessage, _ in
                                         openMediaViewer(for: tappedMessage)
                                     },
+                                    onLongPress: {
+                                        presentFloatingActions(for: message)
+                                    },
                                     searchHighlightRanges: highlightRanges,
                                     isStarred: isStarred,
                                     onForward: {
@@ -540,6 +611,14 @@ struct ChatDetailView: View {
                                         viewModel.deleteMessageLocally(
                                             messageID: message.id,
                                             conversationID: conversation.conversationId
+                                        )
+                                    }
+                                )
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: ChatMessageFramePreferenceKey.self,
+                                            value: [message.id: geo.frame(in: .named("chat-root-space"))]
                                         )
                                     }
                                 )
@@ -573,6 +652,7 @@ struct ChatDetailView: View {
                     }
                     .onTapGesture {
                         isComposerFocused = false
+                        dismissFloatingActions()
                     }
                     .onAppear {
                         scrollViewportHeight = container.size.height
@@ -583,6 +663,9 @@ struct ChatDetailView: View {
                     }
                     .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
                         bottomAnchorY = value
+                    }
+                    .onPreferenceChange(ChatMessageFramePreferenceKey.self) { value in
+                        messageFramesByID.merge(value, uniquingKeysWith: { _, new in new })
                     }
                     .onChange(of: renderedMessages.count) { _ in
                         handleMessageListChange(using: reader)
@@ -757,6 +840,19 @@ struct ChatDetailView: View {
         GeometryReader { geometry in
             ZStack {
                 PingyTheme.wallpaperFallback(for: colorScheme)
+                SpaceParticleField(seed: conversation.conversationId.hashValue)
+                    .opacity(0.28)
+                RadialGradient(
+                    colors: [
+                        Color(red: 0.35, green: 0.72, blue: 0.82).opacity(0.22),
+                        Color.clear,
+                    ],
+                    center: .center,
+                    startRadius: 30,
+                    endRadius: 390
+                )
+                .blendMode(.screen)
+                .allowsHitTesting(false)
 
                 if let url = MediaURLResolver.resolve(conversation.wallpaperUrl ?? viewModel.currentUserSettings?.defaultWallpaperUrl) {
                     if url.isFileURL, let image = UIImage(contentsOfFile: url.path) {
@@ -774,6 +870,16 @@ struct ChatDetailView: View {
                         }
                     }
                 }
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.14),
+                        Color.black.opacity(0.28),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
@@ -987,6 +1093,173 @@ struct ChatDetailView: View {
         UserDefaults.standard.set(Array(starredMessageIDs), forKey: starredMessagesKey)
     }
 
+    private var floatingReactions: [String] {
+        [
+            "\u{2764}\u{FE0F}",
+            "\u{1F604}",
+            "\u{1F979}",
+            "\u{1F62D}",
+            "\u{1F621}",
+            "\u{1F44D}",
+            "\u{1F44E}",
+        ]
+    }
+
+    private func presentFloatingActions(for message: Message) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            contextualMessage = message
+        }
+        PingyHaptics.softTap()
+    }
+
+    private func dismissFloatingActions() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            contextualMessage = nil
+        }
+    }
+
+    @ViewBuilder
+    private func floatingMessageContextMenu(
+        for message: Message,
+        frame: CGRect,
+        canvasSize: CGSize
+    ) -> some View {
+        let menuWidth: CGFloat = 228
+        let actionRowHeight: CGFloat = 50
+        let availableActions = floatingActions(for: message)
+        let menuHeight = CGFloat(availableActions.count) * actionRowHeight
+        let emojiWidth: CGFloat = 308
+        let emojiHeight: CGFloat = 50
+
+        let bubbleCenterX = min(max(frame.midX, (emojiWidth / 2) + 16), canvasSize.width - (emojiWidth / 2) - 16)
+        let emojiOriginY = max(96, frame.minY - emojiHeight - 10)
+        let menuOriginY = min(max(emojiOriginY + emojiHeight + 10, 112), canvasSize.height - menuHeight - 94)
+        let rawMenuX = message.senderId == viewModel.currentUserID
+            ? frame.maxX - menuWidth
+            : frame.minX
+        let menuOriginX = min(max(16, rawMenuX), canvasSize.width - menuWidth - 16)
+
+        ZStack(alignment: .topLeading) {
+            Color.black.opacity(0.24)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    dismissFloatingActions()
+                }
+
+            HStack(spacing: 14) {
+                ForEach(floatingReactions, id: \.self) { emoji in
+                    Button {
+                        Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
+                        dismissFloatingActions()
+                    } label: {
+                        Text(emoji)
+                            .font(.system(size: 30))
+                    }
+                    .buttonStyle(PingyPressableButtonStyle())
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(width: emojiWidth, height: emojiHeight)
+            .background(.ultraThinMaterial)
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.11), lineWidth: 0.9)
+            )
+            .clipShape(Capsule())
+            .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
+            .position(x: bubbleCenterX, y: emojiOriginY + (emojiHeight / 2))
+            .transition(.scale(scale: 0.92).combined(with: .opacity))
+
+            VStack(spacing: 0) {
+                ForEach(Array(availableActions.enumerated()), id: \.offset) { index, action in
+                    Button {
+                        handleFloatingAction(action, for: message)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: action.icon)
+                                .font(.system(size: 20, weight: .semibold))
+                                .frame(width: 24)
+                            Text(action.title)
+                                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                            Spacer()
+                        }
+                        .foregroundStyle(action.tint)
+                        .padding(.horizontal, 16)
+                        .frame(height: actionRowHeight)
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < availableActions.count - 1 {
+                        Divider()
+                            .overlay(Color.white.opacity(0.09))
+                    }
+                }
+            }
+            .frame(width: menuWidth)
+            .background(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 0.9)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
+            .position(
+                x: menuOriginX + (menuWidth / 2),
+                y: menuOriginY + (menuHeight / 2)
+            )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+        .zIndex(150)
+    }
+
+    private func floatingActions(for message: Message) -> [FloatingAction] {
+        [
+            FloatingAction(kind: .reply, title: "Reply", icon: "arrowshape.turn.up.left", tint: .white),
+            FloatingAction(kind: .forward, title: "Forward", icon: "arrowshape.turn.up.right", tint: .white),
+            FloatingAction(
+                kind: .star,
+                title: starredMessageIDs.contains(message.id) ? "Unstar" : "Star",
+                icon: starredMessageIDs.contains(message.id) ? "star.slash" : "star",
+                tint: .white
+            ),
+            FloatingAction(kind: .edit, title: "Edit", icon: "pencil", tint: .white),
+            FloatingAction(kind: .delete, title: "Delete", icon: "trash", tint: Color(red: 1, green: 0.48, blue: 0.48)),
+        ]
+    }
+
+    private func handleFloatingAction(_ action: FloatingAction, for message: Message) {
+        PingyHaptics.softTap()
+        dismissFloatingActions()
+
+        switch action.kind {
+        case .reply:
+            viewModel.setReplyTarget(message)
+        case .forward:
+            forwardMessage(message)
+        case .star:
+            toggleStar(for: message.id)
+        case .edit:
+            guard message.senderId == viewModel.currentUserID else {
+                viewModel.showTransientNotice("You can edit only your messages.", style: .warning)
+                return
+            }
+            let sourceText = viewModel.decryptedBody(for: message)
+                ?? MessageBodyFormatter.previewText(from: message.body, fallback: "")
+            let normalized = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                viewModel.showTransientNotice("Edit is available for text messages.", style: .warning)
+                return
+            }
+            draft = normalized
+            isComposerFocused = true
+        case .delete:
+            viewModel.deleteMessageLocally(
+                messageID: message.id,
+                conversationID: conversation.conversationId
+            )
+        }
+    }
+
     private func isGrouped(index: Int, messages: [Message]) -> Bool {
         guard index > 0 else { return false }
 
@@ -1170,3 +1443,79 @@ private struct ChatBottomAnchorPreferenceKey: PreferenceKey {
         value = nextValue()
     }
 }
+
+private struct ChatMessageFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct FloatingAction {
+    enum Kind {
+        case reply
+        case forward
+        case star
+        case edit
+        case delete
+    }
+
+    let kind: Kind
+    let title: String
+    let icon: String
+    let tint: Color
+}
+
+private struct SpaceParticleField: View {
+    let seed: Int
+
+    var body: some View {
+        GeometryReader { proxy in
+            let points = generatedPoints(count: 64)
+
+            ZStack {
+                ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                    Circle()
+                        .fill(Color.white.opacity(index % 3 == 0 ? 0.17 : 0.09))
+                        .frame(width: index % 5 == 0 ? 3.2 : 2, height: index % 5 == 0 ? 3.2 : 2)
+                        .position(
+                            x: point.x * proxy.size.width,
+                            y: point.y * proxy.size.height
+                        )
+                        .blur(radius: index % 5 == 0 ? 1.1 : 0)
+                }
+            }
+            .drawingGroup(opaque: false, colorMode: .linear)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func generatedPoints(count: Int) -> [CGPoint] {
+        var generator = SeededGenerator(seed: UInt64(abs(seed) + 1))
+        return (0 ..< count).map { _ in
+            CGPoint(
+                x: CGFloat.random(in: 0 ... 1, using: &generator),
+                y: CGFloat.random(in: 0 ... 1, using: &generator)
+            )
+        }
+    }
+}
+
+private struct SeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0xA5A5A5A5A5A5A5A5 : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state ^= state << 13
+        state ^= state >> 7
+        state ^= state << 17
+        return state
+    }
+}
+
+
+

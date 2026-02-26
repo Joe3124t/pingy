@@ -104,9 +104,6 @@ struct PingyTabShellView: View {
     }
 
     private var shouldShowBottomBar: Bool {
-        if selectedTab == .chats, messengerViewModel.isCompactChatDetailPresented {
-            return false
-        }
         return true
     }
 

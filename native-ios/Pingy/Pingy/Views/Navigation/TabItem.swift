@@ -60,8 +60,19 @@ struct TabItem: View {
         } label: {
             VStack(spacing: 3) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: isSelected ? 21 : 19, weight: .semibold))
-                    .scaleEffect(isSelected ? 1.1 : 1.0)
+                    .font(
+                        .system(
+                            size: tab.isPrimary
+                                ? (isSelected ? 24 : 22)
+                                : (isSelected ? 20 : 18),
+                            weight: .semibold
+                        )
+                    )
+                    .scaleEffect(
+                        tab.isPrimary
+                            ? (isSelected ? 1.12 : 1.05)
+                            : (isSelected ? 1.08 : 1.0)
+                    )
                     .animation(.spring(response: 0.3, dampingFraction: 0.82), value: isSelected)
 
                 Text(LocalizedStringKey(tab.title))
@@ -70,8 +81,19 @@ struct TabItem: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.76))
+            .foregroundStyle(
+                isSelected
+                    ? Color.white
+                    : (tab.isPrimary ? Color.white.opacity(0.86) : Color.white.opacity(0.74))
+            )
             .offset(x: parallaxX)
+            .shadow(
+                color: tab.isPrimary && isSelected
+                    ? Color(red: 0.13, green: 0.86, blue: 0.78).opacity(0.36)
+                    : Color.clear,
+                radius: 10,
+                y: 3
+            )
             .overlay(alignment: .topTrailing) {
                 if tab == .chats, unreadCount > 0 {
                     Text("\(min(99, unreadCount))")
