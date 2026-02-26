@@ -22,10 +22,10 @@ struct ProfileView: View {
             .padding(PingySpacing.md)
         }
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("My Profile")
+        .navigationTitle(String(localized: "My Profile"))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
+                Button(String(localized: "Done")) {
                     dismiss()
                 }
                 .buttonStyle(PingyPressableButtonStyle())
@@ -90,7 +90,7 @@ struct ProfileView: View {
             }
 
             VStack(spacing: 4) {
-                Text(viewModel.currentUserSettings?.username ?? "Pingy user")
+                Text(viewModel.currentUserSettings?.username ?? String(localized: "Pingy User"))
                     .font(.system(size: 27, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
                 Text(viewModel.currentUserSettings?.phoneNumber ?? "")
@@ -103,20 +103,20 @@ struct ProfileView: View {
 
     private var identityCard: some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Profile")
+            Text(String(localized: "Profile"))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
-            labeledTextField("Username", text: $username)
+            labeledTextField(String(localized: "Username"), text: $username)
 
-            infoRow(title: "Phone number", value: viewModel.currentUserSettings?.phoneNumber ?? "-")
+            infoRow(title: String(localized: "Phone number"), value: viewModel.currentUserSettings?.phoneNumber ?? "-")
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Bio")
+                Text(String(localized: "Bio"))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
 
-                TextField("Add bio...", text: $bio, axis: .vertical)
+                TextField(String(localized: "Add bio..."), text: $bio, axis: .vertical)
                     .lineLimit(3 ... 6)
                     .padding(12)
                     .background(PingyTheme.inputBackground)
@@ -127,8 +127,8 @@ struct ProfileView: View {
                     )
             }
 
-            labeledTextField("Website", text: $websiteLink, placeholder: "https://...")
-            labeledTextField("Links", text: $socialLink, placeholder: "@username / profile link")
+            labeledTextField(String(localized: "Website"), text: $websiteLink, placeholder: String(localized: "https://..."))
+            labeledTextField(String(localized: "Links"), text: $socialLink, placeholder: String(localized: "@username / profile link"))
 
             Button {
                 Task {
@@ -143,7 +143,7 @@ struct ProfileView: View {
                     if viewModel.isSavingProfile {
                         ProgressView().tint(.white)
                     }
-                    Text("Save profile")
+                    Text(String(localized: "Save profile"))
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
                 }
                 .frame(maxWidth: .infinity)
@@ -158,7 +158,7 @@ struct ProfileView: View {
             if showSavedBadge {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                    Text("Saved successfully")
+                    Text(String(localized: "Saved successfully"))
                 }
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.success)

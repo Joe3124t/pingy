@@ -20,7 +20,7 @@ struct ContactsTabView: View {
             }
             .padding(PingySpacing.md)
             .background(PingyTheme.background.ignoresSafeArea())
-            .navigationTitle("Contacts")
+            .navigationTitle(String(localized: "Contacts"))
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -54,7 +54,7 @@ struct ContactsTabView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(PingyTheme.textSecondary)
 
-            TextField("Search contacts", text: $query)
+            TextField(String(localized: "Search contacts"), text: $query)
                 .font(.system(size: 17, weight: .regular, design: .rounded))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -123,7 +123,7 @@ struct ContactsTabView: View {
     @ViewBuilder
     private var searchResultList: some View {
         if viewModel.isSyncingContacts {
-            ProgressView("Syncing contacts...")
+            ProgressView(String(localized: "Syncing contacts..."))
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -133,7 +133,7 @@ struct ContactsTabView: View {
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
 
-                Button("Retry") {
+                Button(String(localized: "Retry")) {
                     Task {
                         await viewModel.requestContactAccessAndSync()
                         viewModel.searchQuery = query
@@ -150,7 +150,7 @@ struct ContactsTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else if viewModel.contactSearchResults.isEmpty {
-            Text("No matching contacts found on Pingy.")
+            Text(String(localized: "No matching contacts found on Pingy."))
                 .font(.system(size: 15, weight: .medium, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

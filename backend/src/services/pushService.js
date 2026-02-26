@@ -23,7 +23,7 @@ const isWebPushConfigured = () =>
   Boolean(env.WEB_PUSH_PUBLIC_KEY && env.WEB_PUSH_PRIVATE_KEY && env.WEB_PUSH_SUBJECT);
 
 const isAPNsConfigured = () =>
-  Boolean(env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_BUNDLE_ID && env.APNS_PRIVATE_KEY);
+  Boolean(env.APNS_KEY_ID && env.APNS_TEAM_ID && env.APNS_PRIVATE_KEY);
 
 const isPushDeliveryConfigured = () => isWebPushConfigured() || isAPNsConfigured();
 
@@ -89,6 +89,39 @@ const parseAPNSTokenFromEndpoint = (endpoint) => {
 const isAPNSEndpoint = (endpoint) => Boolean(parseAPNSTokenFromEndpoint(endpoint));
 
 const getWebPushPublicKey = () => env.WEB_PUSH_PUBLIC_KEY || null;
+
+const parseTopicMarker = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const markerPrefixes = ['topic:', 'apns-topic:', 'bundle:', 'apns:'];
+  const lowered = raw.toLowerCase();
+  const marker = markerPrefixes.find((prefix) => lowered.startsWith(prefix));
+
+  if (!marker) {
+    return null;
+  }
+
+  const topic = raw.slice(marker.length).trim();
+  if (!topic) {
+    return null;
+  }
+
+  // Accept typical iOS bundle identifiers only.
+  if (!/^[A-Za-z0-9][A-Za-z0-9.\-]{2,120}$/.test(topic)) {
+    return null;
+  }
+
+  return topic;
+};
+
+const resolveAPNSTopic = (subscription) =>
+  parseTopicMarker(subscription?.p256dh) ||
+  parseTopicMarker(subscription?.auth) ||
+  String(env.APNS_BUNDLE_ID || '').trim() ||
+  null;
 
 const getMessagePreview = (message) => {
   if (message?.type === 'voice') {
@@ -170,9 +203,24 @@ const shouldDeleteAPNSSubscription = ({ statusCode, reason }) => {
   return false;
 };
 
-const sendAPNSNotification = async ({ deviceToken, payload, conversationId, authority }) =>
+const sendAPNSNotification = async ({
+  deviceToken,
+  payload,
+  conversationId,
+  authority,
+  topic,
+}) =>
   new Promise((resolve) => {
     try {
+      if (!topic) {
+        resolve({
+          ok: false,
+          statusCode: 0,
+          reason: 'APNs topic is missing',
+        });
+        return;
+      }
+
       const authToken = getAPNsAuthToken();
       const client = http2.connect(authority);
       let resolved = false;
@@ -202,7 +250,7 @@ const sendAPNSNotification = async ({ deviceToken, payload, conversationId, auth
         ':method': 'POST',
         ':path': `/3/device/${deviceToken}`,
         authorization: `bearer ${authToken}`,
-        'apns-topic': env.APNS_BUNDLE_ID,
+        'apns-topic': topic,
         'apns-push-type': 'alert',
         'apns-priority': '10',
         'apns-collapse-id': conversationId || 'pingy-message',
@@ -261,7 +309,12 @@ const sendAPNSNotification = async ({ deviceToken, payload, conversationId, auth
     }
   });
 
-const sendAPNSNotificationWithFallback = async ({ deviceToken, payload, conversationId }) => {
+const sendAPNSNotificationWithFallback = async ({
+  deviceToken,
+  payload,
+  conversationId,
+  topic,
+}) => {
   const authorities = getAPNsAuthorities();
   let lastResult = {
     ok: false,
@@ -275,6 +328,7 @@ const sendAPNSNotificationWithFallback = async ({ deviceToken, payload, conversa
       payload,
       conversationId,
       authority,
+      topic,
     });
 
     if (result.ok) {
@@ -333,14 +387,31 @@ const sendMessagePushToUser = async ({ recipientUserId, message, badgeCount = 0 
           return { ok: false, skipped: true };
         }
 
+        const topic = resolveAPNSTopic(subscription);
+        if (!topic) {
+          return { ok: false, skipped: true };
+        }
+
         const result = await sendAPNSNotificationWithFallback({
           deviceToken: apnsDeviceToken,
           payload: apnsPayload,
           conversationId: message?.conversationId,
+          topic,
         });
 
         if (!result.ok && shouldDeleteAPNSSubscription(result)) {
           await deleteAnyPushSubscriptionByEndpoint(subscription.endpoint);
+        }
+
+        if (!result.ok) {
+          // Keep this log concise to help production debugging without leaking payload contents.
+          // eslint-disable-next-line no-console
+          console.error('APNs delivery failed', {
+            recipientUserId,
+            messageId: message?.id,
+            statusCode: result.statusCode,
+            reason: result.reason,
+          });
         }
 
         return { ok: result.ok };

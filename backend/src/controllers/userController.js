@@ -37,6 +37,7 @@ const { normalizePhoneNumber } = require('../utils/phone');
 const {
   isWebPushConfigured,
   isAPNsConfigured,
+  isAPNSEndpoint,
   isPushDeliveryConfigured,
   getWebPushPublicKey,
 } = require('../services/pushService');
@@ -506,10 +507,20 @@ const saveMyPushSubscriptionController = asyncHandler(async (req, res) => {
   }
 
   const subscription = req.body?.subscription;
+  const endpoint = String(subscription?.endpoint || '').trim();
+  const apnsEndpoint = isAPNSEndpoint(endpoint);
+
+  if (apnsEndpoint && !isAPNsConfigured()) {
+    throw new HttpError(503, 'APNs notifications are not configured on server');
+  }
+
+  if (!apnsEndpoint && !isWebPushConfigured()) {
+    throw new HttpError(503, 'Web push notifications are not configured on server');
+  }
 
   await upsertUserPushSubscription({
     userId: req.user.id,
-    endpoint: subscription.endpoint,
+    endpoint,
     p256dh: subscription.keys.p256dh,
     auth: subscription.keys.auth,
     userAgent: req.headers['user-agent'] || null,

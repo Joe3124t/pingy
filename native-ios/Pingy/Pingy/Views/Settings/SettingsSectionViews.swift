@@ -11,7 +11,7 @@ struct AccountSettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("Account") {
+            Section(String(localized: "Account")) {
                 NavigationLink {
                     ChangePhoneNumberView(viewModel: viewModel)
                 } label: {
@@ -23,7 +23,7 @@ struct AccountSettingsSectionView: View {
                 }
             }
 
-            Section("Session") {
+            Section(String(localized: "Session")) {
                 Button {
                     showLogoutConfirmation = true
                 } label: {
@@ -36,7 +36,7 @@ struct AccountSettingsSectionView: View {
                 .buttonStyle(.plain)
             }
 
-            Section("Danger zone") {
+            Section(String(localized: "Danger zone")) {
                 Button(role: .destructive) {
                     showDeleteAccountConfirmation = true
                 } label: {
@@ -52,26 +52,26 @@ struct AccountSettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Account")
+        .navigationTitle(String(localized: "Account"))
         .confirmationDialog(
-            "Logout from this device?",
+            String(localized: "Logout from this device?"),
             isPresented: $showLogoutConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Logout", role: .destructive) {
+            Button(String(localized: "Logout"), role: .destructive) {
                 Task { await viewModel.logout() }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(String(localized: "Cancel"), role: .cancel) {}
         }
         .confirmationDialog(
-            "Delete your account permanently?",
+            String(localized: "Delete your account permanently?"),
             isPresented: $showDeleteAccountConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete account", role: .destructive) {
+            Button(String(localized: "Delete account"), role: .destructive) {
                 Task { await viewModel.deleteMyAccount() }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(String(localized: "Cancel"), role: .cancel) {}
         }
     }
 
@@ -83,10 +83,10 @@ struct AccountSettingsSectionView: View {
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle))
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
             }
@@ -103,25 +103,35 @@ struct NotificationSettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("Messages") {
-                Toggle("Message notifications", isOn: $messageNotifications)
+            Section(String(localized: "Messages")) {
+                Toggle(String(localized: "Message notifications"), isOn: $messageNotifications)
                     .tint(PingyTheme.primary)
-                Toggle("Group notifications", isOn: $groupNotifications)
+                Toggle(String(localized: "Group notifications"), isOn: $groupNotifications)
                     .tint(PingyTheme.primary)
-                Toggle("Preview message", isOn: $previewEnabled)
+                Toggle(String(localized: "Preview message"), isOn: $previewEnabled)
                     .tint(PingyTheme.primary)
             }
 
-            Section("Sound") {
-                Picker("Notification sound", selection: $selectedNotificationSound) {
-                    Text("Default").tag("Default")
-                    Text("Ripple").tag("Ripple")
-                    Text("Echo").tag("Echo")
+            Section(String(localized: "Sound")) {
+                Picker(String(localized: "Notification sound"), selection: $selectedNotificationSound) {
+                    Text(String(localized: "Default")).tag("Default")
+                    Text(String(localized: "Ripple")).tag("Ripple")
+                    Text(String(localized: "Echo")).tag("Echo")
                 }
             }
 
-            Section("System access") {
-                Button("Configure iOS notification permission") {
+            Section(String(localized: "System access")) {
+                if !appEnvironment.pushManager.serverAPNsEnabled {
+                    Text(String(localized: "APNs server is not configured. Remote notifications are currently unavailable."))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.red)
+                } else if let issue = appEnvironment.pushManager.registrationIssue {
+                    Text(issue)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.red)
+                }
+
+                Button(String(localized: "Configure iOS notification permission")) {
                     Task { await appEnvironment.pushManager.requestPermission() }
                 }
                 .foregroundStyle(PingyTheme.primaryStrong)
@@ -130,7 +140,7 @@ struct NotificationSettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Notifications")
+        .navigationTitle(String(localized: "Notifications"))
     }
 }
 
@@ -148,37 +158,37 @@ struct PrivacySecuritySettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("Visibility") {
-                Picker("Last seen", selection: $lastSeenVisibility) {
-                    Text("Everyone").tag("Everyone")
-                    Text("Contacts").tag("Contacts")
-                    Text("Nobody").tag("Nobody")
+            Section(String(localized: "Visibility")) {
+                Picker(String(localized: "Last seen"), selection: $lastSeenVisibility) {
+                    Text(String(localized: "Everyone")).tag("Everyone")
+                    Text(String(localized: "Contacts")).tag("Contacts")
+                    Text(String(localized: "Nobody")).tag("Nobody")
                 }
 
-                Toggle("Online status", isOn: $showOnlineStatus)
+                Toggle(String(localized: "Online status"), isOn: $showOnlineStatus)
                     .tint(PingyTheme.primary)
 
-                Toggle("Read receipts", isOn: $readReceipts)
+                Toggle(String(localized: "Read receipts"), isOn: $readReceipts)
                     .tint(PingyTheme.primary)
 
-                Picker("Profile photo privacy", selection: $profilePhotoPrivacy) {
-                    Text("Everyone").tag("Everyone")
-                    Text("Contacts").tag("Contacts")
-                    Text("Nobody").tag("Nobody")
+                Picker(String(localized: "Profile photo privacy"), selection: $profilePhotoPrivacy) {
+                    Text(String(localized: "Everyone")).tag("Everyone")
+                    Text(String(localized: "Contacts")).tag("Contacts")
+                    Text(String(localized: "Nobody")).tag("Nobody")
                 }
 
-                Picker("Status privacy", selection: $statusPrivacy) {
-                    Text("My contacts").tag("contacts")
-                    Text("Custom").tag("custom")
+                Picker(String(localized: "Status privacy"), selection: $statusPrivacy) {
+                    Text(String(localized: "My contacts")).tag("contacts")
+                    Text(String(localized: "Custom")).tag("custom")
                 }
             }
 
-            Section("Security") {
+            Section(String(localized: "Security")) {
                 NavigationLink {
                     BlockedUsersListView(viewModel: viewModel)
                 } label: {
                     HStack {
-                        Text("Blocked users")
+                        Text(String(localized: "Blocked users"))
                         Spacer()
                         Text("\(viewModel.blockedUsers.count)")
                             .foregroundStyle(PingyTheme.textSecondary)
@@ -189,7 +199,7 @@ struct PrivacySecuritySettingsSectionView: View {
                     SettingsView(viewModel: viewModel, mode: .twoStep, showsCloseButton: false)
                 } label: {
                     HStack {
-                        Text("Two-step verification")
+                        Text(String(localized: "Two-step verification"))
                     }
                 }
             }
@@ -197,7 +207,7 @@ struct PrivacySecuritySettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Privacy & Security")
+        .navigationTitle(String(localized: "Privacy & Security"))
         .onAppear {
             showOnlineStatus = viewModel.currentUserSettings?.showOnlineStatus ?? true
             readReceipts = viewModel.currentUserSettings?.readReceiptsEnabled ?? true
@@ -249,32 +259,32 @@ struct DataStorageSettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("Storage") {
+            Section(String(localized: "Storage")) {
                 metricsRow(title: "Image cache", value: formatBytes(Int64(URLCache.shared.currentDiskUsage)))
                 metricsRow(title: "Memory cache", value: formatBytes(Int64(URLCache.shared.currentMemoryUsage)))
                 metricsRow(title: "Conversations", value: "\(messengerViewModel.conversations.count)")
             }
 
-            Section("Network usage") {
+            Section(String(localized: "Network usage")) {
                 metricsRow(title: "Uploaded", value: formatBytes(networkUsage.uploadedBytes))
                 metricsRow(title: "Downloaded", value: formatBytes(networkUsage.downloadedBytes))
                 metricsRow(title: "Total", value: formatBytes(networkUsage.totalBytes))
             }
 
-            Section("Data options") {
-                Toggle("Chat backup", isOn: $chatBackupEnabled)
+            Section(String(localized: "Data options")) {
+                Toggle(String(localized: "Chat backup"), isOn: $chatBackupEnabled)
                     .tint(PingyTheme.primary)
-                Toggle("Auto-download media", isOn: $autoDownloadMedia)
+                Toggle(String(localized: "Auto-download media"), isOn: $autoDownloadMedia)
                     .tint(PingyTheme.primary)
             }
 
-            Section("Actions") {
-                Button("Clear cache") {
+            Section(String(localized: "Actions")) {
+                Button(String(localized: "Clear cache")) {
                     URLCache.shared.removeAllCachedResponses()
                 }
                 .foregroundStyle(PingyTheme.primaryStrong)
 
-                Button("Reset network usage") {
+                Button(String(localized: "Reset network usage")) {
                     networkUsage.reset()
                 }
                 .foregroundStyle(PingyTheme.primaryStrong)
@@ -283,12 +293,12 @@ struct DataStorageSettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Data & Storage")
+        .navigationTitle(String(localized: "Data & Storage"))
     }
 
     private func metricsRow(title: String, value: String) -> some View {
         HStack {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .foregroundStyle(PingyTheme.textSecondary)
             Spacer()
             Text(value)
@@ -324,7 +334,7 @@ struct AppearanceSettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Appearance")
+        .navigationTitle(String(localized: "Appearance"))
         .onAppear {
             defaultWallpaperURL = messengerViewModel.currentUserSettings?.defaultWallpaperUrl ?? ""
         }
@@ -358,10 +368,10 @@ struct AppearanceSettingsSectionView: View {
     }
 
     private var themeSection: some View {
-        Section("Theme") {
-            Picker("Appearance", selection: $themeManager.appearanceMode) {
+        Section(String(localized: "Theme")) {
+            Picker(String(localized: "Appearance"), selection: $themeManager.appearanceMode) {
                 ForEach(ThemeMode.allCases) { mode in
-                    Text(mode.displayName).tag(mode)
+                    Text(String(localized: mode.displayName)).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
@@ -369,12 +379,12 @@ struct AppearanceSettingsSectionView: View {
     }
 
     private var chatLayoutSection: some View {
-        Section("Chat layout") {
-            Toggle("Enter to send", isOn: $enterToSend)
+        Section(String(localized: "Chat layout")) {
+            Toggle(String(localized: "Enter to send"), isOn: $enterToSend)
                 .tint(PingyTheme.primary)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Font size")
+                Text(String(localized: "Font size"))
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(PingyTheme.textSecondary)
                 Slider(value: $chatFontScale, in: 0.85 ... 1.25, step: 0.05)
@@ -386,7 +396,7 @@ struct AppearanceSettingsSectionView: View {
 
     private var wallpaperSection: some View {
         Section {
-            TextField("Default wallpaper URL (optional)", text: $defaultWallpaperURL)
+            TextField(String(localized: "Default wallpaper URL (optional)"), text: $defaultWallpaperURL)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .onSubmit {
@@ -394,14 +404,14 @@ struct AppearanceSettingsSectionView: View {
                 }
 
             PhotosPicker(selection: $wallpaperItem, matching: .images) {
-                Label("Upload default wallpaper", systemImage: "photo")
+                Label(String(localized: "Upload default wallpaper"), systemImage: "photo")
                     .foregroundStyle(PingyTheme.primaryStrong)
             }
             .buttonStyle(PingyPressableButtonStyle())
         } header: {
-            Text("Wallpaper")
+            Text(String(localized: "Wallpaper"))
         } footer: {
-            Text("Changes in this section are saved automatically.")
+            Text(String(localized: "Changes in this section are saved automatically."))
         }
     }
 
@@ -428,7 +438,7 @@ struct AdvancedSettingsSectionView: View {
 
     var body: some View {
         List {
-            Section("General") {
+            Section(String(localized: "General")) {
                 NavigationLink {
                     LanguageSelectionView()
                 } label: {
@@ -437,7 +447,7 @@ struct AdvancedSettingsSectionView: View {
                             .frame(width: 24)
                             .foregroundStyle(PingyTheme.primaryStrong)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("App language")
+                            Text(String(localized: "App language"))
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .foregroundStyle(PingyTheme.textPrimary)
                             Text(localizedLanguageName(appLanguage))
@@ -447,14 +457,14 @@ struct AdvancedSettingsSectionView: View {
                     }
                 }
 
-                Button("Open iOS app settings") {
+                Button(String(localized: "Open iOS app settings")) {
                     guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
                     UIApplication.shared.open(url)
                 }
                 .foregroundStyle(PingyTheme.primaryStrong)
             }
 
-            Section("About") {
+            Section(String(localized: "About")) {
                 infoRow(title: "Version", value: appVersionString)
                 infoRow(title: "Build", value: appBuildString)
             }
@@ -462,7 +472,7 @@ struct AdvancedSettingsSectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Advanced")
+        .navigationTitle(String(localized: "Advanced"))
     }
 
     private var appVersionString: String {
@@ -475,7 +485,7 @@ struct AdvancedSettingsSectionView: View {
 
     private func infoRow(title: String, value: String) -> some View {
         HStack {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .foregroundStyle(PingyTheme.textSecondary)
             Spacer()
             Text(value)

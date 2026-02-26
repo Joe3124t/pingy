@@ -37,6 +37,6 @@ struct LanguageSelectionView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("App language")
+        .navigationTitle(String(localized: "App language"))
     }
 }

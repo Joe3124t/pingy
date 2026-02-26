@@ -41,7 +41,7 @@ struct TopBarView: View {
                     .shadow(color: PingyTheme.primary.opacity(isStatusActive ? 0.28 : 0.08), radius: 8, y: 3)
             }
             .buttonStyle(PingyPressableButtonStyle())
-            .accessibilityLabel("Status")
+            .accessibilityLabel(String(localized: "Status"))
         }
         .padding(.horizontal, compact ? 10 : 12)
         .padding(.vertical, compact ? 6 : 8)

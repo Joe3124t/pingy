@@ -302,7 +302,21 @@ final class MessengerViewModel: ObservableObject {
     }
 
     func contactPhoneNumber(for participantId: String) -> String? {
-        contactPhoneByUserId[participantId]
+        if let value = contactPhoneByUserId[participantId]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty
+        {
+            return value
+        }
+
+        if let conversationValue = conversations.first(where: { $0.participantId == participantId })?
+            .participantPhoneNumber?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !conversationValue.isEmpty
+        {
+            return conversationValue
+        }
+
+        return nil
     }
 
     func localAlias(for participantId: String) -> String? {
@@ -1537,13 +1551,14 @@ final class MessengerViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
     func uploadConversationWallpaper(
         imageData: Data,
         fileName: String,
         mimeType: String,
         blurIntensity: Int
-    ) async {
-        guard let conversationID = selectedConversationID else { return }
+    ) async -> Bool {
+        guard let conversationID = selectedConversationID else { return false }
         do {
             let event = try await conversationService.uploadConversationWallpaper(
                 conversationID: conversationID,
@@ -1553,14 +1568,17 @@ final class MessengerViewModel: ObservableObject {
                 blurIntensity: blurIntensity
             )
             applyConversationWallpaperEvent(event)
+            return true
         } catch {
             setError(from: error, fallback: "Couldn't update chat wallpaper on this device.")
+            return false
         }
     }
 
-    func updateConversationWallpaperBlur(_ blurIntensity: Int) async {
-        guard let conversationID = selectedConversationID else { return }
-        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else { return }
+    @discardableResult
+    func updateConversationWallpaperBlur(_ blurIntensity: Int) async -> Bool {
+        guard let conversationID = selectedConversationID else { return false }
+        guard let conversation = conversations.first(where: { $0.conversationId == conversationID }) else { return false }
         guard let wallpaperURL = conversation.wallpaperUrl, !wallpaperURL.isEmpty else {
             applyConversationWallpaperEvent(
                 ConversationWallpaperEvent(
@@ -1569,7 +1587,7 @@ final class MessengerViewModel: ObservableObject {
                     blurIntensity: 0
                 )
             )
-            return
+            return true
         }
 
         do {
@@ -1579,20 +1597,25 @@ final class MessengerViewModel: ObservableObject {
                 blurIntensity: max(0, min(20, blurIntensity))
             )
             applyConversationWallpaperEvent(event)
+            return true
         } catch {
             setError(from: error, fallback: "Couldn't update wallpaper blur.")
+            return false
         }
     }
 
-    func resetConversationWallpaper() async {
-        guard let conversationID = selectedConversationID else { return }
+    @discardableResult
+    func resetConversationWallpaper() async -> Bool {
+        guard let conversationID = selectedConversationID else { return false }
         do {
             try await conversationService.resetConversationWallpaper(conversationID: conversationID)
             applyConversationWallpaperEvent(
                 ConversationWallpaperEvent(conversationId: conversationID, wallpaperUrl: nil, blurIntensity: 0)
             )
+            return true
         } catch {
             setError(from: error, fallback: "Couldn't reset chat wallpaper.")
+            return false
         }
     }
 

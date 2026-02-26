@@ -17,6 +17,8 @@ struct ContactInfoView: View {
     @State private var showAvatarPreview = false
     @State private var showContactDetailsSheet = false
     @State private var showMediaLinksDocsSheet = false
+    @State private var showStarredMessagesSheet = false
+    @State private var showChatThemeSheet = false
     @State private var showRenameAlert = false
     @State private var renameDraft = ""
     @State private var showSetLockAlert = false
@@ -24,6 +26,7 @@ struct ContactInfoView: View {
     @State private var newLockPasscode = ""
     @State private var confirmLockPasscode = ""
     @State private var disableLockPasscode = ""
+    @State private var starredMessageIDs = Set<String>()
 
     private var muteKey: String {
         "pingy.chat.muted.\(conversation.conversationId)"
@@ -35,6 +38,10 @@ struct ContactInfoView: View {
 
     private var favoriteKey: String {
         "pingy.chat.favorite.\(conversation.conversationId)"
+    }
+
+    private var starredMessagesKey: String {
+        "pingy.chat.starred.messages.\(conversation.conversationId)"
     }
 
     var body: some View {
@@ -84,6 +91,7 @@ struct ContactInfoView: View {
             saveToPhotos = UserDefaults.standard.bool(forKey: saveToPhotosKey)
             lockChat = ChatLockService.shared.isChatLocked(conversationID: conversation.conversationId)
             isFavorite = UserDefaults.standard.bool(forKey: favoriteKey)
+            starredMessageIDs = Set(UserDefaults.standard.stringArray(forKey: starredMessagesKey) ?? [])
             renameDraft = viewModel.localAlias(for: conversation.participantId) ?? contactDisplayName
         }
         .onChange(of: isMuted) { UserDefaults.standard.set($0, forKey: muteKey) }
@@ -173,6 +181,22 @@ struct ContactInfoView: View {
                 displayName: contactDisplayName,
                 messages: messages
             )
+        }
+        .sheet(isPresented: $showStarredMessagesSheet) {
+            NavigationStack {
+                StarredMessagesView(
+                    displayName: contactDisplayName,
+                    messages: starredMessages
+                )
+            }
+        }
+        .sheet(isPresented: $showChatThemeSheet) {
+            NavigationStack {
+                ContactChatThemeView(
+                    viewModel: viewModel,
+                    conversation: conversation
+                )
+            }
         }
     }
 
@@ -268,10 +292,10 @@ struct ContactInfoView: View {
             sectionRow(
                 icon: "star",
                 title: "Starred",
-                detail: isFavorite ? "Saved" : "None",
+                detail: starredMessages.isEmpty ? "None" : "\(starredMessages.count)",
                 action: {
-                    isFavorite.toggle()
                     PingyHaptics.softTap()
+                    showStarredMessagesSheet = true
                 }
             )
         }
@@ -293,6 +317,17 @@ struct ContactInfoView: View {
                 tint: PingyTheme.textPrimary,
                 action: {
                     handleLockToggle(!lockChat)
+                }
+            )
+            Divider().overlay(PingyTheme.border.opacity(0.35))
+
+            sectionRow(
+                icon: "paintpalette",
+                title: "Chat theme",
+                detail: chatThemeSummary,
+                action: {
+                    PingyHaptics.softTap()
+                    showChatThemeSheet = true
                 }
             )
         }
@@ -518,19 +553,16 @@ struct ContactInfoView: View {
     }
 
     private var contactPhoneNumber: String {
-        if let value = viewModel.contactPhoneNumber(for: conversation.participantId)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !value.isEmpty
-        {
+        if let value = normalizedVisiblePhone(conversation.participantPhoneNumber) {
             return value
         }
 
-        if let inferred = inferPhoneNumber(from: conversation.participantUsername) {
-            return inferred
+        if let value = normalizedVisiblePhone(viewModel.contactPhoneNumber(for: conversation.participantId)) {
+            return value
         }
 
-        if let inferredFromID = inferPhoneNumber(from: conversation.participantId) {
-            return inferredFromID
+        if let value = normalizedVisiblePhone(conversation.participantUsername) {
+            return value
         }
 
         return String(localized: "Unavailable")
@@ -538,6 +570,20 @@ struct ContactInfoView: View {
 
     private var messages: [Message] {
         viewModel.messages(for: conversation.conversationId)
+    }
+
+    private var starredMessages: [Message] {
+        guard !starredMessageIDs.isEmpty else { return [] }
+        return messages.filter { starredMessageIDs.contains($0.id) }
+    }
+
+    private var chatThemeSummary: String {
+        if let wallpaper = conversation.wallpaperUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !wallpaper.isEmpty
+        {
+            return "Custom"
+        }
+        return "Default"
     }
 
     private var mediaCount: Int {
@@ -554,19 +600,24 @@ struct ContactInfoView: View {
         }
     }
 
-    private func inferPhoneNumber(from rawValue: String) -> String? {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let allowed = CharacterSet(charactersIn: "+0123456789")
-        let filteredScalars = trimmed.unicodeScalars.filter { allowed.contains($0) }
-        let candidate = String(String.UnicodeScalarView(filteredScalars))
-        let digitsCount = candidate.filter(\.isNumber).count
-        return digitsCount >= 8 ? candidate : nil
-    }
-
     private var contactShareText: String {
         "\(contactDisplayName)\n\(contactPhoneNumber)"
+    }
+
+    private func normalizedVisiblePhone(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+
+        let compact = raw.replacingOccurrences(of: "[\\s\\-()]", with: "", options: .regularExpression)
+        guard !compact.isEmpty else { return nil }
+
+        let hasPlusPrefix = compact.hasPrefix("+")
+        let digitsPart = hasPlusPrefix ? String(compact.dropFirst()) : compact
+        guard !digitsPart.isEmpty, digitsPart.allSatisfy(\.isNumber) else { return nil }
+        guard (8...15).contains(digitsPart.count) else { return nil }
+
+        return compact
     }
 
     private var exportedChatText: String {
@@ -660,7 +711,7 @@ private struct ContactDetailsSheet: View {
             VStack(spacing: 16) {
                 HStack {
                     Text("Contact details")
-                        .font(.system(size: 24, weight: .heavy, design: .rounded))
+                        .font(.system(size: 18, weight: .heavy, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                     Spacer()
                     Button {
@@ -677,10 +728,10 @@ private struct ContactDetailsSheet: View {
                 }
 
                 VStack(spacing: 12) {
-                    AvatarView(url: avatarURL, fallback: displayName, size: 108, cornerRadius: 54)
+                    AvatarView(url: avatarURL, fallback: displayName, size: 84, cornerRadius: 42)
 
                     Text(displayName)
-                        .font(.system(size: 40, weight: .black, design: .rounded))
+                        .font(.system(size: 28, weight: .black, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                         .lineLimit(2)
                         .minimumScaleFactor(0.75)
@@ -688,14 +739,14 @@ private struct ContactDetailsSheet: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("mobile")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
                             .foregroundStyle(PingyTheme.textSecondary)
 
                         Text(phoneNumber)
-                            .font(.system(size: 30, weight: .heavy, design: .rounded))
+                            .font(.system(size: 19, weight: .bold, design: .rounded))
                             .foregroundStyle(PingyTheme.primaryStrong)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.72)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(PingySpacing.md)
@@ -707,7 +758,7 @@ private struct ContactDetailsSheet: View {
                     )
                 }
 
-                HStack(spacing: PingySpacing.md) {
+                HStack(spacing: PingySpacing.sm) {
                     actionButton(icon: "message.fill", title: "Message", action: onMessageTap)
                     actionButton(icon: "phone.fill", title: "Call", action: onCallTap)
                 }
@@ -727,16 +778,16 @@ private struct ContactDetailsSheet: View {
         Button {
             action()
         } label: {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(PingyTheme.primaryStrong)
                 Text(title)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, PingySpacing.md)
+            .padding(.vertical, PingySpacing.sm)
             .background(PingyTheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: PingyRadius.card, style: .continuous))
             .overlay(

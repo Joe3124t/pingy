@@ -19,7 +19,7 @@ struct CallsTabView: View {
             .padding(PingySpacing.md)
         }
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Calls")
+        .navigationTitle(String(localized: "Calls"))
         .onAppear {
             Task { await viewModel.reload(for: messengerViewModel.currentUserID) }
         }
@@ -32,18 +32,18 @@ struct CallsTabView: View {
 
     private var actionCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Start secure call")
+            Text(String(localized: "Start secure call"))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
-            Text("Choose a chat contact to start a 1-to-1 voice call.")
+            Text(String(localized: "Choose a chat contact to start a 1-to-1 voice call."))
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
 
             Button {
                 isPickerPresented = true
             } label: {
-                Label("New call", systemImage: "phone.fill.badge.plus")
+                Label(String(localized: "New call"), systemImage: "phone.fill.badge.plus")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -58,11 +58,11 @@ struct CallsTabView: View {
 
     private var emptyStateCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recent")
+            Text(String(localized: "Recent"))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
-            Text("No calls yet.")
+            Text(String(localized: "No calls yet."))
                 .font(.system(size: 15, weight: .medium, design: .rounded))
                 .foregroundStyle(PingyTheme.textSecondary)
         }
@@ -73,11 +73,11 @@ struct CallsTabView: View {
     private var recentCallsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Recent")
+                Text(String(localized: "Recent"))
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundStyle(PingyTheme.textPrimary)
                 Spacer()
-                Button("Clear") {
+                Button(String(localized: "Clear")) {
                     Task { await viewModel.clear(for: messengerViewModel.currentUserID) }
                 }
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -127,7 +127,7 @@ struct CallsTabView: View {
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .foregroundStyle(PingyTheme.textPrimary)
                             if conversation.participantIsOnline {
-                                Text("Online")
+                                Text(String(localized: "Online"))
                                     .font(.system(size: 13, weight: .medium, design: .rounded))
                                     .foregroundStyle(PingyTheme.success)
                             }
@@ -136,10 +136,10 @@ struct CallsTabView: View {
                 }
             }
         }
-        .navigationTitle("New call")
+        .navigationTitle(String(localized: "New call"))
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Close") {
+                Button(String(localized: "Close")) {
                     isPickerPresented = false
                 }
             }
@@ -151,7 +151,11 @@ struct CallsTabView: View {
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         let time = formatter.string(from: call.createdAt)
-        let direction = call.direction == .outgoing ? "Outgoing" : call.direction == .incoming ? "Incoming" : "Missed"
+        let direction = call.direction == .outgoing
+            ? String(localized: "Outgoing")
+            : call.direction == .incoming
+                ? String(localized: "Incoming")
+                : String(localized: "Missed")
         return "\(direction) - \(time)"
     }
 

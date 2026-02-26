@@ -7,6 +7,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var deviceTokenHex: String?
     @Published private(set) var serverAPNsEnabled = true
+    @Published private(set) var registrationIssue: String?
 
     private let settingsService: SettingsService
     private let userDefaults = UserDefaults.standard
@@ -30,7 +31,10 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
                 serverAPNsEnabled = apnsEnabled
             }
             if serverAPNsEnabled == false {
+                registrationIssue = "Server APNs is disabled"
                 AppLogger.error("Server APNs is disabled. Remote iOS notifications will not be delivered.")
+            } else {
+                registrationIssue = nil
             }
         }
 
@@ -151,6 +155,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
     }
 
     private func syncStoredTokenIfNeeded(force: Bool) async {
+        guard serverAPNsEnabled else { return }
         guard let token = normalizedStoredToken() else { return }
         let alreadySyncedToken = userDefaults.string(forKey: syncedTokenDefaultsKey)
         if !force, alreadySyncedToken == token {
@@ -164,6 +169,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
             let success = await settingsService.registerAPNsToken(token)
             if success {
                 userDefaults.set(token, forKey: syncedTokenDefaultsKey)
+                registrationIssue = nil
                 return
             }
 
@@ -171,5 +177,7 @@ final class PushNotificationManager: NSObject, ObservableObject, UNUserNotificat
             let delaySeconds = UInt64(1 << attempt)
             try? await Task.sleep(nanoseconds: delaySeconds * 1_000_000_000)
         }
+
+        registrationIssue = "Failed to register APNs token"
     }
 }

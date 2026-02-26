@@ -15,43 +15,43 @@ struct ChangePhoneNumberView: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Current number")
+                    Text(String(localized: "Current number"))
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textSecondary)
-                    Text(viewModel.currentUserSettings?.phoneNumber ?? "Unknown")
+                    Text(viewModel.currentUserSettings?.phoneNumber ?? String(localized: "Unknown"))
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                 }
                 .padding(.vertical, 4)
             } header: {
-                Text("Account")
+                Text(String(localized: "Account"))
             }
 
             Section {
-                TextField("New phone number (+201...)", text: $newPhoneNumber)
+                TextField(String(localized: "New phone number (+201...)"), text: $newPhoneNumber)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.phonePad)
 
-                SecureField("Current password", text: $currentPassword)
+                SecureField(String(localized: "Current password"), text: $currentPassword)
 
                 if viewModel.currentUserSettings?.totpEnabled == true {
-                    TextField("Authenticator code (optional)", text: $totpCode)
+                    TextField(String(localized: "Authenticator code (optional)"), text: $totpCode)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.numberPad)
 
-                    TextField("Recovery code (optional)", text: $recoveryCode)
+                    TextField(String(localized: "Recovery code (optional)"), text: $recoveryCode)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
                 }
             } header: {
-                Text("Verification")
+                Text(String(localized: "Verification"))
             } footer: {
                 if viewModel.currentUserSettings?.totpEnabled == true {
-                    Text("If your account uses authenticator, enter code or recovery code.")
+                    Text(String(localized: "If your account uses authenticator, enter code or recovery code."))
                 } else {
-                    Text("For security, your current password is required.")
+                    Text(String(localized: "For security, your current password is required."))
                 }
             }
 
@@ -64,7 +64,7 @@ struct ChangePhoneNumberView: View {
                         if isSaving {
                             ProgressView()
                         } else {
-                            Text("Change phone number")
+                            Text(String(localized: "Change phone number"))
                                 .font(.system(size: 16, weight: .bold, design: .rounded))
                         }
                         Spacer()
@@ -83,7 +83,7 @@ struct ChangePhoneNumberView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Change phone number")
+        .navigationTitle(String(localized: "Change phone number"))
     }
 
     private func submitChange() async {
@@ -100,7 +100,7 @@ struct ChangePhoneNumberView: View {
 
         guard success else { return }
 
-        successMessage = "Phone number updated successfully."
+        successMessage = String(localized: "Phone number updated successfully.")
         try? await Task.sleep(nanoseconds: 900_000_000)
         dismiss()
     }

@@ -6,7 +6,7 @@ struct BlockedUsersListView: View {
     var body: some View {
         List {
             if viewModel.blockedUsers.isEmpty {
-                Text("No blocked users.")
+                Text(String(localized: "No blocked users."))
                     .foregroundStyle(PingyTheme.textSecondary)
             } else {
                 ForEach(viewModel.blockedUsers) { blocked in
@@ -29,7 +29,7 @@ struct BlockedUsersListView: View {
                             }
                         }
                         Spacer()
-                        Button("Unblock") {
+                        Button(String(localized: "Unblock")) {
                             Task {
                                 await viewModel.unblockUser(blocked.id)
                             }
@@ -43,7 +43,7 @@ struct BlockedUsersListView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Blocked users")
+        .navigationTitle(String(localized: "Blocked users"))
         .onAppear {
             Task {
                 await viewModel.loadSettings(silent: true)

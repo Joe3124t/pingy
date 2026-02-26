@@ -219,10 +219,15 @@ final class SettingsService {
 
         // APNs endpoint marker consumed by backend push service.
         let endpointURL = "apns://\(tokenHex)"
+        let bundleIdentifier = (Bundle.main.bundleIdentifier ?? "com.pingy.messenger")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let topicMarker = bundleIdentifier.isEmpty ? "apns" : "topic:\(bundleIdentifier)"
         let payload = Payload(
             subscription: .init(
                 endpoint: endpointURL,
-                keys: .init(p256dh: "apns", auth: "ios"),
+                // `p256dh`/`auth` fields are re-used to carry APNs metadata because the backend endpoint
+                // is shared with web push subscriptions.
+                keys: .init(p256dh: topicMarker, auth: "ios"),
                 expirationTime: nil
             )
         )

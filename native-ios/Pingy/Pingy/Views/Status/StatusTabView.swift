@@ -27,7 +27,7 @@ struct StatusTabView: View {
     }
 
     private var currentUserName: String {
-        messengerViewModel.currentUserSettings?.username ?? "You"
+        messengerViewModel.currentUserSettings?.username ?? String(localized: "You")
     }
 
     private var currentUserAvatar: String? {
@@ -57,7 +57,7 @@ struct StatusTabView: View {
 
                 sectionCard(title: "Recent updates") {
                     if recentStories.isEmpty {
-                        Text("No recent status updates yet.")
+                        Text(String(localized: "No recent status updates yet."))
                             .font(.system(size: 15, weight: .medium, design: .rounded))
                             .foregroundStyle(PingyTheme.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -71,7 +71,7 @@ struct StatusTabView: View {
             .padding(PingySpacing.md)
         }
         .background(PingyTheme.background.ignoresSafeArea())
-        .navigationTitle("Status")
+        .navigationTitle(String(localized: "Status"))
         .onAppear {
             Task { await viewModel.reload() }
         }
@@ -101,14 +101,14 @@ struct StatusTabView: View {
                 {
                     let duration = AVURLAsset(url: mediaURL).duration.seconds
                     if duration > 30 {
-                        viewModel.errorMessage = "Video status must be 30 seconds or less."
+                        viewModel.errorMessage = String(localized: "Video status must be 30 seconds or less.")
                         statusMediaItem = nil
                         return
                     }
                 }
 
                 guard let mediaData = try? await newValue.loadTransferable(type: Data.self) else {
-                    viewModel.errorMessage = "Couldn't read selected media."
+                    viewModel.errorMessage = String(localized: "Couldn't read selected media.")
                     statusMediaItem = nil
                     return
                 }
@@ -146,7 +146,7 @@ struct StatusTabView: View {
             )
         }
         .alert(
-            "Status",
+            String(localized: "Status"),
             isPresented: Binding(
                 get: { viewModel.errorMessage != nil },
                 set: { newValue in
@@ -156,7 +156,7 @@ struct StatusTabView: View {
                 }
             )
         ) {
-            Button("OK", role: .cancel) {
+            Button(String(localized: "OK"), role: .cancel) {
                 viewModel.errorMessage = nil
             }
         } message: {
@@ -166,13 +166,13 @@ struct StatusTabView: View {
 
     private var composerCard: some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text("Create status")
+            Text(String(localized: "Create status"))
                 .font(.system(size: 19, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
-            Picker("Privacy", selection: $viewModel.selectedPrivacy) {
+            Picker(String(localized: "Privacy"), selection: $viewModel.selectedPrivacy) {
                 ForEach(StatusPrivacy.allCases) { option in
-                    Text(option.title).tag(option)
+                    Text(String(localized: option.title)).tag(option)
                 }
             }
             .pickerStyle(.segmented)
@@ -181,7 +181,7 @@ struct StatusTabView: View {
                 Button {
                     isTextComposerPresented = true
                 } label: {
-                    Label("Text", systemImage: "text.bubble")
+                    Label(String(localized: "Text"), systemImage: "text.bubble")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
@@ -190,7 +190,7 @@ struct StatusTabView: View {
                 .tint(PingyTheme.primary)
 
                 PhotosPicker(selection: $statusMediaItem, matching: .any(of: [.images, .videos])) {
-                    Label("Photo/Video", systemImage: "camera.fill")
+                    Label(String(localized: "Photo/Video"), systemImage: "camera.fill")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 11)
@@ -203,7 +203,7 @@ struct StatusTabView: View {
 
     private func sectionCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: PingySpacing.sm) {
-            Text(title)
+            Text(String(localized: title))
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(PingyTheme.textPrimary)
 
@@ -236,7 +236,7 @@ struct StatusTabView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(mine ? "My status" : story.ownerName)
+                    Text(mine ? String(localized: "My status") : story.ownerName)
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundStyle(PingyTheme.textPrimary)
                     Text(storyTimestamp(story.createdAt))
@@ -297,7 +297,7 @@ struct StatusTabView: View {
                     isTextComposerPresented = false
                 }
             } label: {
-                Text("Post status")
+                Text(String(localized: "Post status"))
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -311,10 +311,10 @@ struct StatusTabView: View {
             Spacer()
         }
         .padding(PingySpacing.md)
-        .navigationTitle("Text status")
+        .navigationTitle(String(localized: "Text status"))
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Cancel") {
+                Button(String(localized: "Cancel")) {
                     isTextComposerPresented = false
                 }
             }
@@ -378,11 +378,11 @@ private struct StatusStoryViewer: View {
 
                 if isOwnStory {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Viewers")
+                        Text(String(localized: "Viewers"))
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.95))
                         if story.viewers.isEmpty {
-                            Text("No viewers yet")
+                            Text(String(localized: "No viewers yet"))
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.8))
                         } else {
@@ -430,7 +430,7 @@ private struct StatusStoryViewer: View {
                                 .scaledToFit()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         case .failure:
-                            Text("Status image unavailable")
+                            Text(String(localized: "Status image unavailable"))
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.85))
                         @unknown default:

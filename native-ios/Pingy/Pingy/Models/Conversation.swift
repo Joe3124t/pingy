@@ -8,6 +8,7 @@ struct Conversation: Codable, Identifiable, Equatable {
     let lastMessageAt: String?
     let participantId: String
     var participantUsername: String
+    var participantPhoneNumber: String?
     var participantAvatarUrl: String?
     var participantIsOnline: Bool
     var participantLastSeen: String?
@@ -36,6 +37,7 @@ struct Conversation: Codable, Identifiable, Equatable {
         case lastMessageAt
         case participantId
         case participantUsername
+        case participantPhoneNumber
         case participantAvatarUrl
         case participantIsOnline
         case participantLastSeen

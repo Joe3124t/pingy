@@ -4,6 +4,16 @@ final class ConversationService {
     private let authService: AuthorizedRequester
     private let wallpaperStore = ConversationWallpaperStore.shared
 
+    private struct ConversationWallpaperSettingsResponse: Decodable {
+        struct Settings: Decodable {
+            let conversationId: String?
+            let wallpaperUrl: String?
+            let blurIntensity: Int?
+        }
+
+        let settings: Settings?
+    }
+
     init(apiClient _: APIClient, authService: AuthorizedRequester) {
         self.authService = authService
     }
@@ -63,12 +73,44 @@ final class ConversationService {
         mimeType: String,
         blurIntensity: Int
     ) async throws -> ConversationWallpaperEvent {
-        _ = mimeType
-        return try await wallpaperStore.saveImage(
-            conversationId: conversationID,
-            imageData: imageData,
-            fileName: fileName,
-            blurIntensity: blurIntensity
+        var form = MultipartFormData()
+        form.appendFile(fieldName: "wallpaper", fileName: fileName, mimeType: mimeType, fileData: imageData)
+        form.appendField(name: "blurIntensity", value: String(max(0, min(20, blurIntensity))))
+        form.finalize()
+
+        var endpoint = Endpoint(
+            path: "conversations/\(conversationID)/wallpaper/upload",
+            method: .post,
+            body: form.data
+        )
+        endpoint.headers["Content-Type"] = "multipart/form-data; boundary=\(form.boundary)"
+
+        let response: ConversationWallpaperSettingsResponse = try await authService.authorizedRequest(
+            endpoint,
+            as: ConversationWallpaperSettingsResponse.self
+        )
+
+        let settings = response.settings
+        let resolvedConversationID = settings?.conversationId ?? conversationID
+        let wallpaperUrl = settings?.wallpaperUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedBlur = max(0, min(20, settings?.blurIntensity ?? blurIntensity))
+
+        if let wallpaperUrl, !wallpaperUrl.isEmpty {
+            if let resolvedURL = MediaURLResolver.resolve(wallpaperUrl) {
+                await RemoteImageStore.shared.primeImage(data: imageData, for: resolvedURL)
+            }
+            return await wallpaperStore.saveRemoteURL(
+                conversationId: resolvedConversationID,
+                wallpaperURL: wallpaperUrl,
+                blurIntensity: normalizedBlur
+            )
+        }
+
+        try await wallpaperStore.reset(conversationId: resolvedConversationID)
+        return ConversationWallpaperEvent(
+            conversationId: resolvedConversationID,
+            wallpaperUrl: nil,
+            blurIntensity: 0
         )
     }
 
@@ -77,24 +119,53 @@ final class ConversationService {
         wallpaperURL: String?,
         blurIntensity: Int
     ) async throws -> ConversationWallpaperEvent {
-        let trimmed = wallpaperURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if trimmed.isEmpty {
-            try await wallpaperStore.reset(conversationId: conversationID)
+        struct Payload: Encodable {
+            let wallpaperUrl: String?
+            let blurIntensity: Int
+        }
+
+        let normalizedBlur = max(0, min(20, blurIntensity))
+        let trimmed = wallpaperURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = Payload(
+            wallpaperUrl: (trimmed?.isEmpty == false) ? trimmed : nil,
+            blurIntensity: normalizedBlur
+        )
+        let endpoint = try Endpoint.json(
+            path: "conversations/\(conversationID)/wallpaper",
+            method: .put,
+            payload: payload
+        )
+
+        let response: ConversationWallpaperSettingsResponse = try await authService.authorizedRequest(
+            endpoint,
+            as: ConversationWallpaperSettingsResponse.self
+        )
+
+        let settings = response.settings
+        let resolvedConversationID = settings?.conversationId ?? conversationID
+        let responseWallpaper = settings?.wallpaperUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let responseBlur = max(0, min(20, settings?.blurIntensity ?? normalizedBlur))
+
+        guard let responseWallpaper, !responseWallpaper.isEmpty else {
+            try await wallpaperStore.reset(conversationId: resolvedConversationID)
             return ConversationWallpaperEvent(
-                conversationId: conversationID,
+                conversationId: resolvedConversationID,
                 wallpaperUrl: nil,
                 blurIntensity: 0
             )
         }
 
         return await wallpaperStore.saveRemoteURL(
-            conversationId: conversationID,
-            wallpaperURL: trimmed,
-            blurIntensity: blurIntensity
+            conversationId: resolvedConversationID,
+            wallpaperURL: responseWallpaper,
+            blurIntensity: responseBlur
         )
     }
 
     func resetConversationWallpaper(conversationID: String) async throws {
+        try await authService.authorizedNoContent(
+            Endpoint(path: "conversations/\(conversationID)/wallpaper", method: .delete)
+        )
         try await wallpaperStore.reset(conversationId: conversationID)
     }
 }

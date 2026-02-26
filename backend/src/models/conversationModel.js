@@ -79,6 +79,7 @@ const listConversationsForUser = async (userId) => {
         c.last_message_at AS "lastMessageAt",
         counterpart.id AS "participantId",
         counterpart.username AS "participantUsername",
+        counterpart.phone_number AS "participantPhoneNumber",
         counterpart.avatar_url AS "participantAvatarUrl",
         CASE
           WHEN block_state.blocked_by_me OR block_state.blocked_by_participant OR counterpart.show_online_status = FALSE THEN FALSE
