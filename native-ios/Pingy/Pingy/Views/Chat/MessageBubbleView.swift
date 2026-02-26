@@ -27,7 +27,6 @@ struct MessageBubbleView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var appLayoutDirection
 
-    @State private var isVisible = false
     @GestureState private var swipeOffsetX: CGFloat = 0
     @State private var selectedImageURL: URL?
     @State private var selectedVideoURL: URL?
@@ -134,7 +133,7 @@ struct MessageBubbleView: View {
                 PingyHaptics.softTap()
                 onReact("\u{2764}\u{FE0F}")
             }
-            .onLongPressGesture(minimumDuration: 0.26) {
+            .onLongPressGesture(minimumDuration: 0.12) {
                 PingyHaptics.softTap()
                 onLongPress?()
             }
@@ -158,12 +157,6 @@ struct MessageBubbleView: View {
         }
         .padding(.horizontal, 6)
         .padding(.top, isGroupedWithPrevious ? 1 : 8)
-        .opacity(isVisible ? 1 : 0)
-        .offset(y: isVisible ? 0 : 12)
-        .animation(.spring(response: 0.34, dampingFraction: 0.85), value: isVisible)
-        .onAppear {
-            isVisible = true
-        }
         .sheet(isPresented: imageSheetPresentedBinding) {
             if let selectedImageURL {
                 ChatImagePreviewSheet(url: selectedImageURL)

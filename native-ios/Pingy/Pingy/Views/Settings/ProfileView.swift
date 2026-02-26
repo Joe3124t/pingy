@@ -23,6 +23,7 @@ struct ProfileView: View {
         }
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "My Profile"))
+        .pingyPrefersBottomBarHidden()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(String(localized: "Done")) {

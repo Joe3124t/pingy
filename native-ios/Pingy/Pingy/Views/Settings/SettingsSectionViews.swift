@@ -53,6 +53,7 @@ struct AccountSettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Account"))
+        .pingyPrefersBottomBarHidden()
         .confirmationDialog(
             String(localized: "Logout from this device?"),
             isPresented: $showLogoutConfirmation,
@@ -141,6 +142,7 @@ struct NotificationSettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Notifications"))
+        .pingyPrefersBottomBarHidden()
     }
 }
 
@@ -208,6 +210,7 @@ struct PrivacySecuritySettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Privacy & Security"))
+        .pingyPrefersBottomBarHidden()
         .onAppear {
             showOnlineStatus = viewModel.currentUserSettings?.showOnlineStatus ?? true
             readReceipts = viewModel.currentUserSettings?.readReceiptsEnabled ?? true
@@ -294,6 +297,7 @@ struct DataStorageSettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Data & Storage"))
+        .pingyPrefersBottomBarHidden()
     }
 
     private func metricsRow(title: String, value: String) -> some View {
@@ -335,6 +339,7 @@ struct AppearanceSettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Appearance"))
+        .pingyPrefersBottomBarHidden()
         .onAppear {
             defaultWallpaperURL = messengerViewModel.currentUserSettings?.defaultWallpaperUrl ?? ""
         }
@@ -473,6 +478,7 @@ struct AdvancedSettingsSectionView: View {
         .scrollContentBackground(.hidden)
         .background(PingyTheme.background.ignoresSafeArea())
         .navigationTitle(String(localized: "Advanced"))
+        .pingyPrefersBottomBarHidden()
     }
 
     private var appVersionString: String {

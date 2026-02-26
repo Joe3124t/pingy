@@ -53,11 +53,12 @@ jobs:
 
           mkdir -p artifacts/Payload
           cp -R build/Build/Products/Release-iphoneos/Pingy.app artifacts/Payload/
+          VERSION=$(grep -E "MARKETING_VERSION:" project.yml | head -1 | awk '{print $2}')
           cd artifacts
-          /usr/bin/zip -qry Pingy-v3.7.4-unsigned.ipa Payload
+          /usr/bin/zip -qry "Pingy-v${VERSION}-unsigned.ipa" Payload
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Pingy-native-v3.7.4-unsigned-ipa
-          path: native-ios/Pingy/artifacts/Pingy-v3.7.4-unsigned.ipa
+          name: Pingy-native-unsigned-ipa
+          path: native-ios/Pingy/artifacts/Pingy-v*-unsigned.ipa

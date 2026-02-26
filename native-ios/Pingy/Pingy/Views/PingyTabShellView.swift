@@ -7,6 +7,7 @@ struct PingyTabShellView: View {
     let statusService: StatusService
 
     @State private var selectedTab: PingyRootTab = .chats
+    @State private var childRequestsBottomBarHidden = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -72,6 +73,9 @@ struct PingyTabShellView: View {
             }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onPingyBottomBarPreferenceChanged { hidden in
+            childRequestsBottomBarHidden = hidden
+        }
         .fullScreenCover(
             item: Binding(
                 get: { callSignalingService.activeSession },
@@ -104,7 +108,7 @@ struct PingyTabShellView: View {
     }
 
     private var shouldShowBottomBar: Bool {
-        return true
+        !childRequestsBottomBarHidden && !messengerViewModel.isCompactChatDetailPresented
     }
 
     private func selectTab(_ tab: PingyRootTab) {

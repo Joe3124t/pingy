@@ -48,9 +48,6 @@ private struct MessengerCompactContainer: View {
                     if path.last != conversationID {
                         path.append(conversationID)
                     }
-                    Task {
-                        await viewModel.selectConversation(conversationID)
-                    }
                 },
                 onSelectSearchUser: { user in
                     Task {
@@ -410,6 +407,7 @@ private struct ConversationListContent: View {
 private struct ConversationDetailHost: View {
     @ObservedObject var viewModel: MessengerViewModel
     let conversationID: String
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         Group {
@@ -424,8 +422,23 @@ private struct ConversationDetailHost: View {
                 NoConversationView(message: String(localized: "Conversation is unavailable."))
             }
         }
+        .onAppear {
+            if horizontalSizeClass == .compact {
+                viewModel.isCompactChatDetailPresented = true
+            }
+        }
+        .onDisappear {
+            if horizontalSizeClass == .compact {
+                viewModel.isCompactChatDetailPresented = false
+            }
+        }
         .task(id: conversationID) {
-            await viewModel.selectConversation(conversationID)
+            if viewModel.selectedConversationID == conversationID {
+                await viewModel.markCurrentAsSeen()
+                await viewModel.resyncConversationOnOpen(conversationID: conversationID)
+            } else {
+                await viewModel.selectConversation(conversationID)
+            }
         }
     }
 }

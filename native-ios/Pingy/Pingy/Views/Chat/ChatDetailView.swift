@@ -264,6 +264,7 @@ struct ChatDetailView: View {
                 isSearchFieldFocused = false
             }
         }
+        .pingyPrefersBottomBarHidden()
     }
 
     private var chatLockOverlay: some View {
@@ -559,6 +560,7 @@ struct ChatDetailView: View {
         GeometryReader { container in
             ScrollViewReader { reader in
                 ZStack(alignment: .bottomTrailing) {
+                    let messages = renderedMessages
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             if viewModel.isLoadingMessages, viewModel.activeMessages.isEmpty {
@@ -567,7 +569,7 @@ struct ChatDetailView: View {
                                     .foregroundStyle(PingyTheme.textSecondary)
                             }
 
-                            ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
+                            ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                                 let highlightRanges = isSearchMode ? (searchRangesByMessageID[message.id] ?? []) : []
                                 let isStarred = starredMessageIDs.contains(message.id)
 
@@ -575,7 +577,7 @@ struct ChatDetailView: View {
                                     message: message,
                                     conversation: conversation,
                                     currentUserID: viewModel.currentUserID,
-                                    isGroupedWithPrevious: isGrouped(index: index, messages: renderedMessages),
+                                    isGroupedWithPrevious: isGrouped(index: index, messages: messages),
                                     decryptedText: viewModel.decryptedBody(for: message),
                                     uploadProgress: viewModel.mediaUploadProgress(for: message),
                                     canRetryUpload: viewModel.canRetryMediaUpload(for: message),
@@ -665,7 +667,7 @@ struct ChatDetailView: View {
                         bottomAnchorY = value
                     }
                     .onPreferenceChange(ChatMessageFramePreferenceKey.self) { value in
-                        messageFramesByID.merge(value, uniquingKeysWith: { _, new in new })
+                        messageFramesByID = value
                     }
                     .onChange(of: renderedMessages.count) { _ in
                         handleMessageListChange(using: reader)
@@ -951,9 +953,6 @@ struct ChatDetailView: View {
         DispatchQueue.main.async {
             reader.scrollTo(lastID, anchor: .bottom)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                reader.scrollTo(lastID, anchor: .bottom)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                 withAnimation(.easeOut(duration: 0.18)) {
                     reader.scrollTo(lastID, anchor: .bottom)
                 }

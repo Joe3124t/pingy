@@ -5,6 +5,7 @@ struct AvatarView: View {
     let fallback: String
     var size: CGFloat = 52
     var cornerRadius: CGFloat = 16
+    private var usesCircleMask: Bool { cornerRadius >= (size / 2) - 0.5 }
 
     var body: some View {
         Group {
@@ -30,7 +31,13 @@ struct AvatarView: View {
                 endPoint: .bottomTrailing
             )
         )
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .mask {
+            if usesCircleMask {
+                Circle()
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            }
+        }
     }
 
     private var fallbackView: some View {
