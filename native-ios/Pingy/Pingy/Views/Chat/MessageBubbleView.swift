@@ -1,4 +1,4 @@
-import AVFoundation
+﻿import AVFoundation
 import AVKit
 import SwiftUI
 import UIKit
@@ -87,7 +87,7 @@ struct MessageBubbleView: View {
                     isOwn: isOwn
                 )
                 .fill(.ultraThinMaterial)
-            }
+            )
             .overlay {
                 GlassMessageBubbleShape(
                     cornerRadius: bubbleCornerRadius,
@@ -119,7 +119,7 @@ struct MessageBubbleView: View {
                 )
                 .padding(.horizontal, 1)
                 .padding(.top, 1)
-            )
+            }
             .overlay(alignment: .leading) {
                 if swipeOffsetX > 24 {
                     Image(systemName: "arrowshape.turn.up.left.fill")
