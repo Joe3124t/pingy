@@ -55,9 +55,9 @@ struct MessageBubbleView: View {
 
                 HStack(spacing: 6) {
                     Text(formatTime(message.createdAt))
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white.opacity(0.95) : Color.white.opacity(0.84))
-                        .shadow(color: Color.black.opacity(0.28), radius: 0.8, x: 0, y: 0.5)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.96))
+                        .shadow(color: Color.black.opacity(0.42), radius: 1.2, x: 0, y: 0.7)
 
                     if isOwn, let outgoingState {
                         messageStateIndicator(state: outgoingState)
@@ -68,11 +68,12 @@ struct MessageBubbleView: View {
                     HStack(spacing: 6) {
                         ForEach(message.reactions, id: \.emoji) { reaction in
                             Text("\(reaction.emoji) \(reaction.count)")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(isOwn ? Color.white.opacity(0.22) : PingyTheme.reactionChipBackground)
-                                .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.95))
+                                .foregroundStyle(.white)
+                                .shadow(color: Color.black.opacity(0.32), radius: 0.8, x: 0, y: 0.4)
                                 .clipShape(Capsule())
                         }
                     }
@@ -249,10 +250,10 @@ struct MessageBubbleView: View {
         switch message.type {
         case .text:
             Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
-                .font(.system(size: 18, weight: .regular, design: .rounded))
-                .foregroundStyle(isOwn ? Color.white.opacity(0.97) : Color.white.opacity(0.95))
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white)
                 .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
-                .shadow(color: Color.black.opacity(0.28), radius: 0.9, x: 0, y: 0.5)
+                .shadow(color: Color.black.opacity(0.46), radius: 1.4, x: 0, y: 0.8)
                 .multilineTextAlignment(textAlignment(for: resolvedText))
                 .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
                 .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
@@ -317,12 +318,12 @@ struct MessageBubbleView: View {
                             .foregroundStyle(isOwn ? Color.white : PingyTheme.primaryStrong)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(message.mediaName ?? "Video")
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.94))
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
                                 .lineLimit(1)
                             Text("Tap to open")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundStyle(isOwn ? Color.white.opacity(0.88) : Color.white.opacity(0.8))
+                                .foregroundStyle(Color.white.opacity(0.88))
                         }
                     }
                     .frame(maxWidth: 240, alignment: .leading)
@@ -365,11 +366,11 @@ struct MessageBubbleView: View {
         return VStack(alignment: .leading, spacing: 2) {
             Text("From \(senderName)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(isOwn ? Color.white.opacity(0.92) : Color.white.opacity(0.92))
+                .foregroundStyle(Color.white.opacity(0.96))
             Text(preview)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .lineLimit(1)
-                .foregroundStyle(isOwn ? Color.white.opacity(0.86) : Color.white.opacity(0.8))
+                .foregroundStyle(Color.white.opacity(0.9))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)

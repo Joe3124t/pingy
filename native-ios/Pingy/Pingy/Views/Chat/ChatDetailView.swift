@@ -462,12 +462,17 @@ struct ChatDetailView: View {
     }
 
     private var headerAvatar: some View {
-        Group {
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.26))
+
             if let avatarURL = MediaURLResolver.resolve(conversation.participantAvatarUrl) {
                 CachedRemoteImage(url: avatarURL) { image in
                     image
                         .resizable()
                         .scaledToFill()
+                        .frame(width: 72, height: 72)
+                        .clipShape(Circle())
                 } placeholder: {
                     avatarFallback
                 } failure: {
@@ -477,16 +482,11 @@ struct ChatDetailView: View {
                 avatarFallback
             }
         }
-        .frame(width: 74, height: 74)
+        .frame(width: 72, height: 72)
         .clipShape(Circle())
         .overlay(
             Circle()
-                .stroke(Color.white.opacity(0.23), lineWidth: 1.1)
-        )
-        .background(
-            Circle()
-                .fill(Color.black.opacity(0.24))
-                .frame(width: 84, height: 84)
+                .stroke(Color.white.opacity(0.24), lineWidth: 1.0)
         )
     }
 
@@ -502,6 +502,8 @@ struct ChatDetailView: View {
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
         }
+        .frame(width: 72, height: 72)
+        .clipShape(Circle())
     }
 
     private var searchBar: some View {
