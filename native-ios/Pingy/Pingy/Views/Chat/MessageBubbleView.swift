@@ -87,7 +87,7 @@ struct MessageBubbleView: View {
                     isOwn: isOwn
                 )
                 .fill(.ultraThinMaterial)
-            )
+            }
             .overlay {
                 GlassMessageBubbleShape(
                     cornerRadius: bubbleCornerRadius,
