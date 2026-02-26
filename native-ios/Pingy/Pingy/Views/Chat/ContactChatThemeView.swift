@@ -12,6 +12,7 @@ struct ContactChatThemeView: View {
     @State private var blurIntensity: Double = 0
     @State private var isApplying = false
     @State private var wallpaperItem: PhotosPickerItem?
+    private let chatThemeManager = ChatThemeManager.shared
 
     private let presets: [Preset] = [
         Preset(
@@ -223,11 +224,13 @@ struct ContactChatThemeView: View {
         selectedPreset: String? = nil
     ) async {
         await MainActor.run { isApplying = true }
-        let applied = await viewModel.uploadConversationWallpaper(
+        let applied = await chatThemeManager.applyTheme(
+            using: viewModel,
             imageData: imageData,
             fileName: fileName,
             mimeType: mimeType,
-            blurIntensity: Int(blurIntensity.rounded())
+            blurIntensity: Int(blurIntensity.rounded()),
+            announcement: announcement
         )
         await MainActor.run { isApplying = false }
 
@@ -243,14 +246,16 @@ struct ContactChatThemeView: View {
     private func resetThemeToDefault() async {
         guard !isApplying else { return }
         isApplying = true
-        let reset = await viewModel.resetConversationWallpaper()
+        let reset = await chatThemeManager.resetTheme(
+            using: viewModel,
+            announcement: "Theme reset to default."
+        )
         isApplying = false
 
         guard reset else { return }
 
         selectedPresetID = nil
         blurIntensity = 0
-        await viewModel.sendText("Theme reset to default.")
     }
 
     private func generateWallpaperData(from preset: Preset) -> Data? {

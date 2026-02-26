@@ -2128,32 +2128,7 @@ final class MessengerViewModel: ObservableObject {
     }
 
     private func mergeMessagesKeepingHistory(existing: [Message], incoming: [Message]) -> [Message] {
-        var byID: [String: Message] = [:]
-        var idByClientID: [String: String] = [:]
-
-        for message in existing {
-            byID[message.id] = message
-            if let clientId = message.clientId, !clientId.isEmpty {
-                idByClientID[clientId] = message.id
-            }
-        }
-
-        for message in incoming {
-            if let clientId = message.clientId,
-               !clientId.isEmpty,
-               let previousID = idByClientID[clientId],
-               previousID != message.id
-            {
-                byID.removeValue(forKey: previousID)
-            }
-
-            byID[message.id] = message
-            if let clientId = message.clientId, !clientId.isEmpty {
-                idByClientID[clientId] = message.id
-            }
-        }
-
-        return sortMessagesChronologically(Array(byID.values))
+        MessageDiffingEngine.merge(existing: existing, incoming: incoming)
     }
 
     private func upsertMessage(_ message: Message) {

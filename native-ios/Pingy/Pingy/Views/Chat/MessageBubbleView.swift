@@ -18,6 +18,11 @@ struct MessageBubbleView: View {
     let onRetryUpload: () -> Void
     let onRetryText: () -> Void
     let onOpenImage: ((Message, URL) -> Void)?
+    let searchHighlightRanges: [NSRange]
+    let isStarred: Bool
+    let onForward: (() -> Void)?
+    let onToggleStar: (() -> Void)?
+    let onDeleteForMe: (() -> Void)?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var appLayoutDirection
 
@@ -128,6 +133,33 @@ struct MessageBubbleView: View {
                         }
                     }
                 }
+
+                if let onForward {
+                    Button {
+                        onForward()
+                    } label: {
+                        Label("Forward", systemImage: "arrowshape.turn.up.right")
+                    }
+                }
+
+                if let onToggleStar {
+                    Button {
+                        onToggleStar()
+                    } label: {
+                        Label(
+                            isStarred ? "Unstar" : "Star",
+                            systemImage: isStarred ? "star.slash" : "star"
+                        )
+                    }
+                }
+
+                if let onDeleteForMe {
+                    Button(role: .destructive) {
+                        onDeleteForMe()
+                    } label: {
+                        Label("Delete for me", systemImage: "trash")
+                    }
+                }
             }
 
             if !isOwn { Spacer(minLength: 36) }
@@ -218,7 +250,7 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.type {
         case .text:
-            Text(linkifiedAttributedText(resolvedText))
+            Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
                 .font(.system(size: 18, weight: .regular, design: .rounded))
                 .foregroundStyle(isOwn ? Color.white : PingyTheme.textPrimary)
                 .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
@@ -456,7 +488,7 @@ struct MessageBubbleView: View {
         }
     }
 
-    private func linkifiedAttributedText(_ text: String) -> AttributedString {
+    private func linkifiedAttributedText(_ text: String, highlightRanges: [NSRange]) -> AttributedString {
         let mutable = NSMutableAttributedString(string: text)
         let fullRange = NSRange(location: 0, length: mutable.length)
 
@@ -481,6 +513,13 @@ struct MessageBubbleView: View {
                 }
                 mutable.addAttribute(.link, value: url, range: match.range)
             }
+        }
+
+        let highlightColor = UIColor(PingyTheme.primaryStrong).withAlphaComponent(colorScheme == .dark ? 0.32 : 0.22)
+        for range in highlightRanges {
+            guard range.location != NSNotFound, range.length > 0 else { continue }
+            guard range.location + range.length <= mutable.length else { continue }
+            mutable.addAttribute(.backgroundColor, value: highlightColor, range: range)
         }
 
         return AttributedString(mutable)

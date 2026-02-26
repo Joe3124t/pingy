@@ -10,10 +10,19 @@ struct ChatDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var isComposerFocused: Bool
+    @FocusState private var isSearchFieldFocused: Bool
 
     @StateObject private var voiceRecorder = VoiceRecorderService()
 
     @State private var draft = ""
+    @State private var isSearchMode = false
+    @State private var searchQuery = ""
+    @State private var searchResults: [ChatSearchMatch] = []
+    @State private var searchRangesByMessageID: [String: [NSRange]] = [:]
+    @State private var selectedSearchResultIndex = 0
+    @State private var pendingSearchJumpMessageID: String?
+    @State private var searchTask: Task<Void, Never>?
+    @State private var starredMessageIDs = Set<String>()
     @State private var isNativeMediaPickerPresented = false
     @State private var isMediaComposerPresented = false
     @State private var composedMediaItems: [MediaComposerItem] = []
@@ -40,6 +49,10 @@ struct ChatDetailView: View {
 
             VStack(spacing: 0) {
                 topBar
+                if isSearchMode {
+                    searchBar
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 Divider().overlay(PingyTheme.border.opacity(0.4))
                 messagesList(bottomInset: composerHeight + 16)
             }
@@ -73,6 +86,7 @@ struct ChatDetailView: View {
             pendingInitialJumpToLatest = true
             bottomAnchorY = .greatestFiniteMagnitude
             chatOpenedAt = Date()
+            starredMessageIDs = Set(UserDefaults.standard.stringArray(forKey: starredMessagesKey) ?? [])
             refreshLockState()
             Task {
                 if viewModel.selectedConversationID != conversation.conversationId {
@@ -86,6 +100,7 @@ struct ChatDetailView: View {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = false
             }
+            searchTask?.cancel()
             if voiceRecorder.isRecording {
                 _ = try? voiceRecorder.stopRecording()
             }
@@ -202,6 +217,36 @@ struct ChatDetailView: View {
         }
         .toolbar(.hidden, for: .tabBar)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: searchQuery) { _ in
+            refreshSearchResults()
+        }
+        .onChange(of: renderedMessages.count) { _ in
+            if isSearchMode {
+                refreshSearchResults()
+            }
+        }
+        .onChange(of: renderedMessages.last?.id) { _ in
+            if isSearchMode {
+                refreshSearchResults()
+            }
+        }
+        .onChange(of: isSearchMode) { enabled in
+            if enabled {
+                refreshSearchResults()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    isSearchFieldFocused = true
+                }
+            } else {
+                searchTask?.cancel()
+                searchTask = nil
+                searchQuery = ""
+                searchResults = []
+                searchRangesByMessageID = [:]
+                selectedSearchResultIndex = 0
+                pendingSearchJumpMessageID = nil
+                isSearchFieldFocused = false
+            }
+        }
     }
 
     private var chatLockOverlay: some View {
@@ -326,6 +371,20 @@ struct ChatDetailView: View {
             Spacer()
 
             Button {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    isSearchMode.toggle()
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(PingyTheme.textSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(PingyTheme.surfaceElevated)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(PingyPressableButtonStyle())
+
+            Button {
                 startVoiceCall()
             } label: {
                 Image(systemName: "phone.fill")
@@ -342,6 +401,92 @@ struct ChatDetailView: View {
         .background(PingyTheme.surface)
     }
 
+    private var searchBar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(PingyTheme.textSecondary)
+
+                    TextField("Search in chat", text: $searchQuery)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .focused($isSearchFieldFocused)
+
+                    if !searchQuery.isEmpty {
+                        Button {
+                            searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(PingyTheme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(PingyTheme.inputBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                        isSearchMode = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .frame(width: 30, height: 30)
+                        .background(PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+            }
+
+            HStack(spacing: 10) {
+                Text(searchCounterText)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(PingyTheme.textSecondary)
+
+                Spacer()
+
+                Button {
+                    selectPreviousSearchResult()
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .background(PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+                .disabled(searchResults.isEmpty)
+
+                Button {
+                    selectNextSearchResult()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(PingyTheme.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .background(PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+                .disabled(searchResults.isEmpty)
+            }
+        }
+        .padding(.horizontal, PingySpacing.md)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
+        .background(PingyTheme.surface)
+    }
+
     private func messagesList(bottomInset: CGFloat) -> some View {
         GeometryReader { container in
             ScrollViewReader { reader in
@@ -355,6 +500,9 @@ struct ChatDetailView: View {
                             }
 
                             ForEach(Array(renderedMessages.enumerated()), id: \.element.id) { index, message in
+                                let highlightRanges = isSearchMode ? (searchRangesByMessageID[message.id] ?? []) : []
+                                let isStarred = starredMessageIDs.contains(message.id)
+
                                 MessageBubbleView(
                                     message: message,
                                     conversation: conversation,
@@ -379,6 +527,20 @@ struct ChatDetailView: View {
                                     },
                                     onOpenImage: { tappedMessage, _ in
                                         openMediaViewer(for: tappedMessage)
+                                    },
+                                    searchHighlightRanges: highlightRanges,
+                                    isStarred: isStarred,
+                                    onForward: {
+                                        forwardMessage(message)
+                                    },
+                                    onToggleStar: {
+                                        toggleStar(for: message.id)
+                                    },
+                                    onDeleteForMe: {
+                                        viewModel.deleteMessageLocally(
+                                            messageID: message.id,
+                                            conversationID: conversation.conversationId
+                                        )
                                     }
                                 )
                                 .id(message.id)
@@ -429,6 +591,12 @@ struct ChatDetailView: View {
                     }
                     .onChange(of: renderedMessages.last?.id) { _ in
                         handleMessageListChange(using: reader)
+                    }
+                    .onChange(of: pendingSearchJumpMessageID) { targetID in
+                        guard let targetID else { return }
+                        withAnimation(.easeInOut(duration: 0.24)) {
+                            reader.scrollTo(targetID, anchor: .center)
+                        }
                     }
                     .onChange(of: isComposerFocused) { focused in
                         if focused {
@@ -631,6 +799,16 @@ struct ChatDetailView: View {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var starredMessagesKey: String {
+        "pingy.chat.starred.messages.\(conversation.conversationId)"
+    }
+
+    private var searchCounterText: String {
+        guard !searchResults.isEmpty else { return "0/0" }
+        let index = min(max(0, selectedSearchResultIndex), max(0, searchResults.count - 1))
+        return "\(index + 1)/\(searchResults.count)"
+    }
+
     private var renderedMessages: [Message] {
         viewModel.messages(for: conversation.conversationId)
     }
@@ -709,6 +887,104 @@ struct ChatDetailView: View {
         } else {
             action()
         }
+    }
+
+    private func refreshSearchResults() {
+        searchTask?.cancel()
+
+        let normalizedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isSearchMode, !normalizedQuery.isEmpty else {
+            searchResults = []
+            searchRangesByMessageID = [:]
+            selectedSearchResultIndex = 0
+            pendingSearchJumpMessageID = nil
+            return
+        }
+
+        let snapshotMessages = renderedMessages
+        let decryptedLookup = snapshotMessages.reduce(into: [String: String]()) { mapping, message in
+            if let decrypted = viewModel.decryptedBody(for: message) {
+                mapping[message.id] = decrypted
+            }
+        }
+        let previousSelectedMatchID = searchResults.indices.contains(selectedSearchResultIndex)
+            ? searchResults[selectedSearchResultIndex].id
+            : nil
+
+        searchTask = Task {
+            let resultSet = await Task.detached(priority: .userInitiated) {
+                ChatSearchEngine.search(
+                    query: normalizedQuery,
+                    messages: snapshotMessages,
+                    decryptedBodyByID: decryptedLookup
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                searchResults = resultSet.matches
+                searchRangesByMessageID = resultSet.rangesByMessageID
+
+                guard !resultSet.matches.isEmpty else {
+                    selectedSearchResultIndex = 0
+                    pendingSearchJumpMessageID = nil
+                    return
+                }
+
+                if let previousSelectedMatchID,
+                   let preservedIndex = resultSet.matches.firstIndex(where: { $0.id == previousSelectedMatchID })
+                {
+                    selectedSearchResultIndex = preservedIndex
+                } else {
+                    selectedSearchResultIndex = 0
+                }
+
+                pendingSearchJumpMessageID = resultSet.matches[selectedSearchResultIndex].messageID
+            }
+        }
+    }
+
+    private func selectNextSearchResult() {
+        guard !searchResults.isEmpty else { return }
+        selectedSearchResultIndex = (selectedSearchResultIndex + 1) % searchResults.count
+        pendingSearchJumpMessageID = searchResults[selectedSearchResultIndex].messageID
+        PingyHaptics.softTap()
+    }
+
+    private func selectPreviousSearchResult() {
+        guard !searchResults.isEmpty else { return }
+        selectedSearchResultIndex = (selectedSearchResultIndex - 1 + searchResults.count) % searchResults.count
+        pendingSearchJumpMessageID = searchResults[selectedSearchResultIndex].messageID
+        PingyHaptics.softTap()
+    }
+
+    private func forwardMessage(_ message: Message) {
+        let decrypted = viewModel.decryptedBody(for: message)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let normalized = message.body?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let rendered = MessageBodyFormatter.previewText(from: message.body, fallback: "")
+        let payload = !decrypted.isEmpty ? decrypted : (normalized.isEmpty ? rendered : normalized)
+
+        guard !payload.isEmpty else {
+            viewModel.showTransientNotice("Forward for this message type will be added soon.", style: .warning)
+            return
+        }
+
+        draft = payload
+        isComposerFocused = true
+        PingyHaptics.softTap()
+    }
+
+    private func toggleStar(for messageID: String) {
+        if starredMessageIDs.contains(messageID) {
+            starredMessageIDs.remove(messageID)
+            viewModel.showTransientNotice("Removed from starred.", style: .info, autoDismissAfter: 1.4)
+        } else {
+            starredMessageIDs.insert(messageID)
+            viewModel.showTransientNotice("Added to starred.", style: .success, autoDismissAfter: 1.4)
+        }
+
+        UserDefaults.standard.set(Array(starredMessageIDs), forKey: starredMessagesKey)
     }
 
     private func isGrouped(index: Int, messages: [Message]) -> Bool {
