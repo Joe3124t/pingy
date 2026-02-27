@@ -892,7 +892,6 @@ struct VoiceMessagePlayerView: View {
         }
 
         if let keychainToken = try? KeychainStore.shared.string(for: "pingy.session.accessToken"),
-           let keychainToken,
            !keychainToken.isEmpty
         {
             return keychainToken
