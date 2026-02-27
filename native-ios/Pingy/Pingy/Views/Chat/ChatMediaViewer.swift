@@ -36,6 +36,7 @@ struct ChatMediaViewer: View {
     @State private var mediaInfo: ChatMediaInfo?
     @State private var showSaveToast = false
     @State private var reloadToken = UUID()
+    @State private var viewerReady = false
 
     init(
         entries: [ChatMediaGalleryEntry],
@@ -57,11 +58,21 @@ struct ChatMediaViewer: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(
+                    viewerReady
+                        ? MediaClarityManager.fullscreenEnhancement.dimOpacity
+                        : 0
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
             TabView(selection: $selection) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     CachedRemoteImage(url: entry.url) { image in
                         ZoomableImageView(image: image)
+                            .brightness(MediaClarityManager.fullscreenEnhancement.brightnessBoost)
+                            .contrast(MediaClarityManager.fullscreenEnhancement.contrastBoost)
                     } placeholder: {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(Color.white.opacity(0.08))
@@ -89,6 +100,11 @@ struct ChatMediaViewer: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .offset(y: dragOffset)
+            .opacity(viewerReady ? 1 : 0)
+            .animation(
+                .easeOut(duration: MediaClarityManager.fullscreenEnhancement.fadeDuration),
+                value: viewerReady
+            )
             .gesture(
                 DragGesture(minimumDistance: 10)
                     .onChanged { value in
@@ -129,6 +145,9 @@ struct ChatMediaViewer: View {
             }
         }
         .onAppear {
+            withAnimation(.easeOut(duration: MediaClarityManager.fullscreenEnhancement.fadeDuration)) {
+                viewerReady = true
+            }
             Task { await refreshMediaInfo() }
             preloadNearbyImages()
         }

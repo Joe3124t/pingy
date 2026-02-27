@@ -24,6 +24,7 @@ struct MessageBubbleView: View {
     let onForward: (() -> Void)?
     let onToggleStar: (() -> Void)?
     let onDeleteForMe: (() -> Void)?
+    let reduceGlassEffect: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var appLayoutDirection
 
@@ -42,6 +43,31 @@ struct MessageBubbleView: View {
         isOwn && message.id.hasPrefix("local-") && (message.type == .image || message.type == .video)
     }
 
+    private var isMediaMessage: Bool {
+        message.type == .image || message.type == .video
+    }
+
+    private var adaptiveTextStyle: AdaptiveTextStyle {
+        AdaptiveTextEngine.style(
+            for: message.type,
+            isOwnMessage: isOwn,
+            backgroundLuminance: SmartGlassOpacityManager.estimatedLuminance(
+                for: message.type,
+                isOwnMessage: isOwn,
+                colorScheme: colorScheme
+            ),
+            colorScheme: colorScheme
+        )
+    }
+
+    private var bubbleShape: GlassMessageBubbleShape {
+        GlassMessageBubbleShape(
+            cornerRadius: bubbleCornerRadius,
+            tailSize: bubbleTail,
+            isOwn: isOwn
+        )
+    }
+
     var body: some View {
         HStack {
             if isOwn { Spacer(minLength: 36) }
@@ -56,8 +82,13 @@ struct MessageBubbleView: View {
                 HStack(spacing: 6) {
                     Text(formatTime(message.createdAt))
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isOwn ? Color.white : Color.white.opacity(0.96))
-                        .shadow(color: Color.black.opacity(0.42), radius: 1.2, x: 0, y: 0.7)
+                        .foregroundStyle(adaptiveTextStyle.textColor.opacity(0.9))
+                        .shadow(
+                            color: adaptiveTextStyle.glowColor,
+                            radius: adaptiveTextStyle.glowRadius,
+                            x: 0,
+                            y: adaptiveTextStyle.glowYOffset
+                        )
 
                     if isOwn, let outgoingState {
                         messageStateIndicator(state: outgoingState)
@@ -82,44 +113,40 @@ struct MessageBubbleView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(
-                GlassMessageBubbleShape(
-                    cornerRadius: bubbleCornerRadius,
-                    tailSize: bubbleTail,
-                    isOwn: isOwn
-                )
-                .fill(.ultraThinMaterial)
+                bubbleShape
+                    .fill(SmartGlassOpacityManager.bubbleFillStyle(isFastScrolling: reduceGlassEffect))
+                    .allowsHitTesting(false)
             )
             .overlay {
-                GlassMessageBubbleShape(
-                    cornerRadius: bubbleCornerRadius,
-                    tailSize: bubbleTail,
-                    isOwn: isOwn
-                )
-                .fill(bubbleTint)
+                bubbleShape
+                    .fill(bubbleTint)
+                    .allowsHitTesting(false)
             }
             .overlay(
-                GlassMessageBubbleShape(
-                    cornerRadius: bubbleCornerRadius,
-                    tailSize: bubbleTail,
-                    isOwn: isOwn
-                )
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.9)
+                bubbleShape
+                    .stroke(Color.white.opacity(0.10), lineWidth: 0.9)
+                    .allowsHitTesting(false)
             )
             .overlay(alignment: .top) {
-                GlassMessageBubbleShape(
-                    cornerRadius: bubbleCornerRadius,
-                    tailSize: bubbleTail,
-                    isOwn: isOwn
-                )
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.06), Color.clear],
-                        startPoint: .top,
-                        endPoint: .center
+                bubbleShape
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(
+                                    SmartGlassOpacityManager.glossyHighlightOpacity(
+                                        for: message.type,
+                                        isFastScrolling: reduceGlassEffect
+                                    )
+                                ),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
                     )
-                )
-                .padding(.horizontal, 1)
-                .padding(.top, 1)
+                    .padding(.horizontal, 1)
+                    .padding(.top, 1)
+                    .allowsHitTesting(false)
             }
             .overlay(alignment: .leading) {
                 if swipeOffsetX > 24 {
@@ -172,11 +199,20 @@ struct MessageBubbleView: View {
     }
 
     private var bubbleTint: some ShapeStyle {
+        if isMediaMessage {
+            return AnyShapeStyle(Color.clear)
+        }
+
+        let opacity = SmartGlassOpacityManager.adjustedBubbleOpacity(
+            for: message.type,
+            isFastScrolling: reduceGlassEffect
+        )
+
         if isOwn {
             return AnyShapeStyle(LinearGradient(
                 colors: [
-                    Color(red: 0.08, green: 0.40, blue: 0.56).opacity(0.72),
-                    Color(red: 0.04, green: 0.20, blue: 0.34).opacity(0.70),
+                    Color(red: 0.08, green: 0.40, blue: 0.56).opacity(opacity),
+                    Color(red: 0.04, green: 0.20, blue: 0.34).opacity(opacity - 0.02),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -185,8 +221,8 @@ struct MessageBubbleView: View {
         return AnyShapeStyle(
             LinearGradient(
                 colors: [
-                    Color(red: 0.13, green: 0.17, blue: 0.24).opacity(0.68),
-                    Color(red: 0.05, green: 0.08, blue: 0.14).opacity(0.66),
+                    Color(red: 0.13, green: 0.17, blue: 0.24).opacity(opacity),
+                    Color(red: 0.05, green: 0.08, blue: 0.14).opacity(opacity - 0.02),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -251,9 +287,14 @@ struct MessageBubbleView: View {
         case .text:
             Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
                 .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.98))
-                .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
-                .shadow(color: Color.black.opacity(0.72), radius: 2.1, x: 0, y: 1.1)
+                .foregroundStyle(adaptiveTextStyle.textColor)
+                .tint(adaptiveTextStyle.linkTint)
+                .shadow(
+                    color: adaptiveTextStyle.glowColor,
+                    radius: adaptiveTextStyle.glowRadius,
+                    x: 0,
+                    y: adaptiveTextStyle.glowYOffset
+                )
                 .multilineTextAlignment(textAlignment(for: resolvedText))
                 .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
                 .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
@@ -268,13 +309,27 @@ struct MessageBubbleView: View {
                     }
                 } label: {
                     ZStack {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(
+                                MediaClarityManager.mediaBackdrop(
+                                    isOwnMessage: isOwn,
+                                    colorScheme: colorScheme,
+                                    opacity: SmartGlassOpacityManager.adjustedBubbleOpacity(
+                                        for: .image,
+                                        isFastScrolling: reduceGlassEffect
+                                    )
+                                )
+                            )
+                            .frame(width: 232, height: 222)
+                            .allowsHitTesting(false)
+
                         CachedRemoteImage(url: url) { image in
                             image
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: 230, height: 220)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         } placeholder: {
                             ProgressView()
                                 .frame(width: 210, height: 180)
@@ -303,6 +358,7 @@ struct MessageBubbleView: View {
                             mediaUploadOverlay
                         }
                     }
+                    .frame(width: 232, height: 222)
                 }
                 .buttonStyle(.plain)
             }
@@ -612,7 +668,7 @@ struct MessageBubbleView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
-        .frame(width: message.type == .image ? 230 : 220, height: message.type == .image ? 220 : 80)
+        .frame(width: message.type == .image ? 232 : 220, height: message.type == .image ? 222 : 80)
     }
 
     private var uploadPercentText: String {
@@ -717,6 +773,7 @@ struct VoiceMessagePlayerView: View {
     @State private var timer: Timer?
     @State private var isPreparingPlayback = false
     @State private var playbackErrorMessage: String?
+    @State private var waveformPhase: Double = 0
 
     var body: some View {
         HStack(spacing: 10) {
@@ -733,6 +790,14 @@ struct VoiceMessagePlayerView: View {
             .disabled(isPreparingPlayback)
 
             VStack(alignment: .leading, spacing: 6) {
+                VoiceWaveformView(
+                    progress: progress,
+                    phase: waveformPhase,
+                    isPlaying: isPlaying,
+                    isOwnMessage: isOwnMessage
+                )
+                .frame(height: 14)
+
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
@@ -748,6 +813,13 @@ struct VoiceMessagePlayerView: View {
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
                     .shadow(color: Color.black.opacity(0.42), radius: 1.0, x: 0, y: 0.6)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pingyVoicePlaybackDidChange)) { note in
+            let activePlaybackID = note.object as? String
+            guard activePlaybackID != playbackID else { return }
+            if isPlaying {
+                stopPlayback(notifyEngine: false)
             }
         }
         .onDisappear {
@@ -769,6 +841,10 @@ struct VoiceMessagePlayerView: View {
         return String(format: "%d:%02d", minute, seconds)
     }
 
+    private var playbackID: String {
+        "voice:\(url.absoluteString)"
+    }
+
     private func togglePlayback() {
         if isPlaying {
             stopPlayback()
@@ -786,7 +862,8 @@ struct VoiceMessagePlayerView: View {
             }
 
             do {
-                try configurePlaybackAudioSession()
+                try VoicePlayerEngine.shared.configurePlaybackSession()
+                VoicePlayerEngine.shared.beginPlayback(id: playbackID)
                 let data = try await loadAudioData()
 
                 await MainActor.run {
@@ -797,8 +874,11 @@ struct VoiceMessagePlayerView: View {
                         delegateBox.didFinish = {
                             isPlaying = false
                             progress = 0
+                            waveformPhase = 0
                             timer?.invalidate()
                             timer = nil
+                            VoicePlayerEngine.shared.stopPlayback(id: playbackID)
+                            VoicePlayerEngine.shared.deactivateSession()
                         }
                         player.delegate = delegateBox
                         player.play()
@@ -808,6 +888,7 @@ struct VoiceMessagePlayerView: View {
                         let playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
                             guard let audioPlayer, audioPlayer.duration > 0 else { return }
                             progress = min(1, audioPlayer.currentTime / audioPlayer.duration)
+                            waveformPhase += 0.2
                         }
                         RunLoop.main.add(playbackTimer, forMode: .common)
                         timer = playbackTimer
@@ -825,20 +906,18 @@ struct VoiceMessagePlayerView: View {
         }
     }
 
-    private func stopPlayback() {
+    private func stopPlayback(notifyEngine: Bool = true) {
         audioPlayer?.stop()
         audioPlayer = nil
         isPlaying = false
         progress = 0
+        waveformPhase = 0
         timer?.invalidate()
         timer = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
-
-    private func configurePlaybackAudioSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay, .duckOthers])
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        if notifyEngine {
+            VoicePlayerEngine.shared.stopPlayback(id: playbackID)
+        }
+        VoicePlayerEngine.shared.deactivateSession()
     }
 
     private func loadAudioData() async throws -> Data {
@@ -909,6 +988,40 @@ struct VoiceMessagePlayerView: View {
                 }
             }
         )
+    }
+}
+
+private struct VoiceWaveformView: View {
+    let progress: Double
+    let phase: Double
+    let isPlaying: Bool
+    let isOwnMessage: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0 ..< 20, id: \.self) { index in
+                    Capsule()
+                        .fill(barColor(for: index))
+                        .frame(width: (geo.size.width - 38) / 20, height: barHeight(for: index))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        let base = (sin((Double(index) * 0.72) + phase) + 1) / 2
+        let active = isPlaying ? base : 0.18
+        return CGFloat(4 + (active * 8))
+    }
+
+    private func barColor(for index: Int) -> Color {
+        let threshold = Int(round(progress * 20))
+        if index <= threshold {
+            return isOwnMessage ? Color.white : PingyTheme.primaryStrong
+        }
+        return Color.white.opacity(isOwnMessage ? 0.36 : 0.24)
     }
 }
 

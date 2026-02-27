@@ -35,6 +35,10 @@ struct ChatDetailView: View {
     @State private var pendingInitialJumpToLatest = false
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
+    @State private var lastScrollSampleY: CGFloat = .greatestFiniteMagnitude
+    @State private var lastScrollSampleTime: TimeInterval = 0
+    @State private var isFastScrolling = false
+    @State private var scrollSpeedResetTask: Task<Void, Never>?
     @State private var chatOpenedAt: Date = .distantPast
     @State private var isChatLocked = false
     @State private var unlockPasscode = ""
@@ -116,6 +120,8 @@ struct ChatDetailView: View {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = false
             }
+            scrollSpeedResetTask?.cancel()
+            scrollSpeedResetTask = nil
             searchTask?.cancel()
             if voiceRecorder.isRecording {
                 _ = try? voiceRecorder.stopRecording()
@@ -452,8 +458,12 @@ struct ChatDetailView: View {
             }
 
             headerAvatar
-                .offset(y: -31)
-                .shadow(color: Color.black.opacity(0.25), radius: 10, y: 5)
+                .offset(y: HeaderLayoutFix.avatarTopOffset)
+                .shadow(
+                    color: Color.black.opacity(HeaderLayoutFix.avatarShadowOpacity),
+                    radius: HeaderLayoutFix.avatarShadowRadius,
+                    y: HeaderLayoutFix.avatarShadowYOffset
+                )
         }
         .frame(height: 110)
         .padding(.horizontal, 14)
@@ -471,7 +481,7 @@ struct ChatDetailView: View {
                     image
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 72, height: 72)
+                        .frame(width: HeaderLayoutFix.avatarSize, height: HeaderLayoutFix.avatarSize)
                         .clipShape(Circle())
                 } placeholder: {
                     avatarFallback
@@ -482,11 +492,14 @@ struct ChatDetailView: View {
                 avatarFallback
             }
         }
-        .frame(width: 72, height: 72)
+        .frame(width: HeaderLayoutFix.avatarSize, height: HeaderLayoutFix.avatarSize)
         .clipShape(Circle())
         .overlay(
             Circle()
-                .stroke(Color.white.opacity(0.24), lineWidth: 1.0)
+                .stroke(
+                    Color.white.opacity(HeaderLayoutFix.avatarRingOpacity),
+                    lineWidth: HeaderLayoutFix.avatarRingWidth
+                )
         )
     }
 
@@ -502,7 +515,7 @@ struct ChatDetailView: View {
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
         }
-        .frame(width: 72, height: 72)
+        .frame(width: HeaderLayoutFix.avatarSize, height: HeaderLayoutFix.avatarSize)
         .clipShape(Circle())
     }
 
@@ -609,7 +622,7 @@ struct ChatDetailView: View {
                                 let highlightRanges = isSearchMode ? (searchRangesByMessageID[message.id] ?? []) : []
                                 let isStarred = starredMessageIDs.contains(message.id)
 
-                                MessageBubbleView(
+                                ChatMessageCell(
                                     message: message,
                                     conversation: conversation,
                                     currentUserID: viewModel.currentUserID,
@@ -650,7 +663,8 @@ struct ChatDetailView: View {
                                             messageID: message.id,
                                             conversationID: conversation.conversationId
                                         )
-                                    }
+                                    },
+                                    reduceGlassEffect: isFastScrolling
                                 )
                                 .background(
                                     GeometryReader { geo in
@@ -701,6 +715,7 @@ struct ChatDetailView: View {
                     }
                     .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
                         bottomAnchorY = value
+                        updateScrollPerformanceFlag(using: value)
                     }
                     .onPreferenceChange(ChatMessageFramePreferenceKey.self) { value in
                         messageFramesByID = value
@@ -1027,6 +1042,41 @@ struct ChatDetailView: View {
             }
         } else {
             action()
+        }
+    }
+
+    private func updateScrollPerformanceFlag(using value: CGFloat) {
+        let now = Date().timeIntervalSinceReferenceDate
+        defer {
+            lastScrollSampleY = value
+            lastScrollSampleTime = now
+        }
+
+        guard lastScrollSampleTime > 0, lastScrollSampleY != .greatestFiniteMagnitude else { return }
+        let deltaY = abs(value - lastScrollSampleY)
+        let deltaTime = max(0.016, now - lastScrollSampleTime)
+        let pointsPerSecond = deltaY / deltaTime
+
+        if pointsPerSecond > 460 {
+            if !isFastScrolling {
+                withAnimation(.linear(duration: 0.08)) {
+                    isFastScrolling = true
+                }
+            }
+            scheduleFastScrollReset()
+        }
+    }
+
+    private func scheduleFastScrollReset() {
+        scrollSpeedResetTask?.cancel()
+        scrollSpeedResetTask = Task {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    isFastScrolling = false
+                }
+            }
         }
     }
 
