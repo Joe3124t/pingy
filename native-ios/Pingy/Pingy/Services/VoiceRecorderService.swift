@@ -65,6 +65,7 @@ final class VoiceRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
         self.recorder = nil
         recordingDuration = 0
         recordingStartDate = nil
+        deactivateAudioSession()
 
         return (url, duration)
     }
@@ -80,11 +81,17 @@ final class VoiceRecorderService: NSObject, ObservableObject, AVAudioRecorderDel
         recordingDuration = 0
         recordingStartDate = nil
         isRecording = false
+        deactivateAudioSession()
     }
 
     private static func makeTemporaryURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("voice-\(UUID().uuidString)")
             .appendingPathExtension("m4a")
+    }
+
+    private func deactivateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

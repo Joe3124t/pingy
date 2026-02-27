@@ -113,7 +113,7 @@ struct MessageBubbleView: View {
                 )
                 .fill(
                     LinearGradient(
-                        colors: [Color.white.opacity(0.24), Color.clear],
+                        colors: [Color.white.opacity(0.06), Color.clear],
                         startPoint: .top,
                         endPoint: .center
                     )
@@ -175,8 +175,8 @@ struct MessageBubbleView: View {
         if isOwn {
             return AnyShapeStyle(LinearGradient(
                 colors: [
-                    Color(red: 0.17, green: 0.66, blue: 0.75).opacity(0.66),
-                    Color(red: 0.10, green: 0.36, blue: 0.54).opacity(0.62),
+                    Color(red: 0.08, green: 0.40, blue: 0.56).opacity(0.72),
+                    Color(red: 0.04, green: 0.20, blue: 0.34).opacity(0.70),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -185,8 +185,8 @@ struct MessageBubbleView: View {
         return AnyShapeStyle(
             LinearGradient(
                 colors: [
-                    Color(red: 0.18, green: 0.22, blue: 0.30).opacity(0.54),
-                    Color(red: 0.08, green: 0.11, blue: 0.18).opacity(0.50),
+                    Color(red: 0.13, green: 0.17, blue: 0.24).opacity(0.68),
+                    Color(red: 0.05, green: 0.08, blue: 0.14).opacity(0.66),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -250,10 +250,10 @@ struct MessageBubbleView: View {
         switch message.type {
         case .text:
             Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.98))
                 .tint(isOwn ? Color.white : PingyTheme.primaryStrong)
-                .shadow(color: Color.black.opacity(0.46), radius: 1.4, x: 0, y: 0.8)
+                .shadow(color: Color.black.opacity(0.72), radius: 2.1, x: 0, y: 1.1)
                 .multilineTextAlignment(textAlignment(for: resolvedText))
                 .frame(maxWidth: 320, alignment: frameAlignment(for: resolvedText))
                 .environment(\.layoutDirection, inferredLayoutDirection(for: resolvedText))
@@ -715,19 +715,22 @@ struct VoiceMessagePlayerView: View {
     @State private var isPlaying = false
     @State private var progress: Double = 0
     @State private var timer: Timer?
+    @State private var isPreparingPlayback = false
+    @State private var playbackErrorMessage: String?
 
     var body: some View {
         HStack(spacing: 10) {
             Button {
                 togglePlayback()
             } label: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: isPreparingPlayback ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 30, height: 30)
                     .background(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.surfaceElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(PingyPressableButtonStyle())
+            .disabled(isPreparingPlayback)
 
             VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geo in
@@ -743,11 +746,19 @@ struct VoiceMessagePlayerView: View {
 
                 Text(durationText)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(isOwnMessage ? Color.white.opacity(0.92) : Color.white.opacity(0.84))
+                    .foregroundStyle(.white)
+                    .shadow(color: Color.black.opacity(0.42), radius: 1.0, x: 0, y: 0.6)
             }
         }
         .onDisappear {
             stopPlayback()
+        }
+        .alert("Voice message", isPresented: playbackErrorPresented) {
+            Button("OK", role: .cancel) {
+                playbackErrorMessage = nil
+            }
+        } message: {
+            Text(playbackErrorMessage ?? "Couldn't play this voice message.")
         }
     }
 
@@ -764,26 +775,53 @@ struct VoiceMessagePlayerView: View {
             return
         }
 
-        do {
-            let data = try Data(contentsOf: url)
-            let player = try AVAudioPlayer(data: data)
-            delegateBox.didFinish = {
-                isPlaying = false
-                progress = 0
-                timer?.invalidate()
-                timer = nil
+        guard !isPreparingPlayback else { return }
+        isPreparingPlayback = true
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isPreparingPlayback = false
+                }
             }
-            player.delegate = delegateBox
-            player.play()
-            audioPlayer = player
-            isPlaying = true
-            timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                guard let audioPlayer, audioPlayer.duration > 0 else { return }
-                progress = min(1, audioPlayer.currentTime / audioPlayer.duration)
+
+            do {
+                try configurePlaybackAudioSession()
+                let data = try await loadAudioData()
+
+                await MainActor.run {
+                    do {
+                        let player = try AVAudioPlayer(data: data)
+                        player.prepareToPlay()
+                        player.volume = 1.0
+                        delegateBox.didFinish = {
+                            isPlaying = false
+                            progress = 0
+                            timer?.invalidate()
+                            timer = nil
+                        }
+                        player.delegate = delegateBox
+                        player.play()
+                        audioPlayer = player
+                        isPlaying = true
+                        timer?.invalidate()
+                        let playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                            guard let audioPlayer, audioPlayer.duration > 0 else { return }
+                            progress = min(1, audioPlayer.currentTime / audioPlayer.duration)
+                        }
+                        RunLoop.main.add(playbackTimer, forMode: .common)
+                        timer = playbackTimer
+                    } catch {
+                        AppLogger.error("Voice playback failed: \(error.localizedDescription)")
+                        playbackErrorMessage = "Couldn't play this voice message. Tap again after a moment."
+                    }
+                }
+            } catch {
+                AppLogger.error("Voice playback failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    playbackErrorMessage = "Couldn't load voice message. Check connection and try again."
+                }
             }
-        } catch {
-            AppLogger.error("Voice playback failed: \(error.localizedDescription)")
         }
     }
 
@@ -794,6 +832,84 @@ struct VoiceMessagePlayerView: View {
         progress = 0
         timer?.invalidate()
         timer = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func configurePlaybackAudioSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetooth, .allowAirPlay, .duckOthers])
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+    }
+
+    private func loadAudioData() async throws -> Data {
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+
+        let token = currentAccessToken()
+        do {
+            return try await fetchAudioData(accessToken: token)
+        } catch APIError.server(statusCode: let statusCode, message: _) where statusCode == 401 || statusCode == 403 {
+            // Fallback for signed/public URLs that reject stale auth headers.
+            return try await fetchAudioData(accessToken: nil)
+        } catch {
+            throw error
+        }
+    }
+
+    private func fetchAudioData(accessToken: String?) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        request.timeoutInterval = 30
+        request.setValue("audio/*,application/octet-stream;q=0.9,*/*;q=0.1", forHTTPHeaderField: "Accept")
+        if let accessToken, !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        if let http = response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) {
+            throw APIError.server(statusCode: http.statusCode, message: "Voice media unavailable")
+        }
+
+        if let http = response as? HTTPURLResponse,
+           let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
+           contentType.contains("text/html")
+        {
+            throw APIError.server(statusCode: http.statusCode, message: "Voice media returned invalid payload")
+        }
+
+        guard !data.isEmpty else {
+            throw APIError.server(statusCode: 500, message: "Voice media response is empty")
+        }
+
+        return data
+    }
+
+    private func currentAccessToken() -> String? {
+        let defaultsToken = UserDefaults.standard.string(forKey: "pingy.session.accessToken.fallback")
+        if let defaultsToken, !defaultsToken.isEmpty {
+            return defaultsToken
+        }
+
+        if let keychainToken = try? KeychainStore.shared.string(for: "pingy.session.accessToken"),
+           let keychainToken,
+           !keychainToken.isEmpty
+        {
+            return keychainToken
+        }
+
+        return nil
+    }
+
+    private var playbackErrorPresented: Binding<Bool> {
+        Binding(
+            get: { playbackErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    playbackErrorMessage = nil
+                }
+            }
+        )
     }
 }
 
