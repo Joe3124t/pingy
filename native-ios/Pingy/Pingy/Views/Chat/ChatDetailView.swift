@@ -351,7 +351,7 @@ struct ChatDetailView: View {
         let avatarScale = 1 - (0.08 * headerCompressionProgress)
         let titleOffset = -(6 * headerCompressionProgress)
 
-        ZStack(alignment: .top) {
+        return ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(
                     GPUGlassRenderer.material(
