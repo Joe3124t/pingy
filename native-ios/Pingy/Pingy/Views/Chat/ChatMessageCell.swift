@@ -22,6 +22,8 @@ struct ChatMessageCell: View, Equatable {
     let onToggleStar: (() -> Void)?
     let onDeleteForMe: (() -> Void)?
     let reduceGlassEffect: Bool
+    let glassOpacityScale: CGFloat
+    let glassBlurRadius: CGFloat
 
     static func == (lhs: ChatMessageCell, rhs: ChatMessageCell) -> Bool {
         lhs.message == rhs.message &&
@@ -33,7 +35,9 @@ struct ChatMessageCell: View, Equatable {
             lhs.isGroupedWithPrevious == rhs.isGroupedWithPrevious &&
             lhs.searchHighlightRanges == rhs.searchHighlightRanges &&
             lhs.isStarred == rhs.isStarred &&
-            lhs.reduceGlassEffect == rhs.reduceGlassEffect
+            lhs.reduceGlassEffect == rhs.reduceGlassEffect &&
+            lhs.glassOpacityScale == rhs.glassOpacityScale &&
+            lhs.glassBlurRadius == rhs.glassBlurRadius
     }
 
     var body: some View {
@@ -58,7 +62,9 @@ struct ChatMessageCell: View, Equatable {
             onForward: onForward,
             onToggleStar: onToggleStar,
             onDeleteForMe: onDeleteForMe,
-            reduceGlassEffect: reduceGlassEffect
+            reduceGlassEffect: reduceGlassEffect,
+            glassOpacityScale: glassOpacityScale,
+            glassBlurRadius: glassBlurRadius
         )
     }
 }

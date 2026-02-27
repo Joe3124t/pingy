@@ -7,8 +7,7 @@ struct FloatingGlassTabBar: View {
     let compact: Bool
     let onSelect: (PingyRootTab) -> Void
 
-    @State private var horizontalTilt: CGFloat = 0
-    @State private var reflectionShift: CGFloat = 0
+    @StateObject private var dockInteraction = DockInteractionEngine()
     @State private var glowPulse = false
 
     private let accent = Color(red: 0.14, green: 0.84, blue: 0.39)
@@ -18,9 +17,11 @@ struct FloatingGlassTabBar: View {
         GeometryReader { proxy in
             let tabs = PingyRootTab.allCases
             let horizontalInset: CGFloat = 10
-            let contentWidth = max(1, proxy.size.width - (horizontalInset * 2))
+            let barWidth = proxy.size.width
+            let contentWidth = max(1, barWidth - (horizontalInset * 2))
             let slotWidth = contentWidth / CGFloat(max(tabs.count, 1))
             let selectedIndex = CGFloat(tabs.firstIndex(of: selectedTab) ?? 0)
+            let selectedCenterX = horizontalInset + selectedIndex * slotWidth + (slotWidth / 2)
             let barHeight: CGFloat = compact ? 62 : 68
             let activeBubbleWidth = min(120, max(86, slotWidth + 24))
             let activeBubbleHeight = barHeight + 16
@@ -46,14 +47,14 @@ struct FloatingGlassTabBar: View {
                     .overlay(alignment: .leading) {
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.06),
-                                Color.white.opacity(0.01),
+                                Color.white.opacity(0.07),
+                                Color.white.opacity(0.015),
                                 Color.clear,
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
-                        .offset(x: reflectionShift)
+                        .offset(x: dockInteraction.reflectionShift)
                         .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
                         .allowsHitTesting(false)
                     }
@@ -63,11 +64,27 @@ struct FloatingGlassTabBar: View {
                     )
                     .shadow(color: Color.black.opacity(0.26), radius: 16, y: 8)
                     .rotation3DEffect(
-                        .degrees(Double(horizontalTilt * 4)),
+                        .degrees(Double(dockInteraction.horizontalTilt * 4)),
                         axis: (x: 0, y: 1, z: 0),
                         perspective: 0.8
                     )
-                    .animation(.spring(response: 0.32, dampingFraction: 0.84), value: horizontalTilt)
+
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.26),
+                                Color.white.opacity(0.02),
+                                Color.clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 110, height: barHeight + 8)
+                    .blur(radius: 6)
+                    .offset(x: max(0, min(barWidth - 110, dockInteraction.highlightX - 55)))
+                    .allowsHitTesting(false)
 
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .fill(
@@ -121,7 +138,7 @@ struct FloatingGlassTabBar: View {
                             tab: tab,
                             isSelected: tab == selectedTab,
                             unreadCount: unreadCount,
-                            parallaxX: horizontalTilt * (tab == .chats ? 1.7 : 1.2),
+                            parallaxX: dockInteraction.horizontalTilt * (tab == .chats ? 1.7 : 1.2),
                             onTap: {
                                 guard selectedTab != tab else { return }
                                 onSelect(tab)
@@ -133,20 +150,25 @@ struct FloatingGlassTabBar: View {
             }
             .frame(height: barHeight)
             .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let normalized = max(-1, min(1, value.translation.width / 90))
-                        horizontalTilt = normalized
-                        reflectionShift = normalized * 26
+                        dockInteraction.updateDrag(
+                            translationX: value.translation.width,
+                            locationX: value.location.x,
+                            width: barWidth
+                        )
                     }
                     .onEnded { _ in
-                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
-                            horizontalTilt = 0
-                            reflectionShift = 0
-                        }
+                        dockInteraction.endDrag(snapTo: selectedCenterX)
                     }
             )
+            .onAppear {
+                dockInteraction.setRestingHighlightX(selectedCenterX)
+            }
+            .onChange(of: selectedTab) { _ in
+                dockInteraction.setRestingHighlightX(selectedCenterX)
+            }
         }
         .frame(height: compact ? 76 : 84)
     }

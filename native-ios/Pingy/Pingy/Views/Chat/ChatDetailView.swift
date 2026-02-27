@@ -35,10 +35,7 @@ struct ChatDetailView: View {
     @State private var pendingInitialJumpToLatest = false
     @State private var scrollViewportHeight: CGFloat = 0
     @State private var bottomAnchorY: CGFloat = .greatestFiniteMagnitude
-    @State private var lastScrollSampleY: CGFloat = .greatestFiniteMagnitude
-    @State private var lastScrollSampleTime: TimeInterval = 0
-    @State private var isFastScrolling = false
-    @State private var scrollSpeedResetTask: Task<Void, Never>?
+    @State private var headerCompressionProgress: CGFloat = 0
     @State private var chatOpenedAt: Date = .distantPast
     @State private var isChatLocked = false
     @State private var unlockPasscode = ""
@@ -47,6 +44,7 @@ struct ChatDetailView: View {
 
     private let mediaManager = MediaManager()
     private let uploadService = UploadService()
+    @StateObject private var liquidBlurManager = LiquidScrollBlurManager()
     private let chatBottomAnchorID = "chat-bottom-anchor"
 
     var body: some View {
@@ -57,7 +55,7 @@ struct ChatDetailView: View {
                 topBar
                 if isSearchMode {
                     searchBar
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(MorphTransitionEngine.liquidMorph)
                 }
                 Divider().overlay(PingyTheme.border.opacity(0.4))
                 messagesList(bottomInset: composerHeight + 16)
@@ -120,8 +118,6 @@ struct ChatDetailView: View {
             if horizontalSizeClass == .compact {
                 viewModel.isCompactChatDetailPresented = false
             }
-            scrollSpeedResetTask?.cancel()
-            scrollSpeedResetTask = nil
             searchTask?.cancel()
             if voiceRecorder.isRecording {
                 _ = try? voiceRecorder.stopRecording()
@@ -129,6 +125,7 @@ struct ChatDetailView: View {
             viewModel.sendTyping(false)
             viewModel.sendRecordingIndicator(false)
             contextualMessage = nil
+            liquidBlurManager.reset()
         }
         .onChange(of: isContactInfoPresented) { presented in
             if !presented {
@@ -350,19 +347,35 @@ struct ChatDetailView: View {
     }
 
     private var topBar: some View {
+        let headerScale = 1 - (0.04 * headerCompressionProgress)
+        let avatarScale = 1 - (0.08 * headerCompressionProgress)
+        let titleOffset = -(6 * headerCompressionProgress)
+
         ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(
+                    GPUGlassRenderer.material(
+                        for: liquidBlurManager.blurRadius,
+                        colorScheme: colorScheme
+                    )
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 0.9)
+                        .stroke(
+                            Color.white.opacity(
+                                GPUGlassRenderer.borderOpacity(for: liquidBlurManager.blurRadius)
+                            ),
+                            lineWidth: 0.9
+                        )
                 )
                 .overlay(alignment: .top) {
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color.white.opacity(0.20),
+                                    Color.white.opacity(
+                                        GPUGlassRenderer.highlightOpacity(for: liquidBlurManager.blurRadius)
+                                    ),
                                     Color.clear,
                                 ],
                                 startPoint: .top,
@@ -450,6 +463,7 @@ struct ChatDetailView: View {
                             )
                             .lineLimit(1)
                     }
+                    .offset(y: titleOffset)
                     .padding(.top, 8)
                     .padding(.bottom, 12)
                     .frame(maxWidth: .infinity)
@@ -464,11 +478,14 @@ struct ChatDetailView: View {
                     radius: HeaderLayoutFix.avatarShadowRadius,
                     y: HeaderLayoutFix.avatarShadowYOffset
                 )
+                .scaleEffect(avatarScale)
         }
-        .frame(height: 110)
+        .frame(height: 110 - (10 * headerCompressionProgress))
+        .scaleEffect(headerScale, anchor: .top)
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 8)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: headerCompressionProgress)
     }
 
     private var headerAvatar: some View {
@@ -612,6 +629,17 @@ struct ChatDetailView: View {
                     let messages = renderedMessages
                     ScrollView {
                         LazyVStack(spacing: 6) {
+                            Color.clear
+                                .frame(height: 0)
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: ChatScrollOffsetPreferenceKey.self,
+                                            value: geo.frame(in: .named("chat-scroll-space")).minY
+                                        )
+                                    }
+                                )
+
                             if viewModel.isLoadingMessages, viewModel.activeMessages.isEmpty {
                                 ProgressView("Loading messages...")
                                     .padding(.top, 32)
@@ -664,8 +692,11 @@ struct ChatDetailView: View {
                                             conversationID: conversation.conversationId
                                         )
                                     },
-                                    reduceGlassEffect: isFastScrolling
+                                    reduceGlassEffect: liquidBlurManager.isFastMotion,
+                                    glassOpacityScale: liquidBlurManager.opacityScale,
+                                    glassBlurRadius: liquidBlurManager.blurRadius
                                 )
+                                .transition(MorphTransitionEngine.messageInsertion)
                                 .background(
                                     GeometryReader { geo in
                                         Color.clear.preference(
@@ -715,7 +746,9 @@ struct ChatDetailView: View {
                     }
                     .onPreferenceChange(ChatBottomAnchorPreferenceKey.self) { value in
                         bottomAnchorY = value
-                        updateScrollPerformanceFlag(using: value)
+                    }
+                    .onPreferenceChange(ChatScrollOffsetPreferenceKey.self) { value in
+                        updateHeaderCompression(using: value)
                     }
                     .onPreferenceChange(ChatMessageFramePreferenceKey.self) { value in
                         messageFramesByID = value
@@ -1045,38 +1078,11 @@ struct ChatDetailView: View {
         }
     }
 
-    private func updateScrollPerformanceFlag(using value: CGFloat) {
-        let now = Date().timeIntervalSinceReferenceDate
-        defer {
-            lastScrollSampleY = value
-            lastScrollSampleTime = now
-        }
-
-        guard lastScrollSampleTime > 0, lastScrollSampleY != .greatestFiniteMagnitude else { return }
-        let deltaY = abs(value - lastScrollSampleY)
-        let deltaTime = max(0.016, now - lastScrollSampleTime)
-        let pointsPerSecond = deltaY / deltaTime
-
-        if pointsPerSecond > 460 {
-            if !isFastScrolling {
-                withAnimation(.linear(duration: 0.08)) {
-                    isFastScrolling = true
-                }
-            }
-            scheduleFastScrollReset()
-        }
-    }
-
-    private func scheduleFastScrollReset() {
-        scrollSpeedResetTask?.cancel()
-        scrollSpeedResetTask = Task {
-            try? await Task.sleep(nanoseconds: 220_000_000)
-            if Task.isCancelled { return }
-            await MainActor.run {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    isFastScrolling = false
-                }
-            }
+    private func updateHeaderCompression(using offset: CGFloat) {
+        liquidBlurManager.sample(offset: offset)
+        let compression = min(max(-offset / 120, 0), 1)
+        withAnimation(MorphTransitionEngine.fastEaseOut) {
+            headerCompressionProgress = compression
         }
     }
 
@@ -1253,7 +1259,7 @@ struct ChatDetailView: View {
             .clipShape(Capsule())
             .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
             .position(x: bubbleCenterX, y: emojiOriginY + (emojiHeight / 2))
-            .transition(.scale(scale: 0.92).combined(with: .opacity))
+            .transition(MorphTransitionEngine.liquidMorph)
 
             VStack(spacing: 0) {
                 ForEach(Array(availableActions.enumerated()), id: \.offset) { index, action in
@@ -1292,7 +1298,7 @@ struct ChatDetailView: View {
                 x: menuOriginX + (menuWidth / 2),
                 y: menuOriginY + (menuHeight / 2)
             )
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(MorphTransitionEngine.liquidMorph)
         }
         .zIndex(150)
     }
@@ -1523,6 +1529,14 @@ struct ChatDetailView: View {
 
 private struct ChatBottomAnchorPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = .greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ChatScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()

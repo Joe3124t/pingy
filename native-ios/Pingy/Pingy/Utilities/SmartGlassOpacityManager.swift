@@ -10,10 +10,15 @@ enum SmartGlassOpacityManager {
         }
     }
 
-    static func adjustedBubbleOpacity(for messageType: MessageType, isFastScrolling: Bool) -> Double {
+    static func adjustedBubbleOpacity(
+        for messageType: MessageType,
+        isFastScrolling: Bool,
+        opacityScale: CGFloat = 1
+    ) -> Double {
         let base = bubbleOpacity(for: messageType)
-        guard isFastScrolling else { return base }
-        return max(0.30, base - 0.14)
+        let scaled = min(1, max(0.22, base * Double(max(0.7, min(1.2, opacityScale)))))
+        guard isFastScrolling else { return scaled }
+        return max(0.30, scaled - 0.14)
     }
 
     static func glossyHighlightOpacity(for messageType: MessageType, isFastScrolling: Bool) -> Double {
@@ -26,11 +31,17 @@ enum SmartGlassOpacityManager {
         }
     }
 
-    static func bubbleFillStyle(isFastScrolling: Bool) -> AnyShapeStyle {
+    static func bubbleFillStyle(
+        isFastScrolling: Bool,
+        blurRadius: CGFloat = 20,
+        colorScheme: ColorScheme = .dark
+    ) -> AnyShapeStyle {
         if isFastScrolling {
             return AnyShapeStyle(Color.black.opacity(0.20))
         }
-        return AnyShapeStyle(.ultraThinMaterial)
+        return AnyShapeStyle(
+            GPUGlassRenderer.material(for: blurRadius, colorScheme: colorScheme)
+        )
     }
 
     static func estimatedLuminance(

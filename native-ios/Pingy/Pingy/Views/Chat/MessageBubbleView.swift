@@ -25,12 +25,16 @@ struct MessageBubbleView: View {
     let onToggleStar: (() -> Void)?
     let onDeleteForMe: (() -> Void)?
     let reduceGlassEffect: Bool
+    let glassOpacityScale: CGFloat
+    let glassBlurRadius: CGFloat
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var appLayoutDirection
 
     @GestureState private var swipeOffsetX: CGFloat = 0
+    @GestureState private var isTouchPressed = false
     @State private var selectedImageURL: URL?
     @State private var selectedVideoURL: URL?
+    @State private var isLongPressLifted = false
 
     private let bubbleCornerRadius: CGFloat = 22
     private let bubbleTail = CGSize(width: 10, height: 8)
@@ -114,7 +118,13 @@ struct MessageBubbleView: View {
             .padding(.vertical, 10)
             .background(
                 bubbleShape
-                    .fill(SmartGlassOpacityManager.bubbleFillStyle(isFastScrolling: reduceGlassEffect))
+                    .fill(
+                        SmartGlassOpacityManager.bubbleFillStyle(
+                            isFastScrolling: reduceGlassEffect,
+                            blurRadius: glassBlurRadius,
+                            colorScheme: colorScheme
+                        )
+                    )
                     .allowsHitTesting(false)
             )
             .overlay {
@@ -153,19 +163,40 @@ struct MessageBubbleView: View {
                     Image(systemName: "arrowshape.turn.up.left.fill")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(PingyTheme.primaryStrong)
-                        .padding(.leading, 8)
+                    .padding(.leading, 8)
                         .transition(.opacity)
                 }
             }
             .offset(x: swipeOffsetX * 0.45)
+            .offset(y: isLongPressLifted ? BubbleInteractionAnimator.liftedOffsetY : BubbleInteractionAnimator.restingOffsetY)
+            .scaleEffect(isTouchPressed ? BubbleInteractionAnimator.pressScale : 1)
+            .shadow(
+                color: Color.black.opacity(currentShadow.opacity),
+                radius: currentShadow.radius,
+                x: 0,
+                y: currentShadow.y
+            )
+            .overlay {
+                bubbleShape
+                    .stroke(Color.white.opacity(BubbleInteractionAnimator.glowOpacity(isPressed: isTouchPressed, isLifted: isLongPressLifted)), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
             .onTapGesture(count: 2) {
                 PingyHaptics.softTap()
                 onReact("\u{2764}\u{FE0F}")
             }
-            .onLongPressGesture(minimumDuration: 0.12) {
-                PingyHaptics.softTap()
-                onLongPress?()
-            }
+            .onLongPressGesture(
+                minimumDuration: 0.12,
+                pressing: { pressing in
+                    withAnimation(BubbleInteractionAnimator.pressAnimation) {
+                        isLongPressLifted = pressing
+                    }
+                },
+                perform: {
+                    PingyHaptics.softTap()
+                    onLongPress?()
+                }
+            )
             .highPriorityGesture(
                 DragGesture(minimumDistance: 14)
                     .updating($swipeOffsetX) { value, state, _ in
@@ -179,6 +210,12 @@ struct MessageBubbleView: View {
                         guard value.translation.width > 70 else { return }
                         PingyHaptics.softTap()
                         onReply()
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($isTouchPressed) { _, state, _ in
+                        state = true
                     }
             )
 
@@ -205,7 +242,8 @@ struct MessageBubbleView: View {
 
         let opacity = SmartGlassOpacityManager.adjustedBubbleOpacity(
             for: message.type,
-            isFastScrolling: reduceGlassEffect
+            isFastScrolling: reduceGlassEffect,
+            opacityScale: glassOpacityScale
         )
 
         if isOwn {
@@ -669,6 +707,10 @@ struct MessageBubbleView: View {
             }
         }
         .frame(width: message.type == .image ? 232 : 220, height: message.type == .image ? 222 : 80)
+    }
+
+    private var currentShadow: ShadowProfile {
+        isLongPressLifted ? BubbleInteractionAnimator.liftedShadow : BubbleInteractionAnimator.baseShadow
     }
 
     private var uploadPercentText: String {
