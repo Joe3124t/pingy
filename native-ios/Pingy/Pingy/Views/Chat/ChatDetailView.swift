@@ -1521,6 +1521,22 @@ struct ChatDetailView: View {
         return currentDate.timeIntervalSince(previousDate) < 180
     }
 
+    private func formatTime(_ createdAt: String) -> String {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackParser = ISO8601DateFormatter()
+
+        let date = parser.date(from: createdAt) ?? fallbackParser.date(from: createdAt)
+        guard let date else { return createdAt }
+
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.amSymbol = "AM"
+        formatter.pmSymbol = "PM"
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
+
     private func sendPickedFile(url: URL) async {
         guard let data = try? Data(contentsOf: url) else { return }
         let ext = url.pathExtension.lowercased()

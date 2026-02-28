@@ -54,7 +54,7 @@ final class VoiceMediaDiskCache {
         memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
         let target = fileURL(forKey: key)
 
-        queue.async { [fileManager] in
+        queue.async {
             do {
                 try data.write(to: target, options: [.atomic])
             } catch {
