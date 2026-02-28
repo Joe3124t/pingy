@@ -1262,7 +1262,6 @@ struct ChatDetailView: View {
         return MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
     }
 
-    @ViewBuilder
     private func floatingMessageContextMenu(
         for message: Message,
         frame: CGRect,
