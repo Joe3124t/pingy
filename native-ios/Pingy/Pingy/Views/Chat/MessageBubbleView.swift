@@ -27,6 +27,7 @@ struct MessageBubbleView: View {
     let reduceGlassEffect: Bool
     let glassOpacityScale: CGFloat
     let glassBlurRadius: CGFloat
+    let isContextMenuFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.layoutDirection) private var appLayoutDirection
 
@@ -49,6 +50,10 @@ struct MessageBubbleView: View {
 
     private var isMediaMessage: Bool {
         message.type == .image || message.type == .video
+    }
+
+    private var isLifted: Bool {
+        isLongPressLifted || isContextMenuFocused
     }
 
     private var adaptiveTextStyle: AdaptiveTextStyle {
@@ -168,7 +173,7 @@ struct MessageBubbleView: View {
                 }
             }
             .offset(x: swipeOffsetX * 0.45)
-            .offset(y: isLongPressLifted ? BubbleInteractionAnimator.liftedOffsetY : BubbleInteractionAnimator.restingOffsetY)
+            .offset(y: isLifted ? BubbleInteractionAnimator.liftedOffsetY : BubbleInteractionAnimator.restingOffsetY)
             .scaleEffect(isTouchPressed ? BubbleInteractionAnimator.pressScale : 1)
             .shadow(
                 color: Color.black.opacity(currentShadow.opacity),
@@ -178,7 +183,7 @@ struct MessageBubbleView: View {
             )
             .overlay {
                 bubbleShape
-                    .stroke(Color.white.opacity(BubbleInteractionAnimator.glowOpacity(isPressed: isTouchPressed, isLifted: isLongPressLifted)), lineWidth: 1)
+                    .stroke(Color.white.opacity(BubbleInteractionAnimator.glowOpacity(isPressed: isTouchPressed, isLifted: isLifted)), lineWidth: 1)
                     .allowsHitTesting(false)
             }
             .onTapGesture(count: 2) {
@@ -194,6 +199,9 @@ struct MessageBubbleView: View {
                 },
                 perform: {
                     PingyHaptics.softTap()
+                    withAnimation(BubbleInteractionAnimator.pressAnimation) {
+                        isLongPressLifted = true
+                    }
                     onLongPress?()
                 }
             )
@@ -231,6 +239,13 @@ struct MessageBubbleView: View {
         .sheet(isPresented: videoSheetPresentedBinding) {
             if let selectedVideoURL {
                 ChatVideoPreviewSheet(url: selectedVideoURL)
+            }
+        }
+        .onChange(of: isContextMenuFocused) { focused in
+            if !focused, isLongPressLifted {
+                withAnimation(BubbleInteractionAnimator.pressAnimation) {
+                    isLongPressLifted = false
+                }
             }
         }
     }
@@ -967,19 +982,36 @@ struct VoiceMessagePlayerView: View {
             return try Data(contentsOf: url)
         }
 
-        let token = currentAccessToken()
-        do {
-            return try await fetchAudioData(accessToken: token)
-        } catch APIError.server(statusCode: let statusCode, message: _) where statusCode == 401 || statusCode == 403 {
-            // Fallback for signed/public URLs that reject stale auth headers.
-            return try await fetchAudioData(accessToken: nil)
-        } catch {
-            throw error
+        if let cached = VoiceMediaDiskCache.shared.data(for: url) {
+            return cached
         }
+
+        let token = currentAccessToken()
+        let candidates: [String?] = token?.isEmpty == false ? [token, nil] : [nil]
+        var lastError: Error?
+
+        for (index, candidate) in candidates.enumerated() {
+            do {
+                let data = try await fetchAudioData(from: url, accessToken: candidate, allowJSONRedirect: true)
+                VoiceMediaDiskCache.shared.store(data: data, for: url)
+                return data
+            } catch {
+                lastError = error
+                if index < candidates.count - 1 {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
+        }
+
+        if let stale = VoiceMediaDiskCache.shared.data(for: url, allowExpired: true) {
+            return stale
+        }
+
+        throw lastError ?? APIError.server(statusCode: 500, message: "Voice media unavailable")
     }
 
-    private func fetchAudioData(accessToken: String?) async throws -> Data {
-        var request = URLRequest(url: url)
+    private func fetchAudioData(from sourceURL: URL, accessToken: String?, allowJSONRedirect: Bool) async throws -> Data {
+        var request = URLRequest(url: sourceURL)
         request.cachePolicy = .returnCacheDataElseLoad
         request.timeoutInterval = 30
         request.setValue("audio/*,application/octet-stream;q=0.9,*/*;q=0.1", forHTTPHeaderField: "Accept")
@@ -993,17 +1025,50 @@ struct VoiceMessagePlayerView: View {
         }
 
         if let http = response as? HTTPURLResponse,
-           let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased(),
-           contentType.contains("text/html")
+           let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
         {
-            throw APIError.server(statusCode: http.statusCode, message: "Voice media returned invalid payload")
+            if contentType.contains("application/json"),
+               allowJSONRedirect,
+               let redirected = extractMediaURL(fromJSON: data, relativeTo: sourceURL)
+            {
+                let redirectedData = try await fetchAudioData(
+                    from: redirected,
+                    accessToken: nil,
+                    allowJSONRedirect: false
+                )
+                VoiceMediaDiskCache.shared.store(data: redirectedData, for: sourceURL)
+                return redirectedData
+            }
+
+            if contentType.contains("text/html") || contentType.contains("application/xhtml+xml") {
+                throw APIError.server(statusCode: http.statusCode, message: "Voice media returned invalid payload")
+            }
         }
 
         guard !data.isEmpty else {
             throw APIError.server(statusCode: 500, message: "Voice media response is empty")
         }
 
+        VoiceMediaDiskCache.shared.store(data: data, for: sourceURL)
         return data
+    }
+
+    private func extractMediaURL(fromJSON data: Data, relativeTo sourceURL: URL) -> URL? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let keys = ["url", "mediaUrl", "signedUrl", "downloadUrl", "href"]
+        for key in keys {
+            guard let raw = object[key] as? String, !raw.isEmpty else { continue }
+            if let absolute = URL(string: raw), absolute.scheme != nil {
+                return absolute
+            }
+            if let relative = URL(string: raw, relativeTo: sourceURL)?.absoluteURL {
+                return relative
+            }
+        }
+        return nil
     }
 
     private func currentAccessToken() -> String? {

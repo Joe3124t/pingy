@@ -25,7 +25,9 @@ struct ChatDetailView: View {
     @State private var starredMessageIDs = Set<String>()
     @State private var isNativeMediaPickerPresented = false
     @State private var isMediaComposerPresented = false
+    @State private var isExtendedEmojiPickerPresented = false
     @State private var composedMediaItems: [MediaComposerItem] = []
+    @State private var emojiPickerMessageID: String?
     @State private var isFileImporterPresented = false
     @State private var composerHeight: CGFloat = 84
     @State private var isContactInfoPresented = false
@@ -169,53 +171,74 @@ struct ChatDetailView: View {
                                 return
                             }
                             composedMediaItems = items
-                            isMediaComposerPresented = true
+                            DispatchQueue.main.async {
+                                isMediaComposerPresented = true
+                            }
                         }
                     }
                 }
             )
         }
-        .fullScreenCover(isPresented: $isMediaComposerPresented, onDismiss: {
+        .fullScreenCover(isPresented: mediaComposerPresentationBinding, onDismiss: {
             composedMediaItems = []
         }) {
-            MediaComposerView(
-                items: composedMediaItems,
-                recipientName: participantDisplayName,
-                onClose: {
-                    isMediaComposerPresented = false
-                },
-                onSend: { items, caption, hdEnabled in
-                    let batchItems = items
-                    let batchCaption = caption
-                    let useHD = hdEnabled
-                    isMediaComposerPresented = false
+            Group {
+                if composedMediaItems.isEmpty {
+                    Color.clear
+                        .onAppear {
+                            isMediaComposerPresented = false
+                        }
+                } else {
+                    MediaComposerView(
+                        items: composedMediaItems,
+                        recipientName: participantDisplayName,
+                        onClose: {
+                            isMediaComposerPresented = false
+                        },
+                        onSend: { items, caption, hdEnabled in
+                            let batchItems = items
+                            let batchCaption = caption
+                            let useHD = hdEnabled
+                            isMediaComposerPresented = false
 
-                    Task {
-                        await uploadService.uploadMediaBatch(
-                            items: batchItems,
-                            caption: batchCaption,
-                            hdEnabled: useHD
-                        ) { item, uploadData, caption in
-                            guard !uploadData.isEmpty else {
-                                await MainActor.run {
-                                    viewModel.showTransientNotice(
-                                        "Skipped one file because it could not be prepared.",
-                                        style: .warning
+                            Task {
+                                await uploadService.uploadMediaBatch(
+                                    items: batchItems,
+                                    caption: batchCaption,
+                                    hdEnabled: useHD
+                                ) { item, uploadData, caption in
+                                    guard !uploadData.isEmpty else {
+                                        await MainActor.run {
+                                            viewModel.showTransientNotice(
+                                                "Skipped one file because it could not be prepared.",
+                                                style: .warning
+                                            )
+                                        }
+                                        return
+                                    }
+                                    await viewModel.sendMedia(
+                                        data: uploadData,
+                                        fileName: item.fileName,
+                                        mimeType: item.mimeType,
+                                        type: .image,
+                                        body: caption
                                     )
                                 }
-                                return
                             }
-                            await viewModel.sendMedia(
-                                data: uploadData,
-                                fileName: item.fileName,
-                                mimeType: item.mimeType,
-                                type: .image,
-                                body: caption
-                            )
                         }
-                    }
+                    )
                 }
-            )
+            }
+        }
+        .sheet(isPresented: $isExtendedEmojiPickerPresented, onDismiss: {
+            emojiPickerMessageID = nil
+        }) {
+            ReactionEmojiPickerSheet { emoji in
+                guard let messageID = emojiPickerMessageID ?? contextualMessage?.id else { return }
+                Task { await viewModel.toggleReaction(messageID: messageID, emoji: emoji) }
+                isExtendedEmojiPickerPresented = false
+                dismissFloatingActions()
+            }
         }
         .fullScreenCover(item: $mediaViewerState) { state in
             ChatMediaViewer(
@@ -694,7 +717,8 @@ struct ChatDetailView: View {
                                     },
                                     reduceGlassEffect: liquidBlurManager.isFastMotion,
                                     glassOpacityScale: liquidBlurManager.opacityScale,
-                                    glassBlurRadius: liquidBlurManager.blurRadius
+                                    glassBlurRadius: liquidBlurManager.blurRadius,
+                                    isContextMenuFocused: contextualMessage?.id == message.id
                                 )
                                 .transition(MorphTransitionEngine.messageInsertion)
                                 .background(
@@ -1014,6 +1038,17 @@ struct ChatDetailView: View {
         !renderedMessages.isEmpty && !isNearBottom
     }
 
+    private var mediaComposerPresentationBinding: Binding<Bool> {
+        Binding(
+            get: { isMediaComposerPresented && !composedMediaItems.isEmpty },
+            set: { presented in
+                if !presented {
+                    isMediaComposerPresented = false
+                }
+            }
+        )
+    }
+
     private var shouldAutoScrollToLatest: Bool {
         if pendingInitialJumpToLatest {
             return true
@@ -1209,6 +1244,24 @@ struct ChatDetailView: View {
         }
     }
 
+    private func floatingPreviewText(for message: Message) -> String {
+        if let decrypted = viewModel.decryptedBody(for: message)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !decrypted.isEmpty
+        {
+            return decrypted
+        }
+
+        if let bodyText = message.body?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !bodyText.isEmpty
+        {
+            return bodyText
+        }
+
+        return MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
+    }
+
     @ViewBuilder
     private func floatingMessageContextMenu(
         for message: Message,
@@ -1219,37 +1272,105 @@ struct ChatDetailView: View {
         let actionRowHeight: CGFloat = 50
         let availableActions = floatingActions(for: message)
         let menuHeight = CGFloat(availableActions.count) * actionRowHeight
-        let emojiWidth: CGFloat = 308
         let emojiHeight: CGFloat = 50
+        let reactionSlotWidth: CGFloat = 40
+        let reactionSpacing: CGFloat = 12
+        let plusSlotWidth: CGFloat = 42
+        let reactionContentWidth = (CGFloat(floatingReactions.count) * reactionSlotWidth)
+            + (CGFloat(max(floatingReactions.count - 1, 0)) * reactionSpacing)
+        let maxEmojiWidth = max(188, canvasSize.width - 24)
+        let emojiWidth = min(maxEmojiWidth, reactionContentWidth + plusSlotWidth + 38)
 
-        let bubbleCenterX = min(max(frame.midX, (emojiWidth / 2) + 16), canvasSize.width - (emojiWidth / 2) - 16)
-        let emojiOriginY = max(96, frame.minY - emojiHeight - 10)
+        let bubbleCenterX = min(max(frame.midX, (emojiWidth / 2) + 12), canvasSize.width - (emojiWidth / 2) - 12)
+        var emojiOriginY = max(96, frame.minY - emojiHeight - 10)
         let menuOriginY = min(max(emojiOriginY + emojiHeight + 10, 112), canvasSize.height - menuHeight - 94)
+        if menuOriginY < emojiOriginY + emojiHeight + 8 {
+            emojiOriginY = max(96, menuOriginY - emojiHeight - 8)
+        }
         let rawMenuX = message.senderId == viewModel.currentUserID
             ? frame.maxX - menuWidth
             : frame.minX
         let menuOriginX = min(max(16, rawMenuX), canvasSize.width - menuWidth - 16)
 
         ZStack(alignment: .topLeading) {
-            Color.black.opacity(0.24)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.34))
                 .ignoresSafeArea()
                 .onTapGesture {
                     dismissFloatingActions()
                 }
 
-            HStack(spacing: 14) {
-                ForEach(floatingReactions, id: \.self) { emoji in
-                    Button {
-                        Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
-                        dismissFloatingActions()
-                    } label: {
-                        Text(emoji)
-                            .font(.system(size: 30))
+            VStack(spacing: 0) {
+                Text(floatingPreviewText(for: message))
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack {
+                    Text(formatTime(message.createdAt))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.84))
+                    Spacer(minLength: 10)
+                    if message.senderId == viewModel.currentUserID,
+                       let outgoingState = viewModel.outgoingState(for: message)
+                    {
+                        imageForFloatingState(outgoingState)
                     }
-                    .buttonStyle(PingyPressableButtonStyle())
                 }
+                .padding(.top, 6)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(width: min(max(220, frame.width), canvasSize.width - 30), alignment: .leading)
+            .background(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: Color.black.opacity(0.32), radius: 16, x: 0, y: 10)
+            .position(x: frame.midX, y: frame.midY - 8)
+            .transition(MorphTransitionEngine.liquidMorph)
+
+            HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: reactionSpacing) {
+                        ForEach(floatingReactions, id: \.self) { emoji in
+                            Button {
+                                Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
+                                dismissFloatingActions()
+                            } label: {
+                                Text(emoji)
+                                    .font(.system(size: 30))
+                                    .frame(width: reactionSlotWidth, height: reactionSlotWidth)
+                            }
+                            .buttonStyle(PingyPressableButtonStyle())
+                        }
+                    }
+                    .padding(.leading, 12)
+                    .padding(.trailing, 4)
+                }
+                .environment(\.layoutDirection, .leftToRight)
+                .scrollDisabled(reactionContentWidth <= max(0, emojiWidth - plusSlotWidth - 26))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Button {
+                    emojiPickerMessageID = message.id
+                    isExtendedEmojiPickerPresented = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Color.white.opacity(0.16))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PingyPressableButtonStyle())
+                .padding(.trailing, 10)
+            }
             .frame(width: emojiWidth, height: emojiHeight)
             .background(.ultraThinMaterial)
             .overlay(
@@ -1316,6 +1437,38 @@ struct ChatDetailView: View {
             FloatingAction(kind: .edit, title: "Edit", icon: "pencil", tint: .white),
             FloatingAction(kind: .delete, title: "Delete", icon: "trash", tint: Color(red: 1, green: 0.48, blue: 0.48)),
         ]
+    }
+
+    @ViewBuilder
+    private func imageForFloatingState(_ state: OutgoingMessageState) -> some View {
+        switch state {
+        case .sending:
+            Image(systemName: "clock")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.9))
+        case .sent:
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.9))
+        case .delivered:
+            HStack(spacing: 1) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color.white.opacity(0.9))
+        case .read:
+            HStack(spacing: 1) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color(red: 0.68, green: 0.93, blue: 0.76))
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.orange)
+        }
     }
 
     private func handleFloatingAction(_ action: FloatingAction, for message: Message) {
@@ -1566,6 +1719,55 @@ private struct FloatingAction {
     let tint: Color
 }
 
+private struct ReactionEmojiPickerSheet: View {
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private let emojis: [String] = [
+        "\u{1F600}", "\u{1F601}", "\u{1F602}", "\u{1F923}", "\u{1F60A}", "\u{1F60D}", "\u{1F970}", "\u{1F618}", "\u{1F60E}", "\u{1F929}",
+        "\u{1F979}", "\u{1F62D}", "\u{1F621}", "\u{1F631}", "\u{1F634}", "\u{1F607}", "\u{1F914}", "\u{1F64C}", "\u{1F44F}", "\u{1F64F}",
+        "\u{1F44D}", "\u{1F44E}", "\u{1F525}", "\u{1F4AF}", "\u{2764}\u{FE0F}", "\u{1F499}", "\u{1F49A}", "\u{1F49B}", "\u{1F90D}", "\u{1F5A4}",
+        "\u{2728}", "\u{1F389}", "\u{1F91D}", "\u{1F44C}", "\u{270C}\u{FE0F}", "\u{1F90C}", "\u{1F605}", "\u{1F972}", "\u{1F917}", "\u{1F624}",
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 6), spacing: 14) {
+                    ForEach(emojis, id: \.self) { emoji in
+                        Button {
+                            onSelect(emoji)
+                            dismiss()
+                        } label: {
+                            Text(emoji)
+                                .font(.system(size: 34))
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .background(Color.white.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(PingyPressableButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 24)
+            }
+            .background(PingyTheme.background.ignoresSafeArea())
+            .navigationTitle("Choose reaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .environment(\.layoutDirection, .leftToRight)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
 private struct SpaceParticleField: View {
     let seed: Int
 
@@ -1615,6 +1817,7 @@ private struct SeededGenerator: RandomNumberGenerator {
         return state
     }
 }
+
 
 
 

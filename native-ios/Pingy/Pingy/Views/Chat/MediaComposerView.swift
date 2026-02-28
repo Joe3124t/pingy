@@ -83,15 +83,10 @@ struct MediaComposerView: View {
                     .ignoresSafeArea()
 
                 if editableItems.isEmpty {
-                    VStack(spacing: 14) {
-                        Text("No media selected")
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.92))
-                        Button("Close") {
+                    Color.clear
+                        .onAppear {
                             onClose()
                         }
-                        .buttonStyle(.borderedProminent)
-                    }
                 } else {
                     VStack(spacing: 0) {
                         topBar

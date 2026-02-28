@@ -24,6 +24,7 @@ struct ChatMessageCell: View, Equatable {
     let reduceGlassEffect: Bool
     let glassOpacityScale: CGFloat
     let glassBlurRadius: CGFloat
+    let isContextMenuFocused: Bool
 
     static func == (lhs: ChatMessageCell, rhs: ChatMessageCell) -> Bool {
         lhs.message == rhs.message &&
@@ -37,7 +38,8 @@ struct ChatMessageCell: View, Equatable {
             lhs.isStarred == rhs.isStarred &&
             lhs.reduceGlassEffect == rhs.reduceGlassEffect &&
             lhs.glassOpacityScale == rhs.glassOpacityScale &&
-            lhs.glassBlurRadius == rhs.glassBlurRadius
+            lhs.glassBlurRadius == rhs.glassBlurRadius &&
+            lhs.isContextMenuFocused == rhs.isContextMenuFocused
     }
 
     var body: some View {
@@ -64,7 +66,8 @@ struct ChatMessageCell: View, Equatable {
             onDeleteForMe: onDeleteForMe,
             reduceGlassEffect: reduceGlassEffect,
             glassOpacityScale: glassOpacityScale,
-            glassBlurRadius: glassBlurRadius
+            glassBlurRadius: glassBlurRadius,
+            isContextMenuFocused: isContextMenuFocused
         )
     }
 }
