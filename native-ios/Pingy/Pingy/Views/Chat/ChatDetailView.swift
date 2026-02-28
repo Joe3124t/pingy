@@ -1291,7 +1291,7 @@ struct ChatDetailView: View {
             : frame.minX
         let menuOriginX = min(max(16, rawMenuX), canvasSize.width - menuWidth - 16)
 
-        ZStack(alignment: .topLeading) {
+        return ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .overlay(Color.black.opacity(0.34))
