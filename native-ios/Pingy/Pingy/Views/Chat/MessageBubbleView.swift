@@ -56,6 +56,19 @@ struct MessageBubbleView: View {
         isLongPressLifted || isContextMenuFocused
     }
 
+    private func updatePressLiftState(_ pressing: Bool) {
+        withAnimation(BubbleInteractionAnimator.pressAnimation) {
+            isLongPressLifted = pressing
+        }
+    }
+
+    private func presentContextMenuFromBubble() {
+        guard !isContextMenuFocused else { return }
+        PingyHaptics.softTap()
+        updatePressLiftState(true)
+        onLongPress?()
+    }
+
     private var adaptiveTextStyle: AdaptiveTextStyle {
         AdaptiveTextEngine.style(
             for: message.type,
@@ -193,16 +206,10 @@ struct MessageBubbleView: View {
             .onLongPressGesture(
                 minimumDuration: 0.12,
                 pressing: { pressing in
-                    withAnimation(BubbleInteractionAnimator.pressAnimation) {
-                        isLongPressLifted = pressing
-                    }
+                    updatePressLiftState(pressing)
                 },
                 perform: {
-                    PingyHaptics.softTap()
-                    withAnimation(BubbleInteractionAnimator.pressAnimation) {
-                        isLongPressLifted = true
-                    }
-                    onLongPress?()
+                    presentContextMenuFromBubble()
                 }
             )
             .highPriorityGesture(
@@ -414,6 +421,12 @@ struct MessageBubbleView: View {
                     .frame(width: 232, height: 222)
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.12)
+                        .onEnded { _ in
+                            presentContextMenuFromBubble()
+                        }
+                )
             }
 
         case .video:
@@ -439,6 +452,12 @@ struct MessageBubbleView: View {
                     .padding(.vertical, 2)
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.12)
+                        .onEnded { _ in
+                            presentContextMenuFromBubble()
+                        }
+                )
                 .overlay(alignment: .center) {
                     if isLocalPendingMedia {
                         mediaUploadOverlay
@@ -457,7 +476,13 @@ struct MessageBubbleView: View {
 
         case .voice:
             if let url = MediaURLResolver.resolve(message.mediaUrl) {
-                VoiceMessagePlayerView(url: url, durationMs: message.voiceDurationMs ?? 0, isOwnMessage: isOwn)
+                VoiceMessagePlayerView(
+                    url: url,
+                    durationMs: message.voiceDurationMs ?? 0,
+                    isOwnMessage: isOwn,
+                    conversationID: message.conversationId,
+                    messageID: message.id
+                )
                     .frame(maxWidth: 240, alignment: .leading)
             }
         }
@@ -822,6 +847,8 @@ struct VoiceMessagePlayerView: View {
     let url: URL
     let durationMs: Int
     let isOwnMessage: Bool
+    let conversationID: String
+    let messageID: String
 
     @State private var audioPlayer: AVAudioPlayer?
     @State private var delegateBox = VoiceAudioPlayerDelegate()
@@ -978,27 +1005,43 @@ struct VoiceMessagePlayerView: View {
     }
 
     private func loadAudioData() async throws -> Data {
-        if url.isFileURL {
-            return try Data(contentsOf: url)
-        }
-
-        if let cached = VoiceMediaDiskCache.shared.data(for: url) {
-            return cached
-        }
-
         let token = currentAccessToken()
         let candidates: [String?] = token?.isEmpty == false ? [token, nil] : [nil]
+        let urlCandidates = audioSourceCandidates(from: url)
         var lastError: Error?
 
-        for (index, candidate) in candidates.enumerated() {
-            do {
-                let data = try await fetchAudioData(from: url, accessToken: candidate, allowJSONRedirect: true)
-                VoiceMediaDiskCache.shared.store(data: data, for: url)
-                return data
-            } catch {
-                lastError = error
-                if index < candidates.count - 1 {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
+        for candidateURL in urlCandidates {
+            if candidateURL.isFileURL {
+                if let data = try? Data(contentsOf: candidateURL), !data.isEmpty {
+                    return data
+                }
+                continue
+            }
+
+            if let cached = VoiceMediaDiskCache.shared.data(for: candidateURL) {
+                if candidateURL != url {
+                    VoiceMediaDiskCache.shared.store(data: cached, for: url)
+                }
+                return cached
+            }
+
+            for (index, candidateToken) in candidates.enumerated() {
+                do {
+                    let data = try await fetchAudioData(
+                        from: candidateURL,
+                        accessToken: candidateToken,
+                        allowJSONRedirect: true
+                    )
+                    VoiceMediaDiskCache.shared.store(data: data, for: candidateURL)
+                    if candidateURL != url {
+                        VoiceMediaDiskCache.shared.store(data: data, for: url)
+                    }
+                    return data
+                } catch {
+                    lastError = error
+                    if index < candidates.count - 1 {
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    }
                 }
             }
         }
@@ -1007,7 +1050,175 @@ struct VoiceMessagePlayerView: View {
             return stale
         }
 
+        if let refreshed = try await refreshSignedMediaAndFetch(token: token) {
+            return refreshed
+        }
+
         throw lastError ?? APIError.server(statusCode: 500, message: "Voice media unavailable")
+    }
+
+    private func refreshSignedMediaAndFetch(token: String?) async throws -> Data? {
+        guard !conversationID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        let tokens: [String?] = token?.isEmpty == false ? [token, nil] : [nil]
+        let decoder = JSONDecoder()
+
+        for endpointURL in signedMediaRefreshEndpoints() {
+            for endpointToken in tokens {
+                var request = URLRequest(url: endpointURL)
+                request.httpMethod = "GET"
+                request.timeoutInterval = 20
+                request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                if let endpointToken, !endpointToken.isEmpty {
+                    request.setValue("Bearer \(endpointToken)", forHTTPHeaderField: "Authorization")
+                }
+
+                do {
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse,
+                          (200 ... 299).contains(http.statusCode),
+                          !data.isEmpty
+                    else {
+                        continue
+                    }
+
+                    guard let list = try? decoder.decode(MessageListResponse.self, from: data),
+                          let refreshedMessage = list.messages.first(where: { $0.id == messageID }),
+                          let refreshedURL = MediaURLResolver.resolve(refreshedMessage.mediaUrl)
+                    else {
+                        continue
+                    }
+
+                    let retryCandidates = audioSourceCandidates(from: refreshedURL)
+                    for retryURL in retryCandidates {
+                        if let cached = VoiceMediaDiskCache.shared.data(for: retryURL) {
+                            VoiceMediaDiskCache.shared.store(data: cached, for: url)
+                            return cached
+                        }
+
+                        for retryToken in tokens {
+                            if let downloaded = try? await fetchAudioData(
+                                from: retryURL,
+                                accessToken: retryToken,
+                                allowJSONRedirect: true
+                            ) {
+                                VoiceMediaDiskCache.shared.store(data: downloaded, for: retryURL)
+                                VoiceMediaDiskCache.shared.store(data: downloaded, for: url)
+                                return downloaded
+                            }
+                        }
+                    }
+                } catch {
+                    continue
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func signedMediaRefreshEndpoints() -> [URL] {
+        guard let encodedConversationID = conversationID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            return []
+        }
+
+        var candidates: [URL] = []
+        let configuredBase = (Bundle.main.object(forInfoDictionaryKey: "PINGY_API_BASE_URL") as? String)
+            ?? "https://pingy-backend-production.up.railway.app/api"
+
+        if let configuredURL = URL(string: configuredBase) {
+            candidates.append(contentsOf: messageListEndpointCandidates(baseURL: configuredURL, conversationID: encodedConversationID))
+        }
+
+        if let fallbackURL = URL(string: "https://pingy-backend-production.up.railway.app/api") {
+            candidates.append(contentsOf: messageListEndpointCandidates(baseURL: fallbackURL, conversationID: encodedConversationID))
+        }
+
+        var deduplicated: [URL] = []
+        for candidate in candidates {
+            if deduplicated.contains(where: { $0.absoluteString == candidate.absoluteString }) {
+                continue
+            }
+            deduplicated.append(candidate)
+        }
+        return deduplicated
+    }
+
+    private func messageListEndpointCandidates(baseURL: URL, conversationID: String) -> [URL] {
+        var endpoints: [URL] = []
+        let normalized = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        if normalized.lowercased().hasSuffix("/api") {
+            if let direct = URL(string: "\(normalized)/messages/\(conversationID)?limit=100") {
+                endpoints.append(direct)
+            }
+            let trimmed = String(normalized.dropLast(4))
+            if let fallback = URL(string: "\(trimmed)/messages/\(conversationID)?limit=100") {
+                endpoints.append(fallback)
+            }
+        } else {
+            if let direct = URL(string: "\(normalized)/messages/\(conversationID)?limit=100") {
+                endpoints.append(direct)
+            }
+            if let fallback = URL(string: "\(normalized)/api/messages/\(conversationID)?limit=100") {
+                endpoints.append(fallback)
+            }
+        }
+
+        return endpoints
+    }
+
+    private func audioSourceCandidates(from sourceURL: URL) -> [URL] {
+        var candidates: [URL] = [sourceURL]
+
+        if sourceURL.isFileURL {
+            return candidates
+        }
+
+        if let components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) {
+            if components.path.hasPrefix("/uploads/"), components.queryItems?.isEmpty == false {
+                var stripped = components
+                stripped.queryItems = nil
+                if let strippedURL = stripped.url {
+                    candidates.append(strippedURL)
+                }
+            }
+
+            if components.path.hasSuffix("/api/media/access"),
+               let mediaToken = components.queryItems?.first(where: { $0.name == "m" })?.value,
+               let decoded = decodeMediaTokenURL(mediaToken)
+            {
+                candidates.append(decoded)
+            }
+        }
+
+        var seen = Set<String>()
+        return candidates.filter { candidate in
+            let key = candidate.absoluteString
+            if seen.contains(key) { return false }
+            seen.insert(key)
+            return true
+        }
+    }
+
+    private func decodeMediaTokenURL(_ token: String) -> URL? {
+        let normalized = token
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        let padded = remainder == 0 ? normalized : normalized + String(repeating: "=", count: 4 - remainder)
+
+        guard let data = Data(base64Encoded: padded),
+              let raw = String(data: data, encoding: .utf8),
+              let decodedURL = URL(string: raw),
+              decodedURL.scheme?.hasPrefix("http") == true
+        else {
+            return nil
+        }
+        return decodedURL
     }
 
     private func fetchAudioData(from sourceURL: URL, accessToken: String?, allowJSONRedirect: Bool) async throws -> Data {

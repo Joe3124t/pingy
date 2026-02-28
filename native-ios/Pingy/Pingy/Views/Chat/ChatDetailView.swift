@@ -1281,11 +1281,21 @@ struct ChatDetailView: View {
         let emojiWidth = min(maxEmojiWidth, reactionContentWidth + plusSlotWidth + 38)
 
         let bubbleCenterX = min(max(frame.midX, (emojiWidth / 2) + 12), canvasSize.width - (emojiWidth / 2) - 12)
-        var emojiOriginY = max(96, frame.minY - emojiHeight - 10)
-        let menuOriginY = min(max(emojiOriginY + emojiHeight + 10, 112), canvasSize.height - menuHeight - 94)
-        if menuOriginY < emojiOriginY + emojiHeight + 8 {
-            emojiOriginY = max(96, menuOriginY - emojiHeight - 8)
+        let menuTopPadding: CGFloat = 112
+        let menuBottomInset: CGFloat = 94
+        let maxMenuOriginY = max(menuTopPadding, canvasSize.height - menuHeight - menuBottomInset)
+
+        var emojiOriginY = frame.maxY + 10
+        var menuOriginY = emojiOriginY + emojiHeight + 10
+
+        if menuOriginY > maxMenuOriginY {
+            let overflow = menuOriginY - maxMenuOriginY
+            emojiOriginY -= overflow
+            menuOriginY -= overflow
         }
+
+        emojiOriginY = max(96, emojiOriginY)
+        menuOriginY = min(max(emojiOriginY + emojiHeight + 8, menuTopPadding), maxMenuOriginY)
         let rawMenuX = message.senderId == viewModel.currentUserID
             ? frame.maxX - menuWidth
             : frame.minX
