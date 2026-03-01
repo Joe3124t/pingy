@@ -1245,21 +1245,11 @@ struct ChatDetailView: View {
     }
 
     private func floatingPreviewText(for message: Message) -> String {
-        if let decrypted = viewModel.decryptedBody(for: message)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !decrypted.isEmpty
-        {
-            return decrypted
-        }
-
-        if let bodyText = message.body?.stringValue?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !bodyText.isEmpty
-        {
-            return bodyText
-        }
-
-        return MessageBodyFormatter.previewText(from: message.body, fallback: "Message")
+        ContextMenuTitleResolver.title(
+            for: message,
+            decryptedText: viewModel.decryptedBody(for: message),
+            fallbackBodyText: message.body?.stringValue
+        )
     }
 
     private func floatingMessageContextMenu(
@@ -1268,118 +1258,74 @@ struct ChatDetailView: View {
         canvasSize: CGSize
     ) -> some View {
         let menuWidth: CGFloat = 228
+        let menuHeaderHeight: CGFloat = 40
         let actionRowHeight: CGFloat = 50
         let availableActions = floatingActions(for: message)
-        let menuHeight = CGFloat(availableActions.count) * actionRowHeight
+        let menuHeight = menuHeaderHeight + (CGFloat(availableActions.count) * actionRowHeight)
         let emojiHeight: CGFloat = 50
-        let reactionSlotWidth: CGFloat = 40
-        let reactionSpacing: CGFloat = 12
-        let plusSlotWidth: CGFloat = 42
-        let reactionContentWidth = (CGFloat(floatingReactions.count) * reactionSlotWidth)
-            + (CGFloat(max(floatingReactions.count - 1, 0)) * reactionSpacing)
-        let maxEmojiWidth = max(188, canvasSize.width - 24)
-        let emojiWidth = min(maxEmojiWidth, reactionContentWidth + plusSlotWidth + 38)
+        let reactionSlotWidth: CGFloat = 30
+        let reactionSpacing: CGFloat = 8
+        let emojiPadding: CGFloat = 12
 
-        let bubbleCenterX = min(max(frame.midX, (emojiWidth / 2) + 12), canvasSize.width - (emojiWidth / 2) - 12)
-        let menuTopPadding: CGFloat = 112
-        let menuBottomInset: CGFloat = 94
-        let maxMenuOriginY = max(menuTopPadding, canvasSize.height - menuHeight - menuBottomInset)
+        let maxEmojiWidth = max(248, canvasSize.width - 24)
+        let slotSpan = reactionSlotWidth + reactionSpacing
+        let availableSlots = max(
+            2,
+            Int(floor((maxEmojiWidth - (emojiPadding * 2) + reactionSpacing) / slotSpan))
+        )
+        let visibleReactionCount = max(1, min(floatingReactions.count, availableSlots - 1))
+        let visibleReactions = Array(floatingReactions.prefix(visibleReactionCount))
+        let totalReactionItems = visibleReactions.count + 1
 
-        var emojiOriginY = frame.maxY + 10
-        var menuOriginY = emojiOriginY + emojiHeight + 10
+        let emojiWidth = (CGFloat(totalReactionItems) * reactionSlotWidth)
+            + (CGFloat(max(totalReactionItems - 1, 0)) * reactionSpacing)
+            + (emojiPadding * 2)
 
-        if menuOriginY > maxMenuOriginY {
-            let overflow = menuOriginY - maxMenuOriginY
-            emojiOriginY -= overflow
-            menuOriginY -= overflow
-        }
-
-        emojiOriginY = max(96, emojiOriginY)
-        menuOriginY = min(max(emojiOriginY + emojiHeight + 8, menuTopPadding), maxMenuOriginY)
-        let rawMenuX = message.senderId == viewModel.currentUserID
-            ? frame.maxX - menuWidth
-            : frame.minX
-        let menuOriginX = min(max(16, rawMenuX), canvasSize.width - menuWidth - 16)
+        let placement = ReactionLayoutFix.resolve(
+            messageFrame: frame,
+            canvasSize: canvasSize,
+            reactionSize: CGSize(width: emojiWidth, height: emojiHeight),
+            menuSize: CGSize(width: menuWidth, height: menuHeight),
+            isOwnMessage: message.senderId == viewModel.currentUserID
+        )
 
         return ZStack(alignment: .topLeading) {
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.34))
+                .overlay(Color.black.opacity(0.2))
                 .ignoresSafeArea()
                 .onTapGesture {
                     dismissFloatingActions()
                 }
 
-            VStack(spacing: 0) {
-                Text(floatingPreviewText(for: message))
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack {
-                    Text(formatTime(message.createdAt))
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.84))
-                    Spacer(minLength: 10)
-                    if message.senderId == viewModel.currentUserID,
-                       let outgoingState = viewModel.outgoingState(for: message)
-                    {
-                        imageForFloatingState(outgoingState)
+            HStack(spacing: reactionSpacing) {
+                ForEach(visibleReactions, id: \.self) { emoji in
+                    Button {
+                        Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
+                        dismissFloatingActions()
+                    } label: {
+                        Text(emoji)
+                            .font(.system(size: 30))
+                            .frame(width: reactionSlotWidth, height: reactionSlotWidth)
                     }
+                    .buttonStyle(PingyPressableButtonStyle())
                 }
-                .padding(.top, 6)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(width: min(max(220, frame.width), canvasSize.width - 30), alignment: .leading)
-            .background(.ultraThinMaterial)
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: Color.black.opacity(0.32), radius: 16, x: 0, y: 10)
-            .position(x: frame.midX, y: frame.midY - 8)
-            .transition(MorphTransitionEngine.liquidMorph)
-
-            HStack(spacing: 8) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: reactionSpacing) {
-                        ForEach(floatingReactions, id: \.self) { emoji in
-                            Button {
-                                Task { await viewModel.toggleReaction(messageID: message.id, emoji: emoji) }
-                                dismissFloatingActions()
-                            } label: {
-                                Text(emoji)
-                                    .font(.system(size: 30))
-                                    .frame(width: reactionSlotWidth, height: reactionSlotWidth)
-                            }
-                            .buttonStyle(PingyPressableButtonStyle())
-                        }
-                    }
-                    .padding(.leading, 12)
-                    .padding(.trailing, 4)
-                }
-                .environment(\.layoutDirection, .leftToRight)
-                .scrollDisabled(reactionContentWidth <= max(0, emojiWidth - plusSlotWidth - 26))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 Button {
                     emojiPickerMessageID = message.id
                     isExtendedEmojiPickerPresented = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
+                        .frame(width: reactionSlotWidth, height: reactionSlotWidth)
                         .background(Color.white.opacity(0.16))
                         .clipShape(Circle())
                 }
                 .buttonStyle(PingyPressableButtonStyle())
-                .padding(.trailing, 10)
             }
+            .padding(.horizontal, emojiPadding)
+            .environment(\.layoutDirection, .leftToRight)
             .frame(width: emojiWidth, height: emojiHeight)
             .background(.ultraThinMaterial)
             .overlay(
@@ -1388,10 +1334,24 @@ struct ChatDetailView: View {
             )
             .clipShape(Capsule())
             .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
-            .position(x: bubbleCenterX, y: emojiOriginY + (emojiHeight / 2))
+            .position(x: placement.reactionCenterX, y: placement.reactionCenterY)
             .transition(MorphTransitionEngine.liquidMorph)
 
             VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    Text(floatingPreviewText(for: message))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.96))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 16)
+                .frame(height: menuHeaderHeight)
+
+                Divider()
+                    .overlay(Color.white.opacity(0.09))
+
                 ForEach(Array(availableActions.enumerated()), id: \.offset) { index, action in
                     Button {
                         handleFloatingAction(action, for: message)
@@ -1419,15 +1379,12 @@ struct ChatDetailView: View {
             .frame(width: menuWidth)
             .background(.ultraThinMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(Color.white.opacity(0.10), lineWidth: 0.9)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(color: Color.black.opacity(0.28), radius: 14, x: 0, y: 8)
-            .position(
-                x: menuOriginX + (menuWidth / 2),
-                y: menuOriginY + (menuHeight / 2)
-            )
+            .position(x: placement.menuCenterX, y: placement.menuCenterY)
             .transition(MorphTransitionEngine.liquidMorph)
         }
         .zIndex(150)

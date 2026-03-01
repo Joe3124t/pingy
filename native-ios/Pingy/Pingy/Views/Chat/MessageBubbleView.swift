@@ -104,7 +104,7 @@ struct MessageBubbleView: View {
                 HStack(spacing: 6) {
                     Text(formatTime(message.createdAt))
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(adaptiveTextStyle.textColor.opacity(0.9))
+                        .foregroundStyle(MessageBubbleRefactor.timestampColor(isOwnMessage: isOwn))
                         .shadow(
                             color: adaptiveTextStyle.glowColor,
                             radius: adaptiveTextStyle.glowRadius,
@@ -346,12 +346,12 @@ struct MessageBubbleView: View {
         switch message.type {
         case .text:
             Text(linkifiedAttributedText(resolvedText, highlightRanges: searchHighlightRanges))
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundStyle(adaptiveTextStyle.textColor)
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundStyle(MessageBubbleRefactor.contentTextColor(isOwnMessage: isOwn))
                 .tint(adaptiveTextStyle.linkTint)
                 .shadow(
-                    color: adaptiveTextStyle.glowColor,
-                    radius: adaptiveTextStyle.glowRadius,
+                    color: Color.white.opacity(isOwn ? 0.22 : 0.16),
+                    radius: max(2.2, adaptiveTextStyle.glowRadius),
                     x: 0,
                     y: adaptiveTextStyle.glowYOffset
                 )
@@ -408,7 +408,7 @@ struct MessageBubbleView: View {
                                 } else {
                                     Text("Tap to retry later")
                                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                                        .foregroundStyle(isOwn ? Color.white.opacity(0.9) : Color.white.opacity(0.82))
+                                        .foregroundStyle(MessageBubbleRefactor.metadataTextColor(isOwnMessage: isOwn))
                                 }
                             }
                             .frame(width: 210, height: 120)
@@ -421,7 +421,8 @@ struct MessageBubbleView: View {
                     .frame(width: 232, height: 222)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(
+                .contentShape(Rectangle())
+                .highPriorityGesture(
                     LongPressGesture(minimumDuration: 0.12)
                         .onEnded { _ in
                             presentContextMenuFromBubble()
@@ -445,14 +446,15 @@ struct MessageBubbleView: View {
                                 .lineLimit(1)
                             Text("Tap to open")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundStyle(Color.white.opacity(0.88))
+                                .foregroundStyle(MessageBubbleRefactor.metadataTextColor(isOwnMessage: isOwn))
                         }
                     }
                     .frame(maxWidth: 240, alignment: .leading)
                     .padding(.vertical, 2)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(
+                .contentShape(Rectangle())
+                .highPriorityGesture(
                     LongPressGesture(minimumDuration: 0.12)
                         .onEnded { _ in
                             presentContextMenuFromBubble()
@@ -500,11 +502,11 @@ struct MessageBubbleView: View {
         return VStack(alignment: .leading, spacing: 2) {
             Text("From \(senderName)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.96))
+                .foregroundStyle(MessageBubbleRefactor.metadataTextColor(isOwnMessage: isOwn))
             Text(preview)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .lineLimit(1)
-                .foregroundStyle(Color.white.opacity(0.9))
+                .foregroundStyle(MessageBubbleRefactor.contentTextColor(isOwnMessage: isOwn))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -856,47 +858,59 @@ struct VoiceMessagePlayerView: View {
     @State private var progress: Double = 0
     @State private var timer: Timer?
     @State private var isPreparingPlayback = false
-    @State private var playbackErrorMessage: String?
+    @State private var hasInlineError = false
     @State private var waveformPhase: Double = 0
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button {
-                togglePlayback()
-            } label: {
-                Image(systemName: isPreparingPlayback ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 30, height: 30)
-                    .background(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.surfaceElevated)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(PingyPressableButtonStyle())
-            .disabled(isPreparingPlayback)
-
-            VStack(alignment: .leading, spacing: 6) {
-                VoiceWaveformView(
-                    progress: progress,
-                    phase: waveformPhase,
-                    isPlaying: isPlaying,
-                    isOwnMessage: isOwnMessage
-                )
-                .frame(height: 14)
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(isOwnMessage ? Color.white.opacity(0.24) : PingyTheme.border.opacity(0.6))
-                        Capsule()
-                            .fill(isOwnMessage ? Color.white : PingyTheme.primaryStrong)
-                            .frame(width: geo.size.width * progress)
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    togglePlayback()
+                } label: {
+                    Image(systemName: isPreparingPlayback ? "hourglass" : (isPlaying ? "pause.fill" : "play.fill"))
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(width: 30, height: 30)
+                        .background(isOwnMessage ? Color.white.opacity(0.22) : PingyTheme.surfaceElevated)
+                        .clipShape(Circle())
                 }
-                .frame(height: 4)
+                .buttonStyle(PingyPressableButtonStyle())
+                .disabled(isPreparingPlayback)
 
-                Text(durationText)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(color: Color.black.opacity(0.42), radius: 1.0, x: 0, y: 0.6)
+                VStack(alignment: .leading, spacing: 6) {
+                    VoiceWaveformView(
+                        progress: progress,
+                        phase: waveformPhase,
+                        isPlaying: isPlaying,
+                        isOwnMessage: isOwnMessage
+                    )
+                    .frame(height: 14)
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(isOwnMessage ? Color.white.opacity(0.24) : PingyTheme.border.opacity(0.6))
+                            Capsule()
+                                .fill(isOwnMessage ? Color.white : PingyTheme.primaryStrong)
+                                .frame(width: geo.size.width * progress)
+                        }
+                    }
+                    .frame(height: 4)
+
+                    Text(durationText)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(MessageBubbleRefactor.metadataTextColor(isOwnMessage: isOwnMessage))
+                        .shadow(color: Color.black.opacity(0.42), radius: 1.0, x: 0, y: 0.6)
+                }
+            }
+            if hasInlineError {
+                Button {
+                    togglePlayback()
+                } label: {
+                    Label("Retry voice message", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(isOwnMessage ? Color.white : PingyTheme.primaryStrong)
+                }
+                .buttonStyle(.plain)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .pingyVoicePlaybackDidChange)) { note in
@@ -908,13 +922,6 @@ struct VoiceMessagePlayerView: View {
         }
         .onDisappear {
             stopPlayback()
-        }
-        .alert("Voice message", isPresented: playbackErrorPresented) {
-            Button("OK", role: .cancel) {
-                playbackErrorMessage = nil
-            }
-        } message: {
-            Text(playbackErrorMessage ?? "Couldn't play this voice message.")
         }
     }
 
@@ -937,6 +944,7 @@ struct VoiceMessagePlayerView: View {
 
         guard !isPreparingPlayback else { return }
         isPreparingPlayback = true
+        hasInlineError = false
 
         Task {
             defer {
@@ -948,7 +956,11 @@ struct VoiceMessagePlayerView: View {
             do {
                 try VoicePlayerEngine.shared.configurePlaybackSession()
                 VoicePlayerEngine.shared.beginPlayback(id: playbackID)
-                let data = try await loadAudioData()
+                let data = try await VoicePlaybackManager.shared.loadPlayableAudio(
+                    sourceURL: url,
+                    conversationID: conversationID,
+                    messageID: messageID
+                )
 
                 await MainActor.run {
                     do {
@@ -978,13 +990,17 @@ struct VoiceMessagePlayerView: View {
                         timer = playbackTimer
                     } catch {
                         AppLogger.error("Voice playback failed: \(error.localizedDescription)")
-                        playbackErrorMessage = "Couldn't play this voice message. Tap again after a moment."
+                        hasInlineError = true
+                        VoicePlayerEngine.shared.stopPlayback(id: playbackID)
+                        VoicePlayerEngine.shared.deactivateSession()
                     }
                 }
             } catch {
                 AppLogger.error("Voice playback failed: \(error.localizedDescription)")
                 await MainActor.run {
-                    playbackErrorMessage = "Couldn't load voice message. Check connection and try again."
+                    hasInlineError = true
+                    VoicePlayerEngine.shared.stopPlayback(id: playbackID)
+                    VoicePlayerEngine.shared.deactivateSession()
                 }
             }
         }
@@ -1002,310 +1018,6 @@ struct VoiceMessagePlayerView: View {
             VoicePlayerEngine.shared.stopPlayback(id: playbackID)
         }
         VoicePlayerEngine.shared.deactivateSession()
-    }
-
-    private func loadAudioData() async throws -> Data {
-        let token = currentAccessToken()
-        let candidates: [String?] = token?.isEmpty == false ? [token, nil] : [nil]
-        let urlCandidates = audioSourceCandidates(from: url)
-        var lastError: Error?
-
-        for candidateURL in urlCandidates {
-            if candidateURL.isFileURL {
-                if let data = try? Data(contentsOf: candidateURL), !data.isEmpty {
-                    return data
-                }
-                continue
-            }
-
-            if let cached = VoiceMediaDiskCache.shared.data(for: candidateURL) {
-                if candidateURL != url {
-                    VoiceMediaDiskCache.shared.store(data: cached, for: url)
-                }
-                return cached
-            }
-
-            for (index, candidateToken) in candidates.enumerated() {
-                do {
-                    let data = try await fetchAudioData(
-                        from: candidateURL,
-                        accessToken: candidateToken,
-                        allowJSONRedirect: true
-                    )
-                    VoiceMediaDiskCache.shared.store(data: data, for: candidateURL)
-                    if candidateURL != url {
-                        VoiceMediaDiskCache.shared.store(data: data, for: url)
-                    }
-                    return data
-                } catch {
-                    lastError = error
-                    if index < candidates.count - 1 {
-                        try? await Task.sleep(nanoseconds: 250_000_000)
-                    }
-                }
-            }
-        }
-
-        if let stale = VoiceMediaDiskCache.shared.data(for: url, allowExpired: true) {
-            return stale
-        }
-
-        if let refreshed = try await refreshSignedMediaAndFetch(token: token) {
-            return refreshed
-        }
-
-        throw lastError ?? APIError.server(statusCode: 500, message: "Voice media unavailable")
-    }
-
-    private func refreshSignedMediaAndFetch(token: String?) async throws -> Data? {
-        guard !conversationID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-
-        let tokens: [String?] = token?.isEmpty == false ? [token, nil] : [nil]
-        let decoder = JSONDecoder()
-
-        for endpointURL in signedMediaRefreshEndpoints() {
-            for endpointToken in tokens {
-                var request = URLRequest(url: endpointURL)
-                request.httpMethod = "GET"
-                request.timeoutInterval = 20
-                request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-                request.setValue("application/json", forHTTPHeaderField: "Accept")
-                if let endpointToken, !endpointToken.isEmpty {
-                    request.setValue("Bearer \(endpointToken)", forHTTPHeaderField: "Authorization")
-                }
-
-                do {
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse,
-                          (200 ... 299).contains(http.statusCode),
-                          !data.isEmpty
-                    else {
-                        continue
-                    }
-
-                    guard let list = try? decoder.decode(MessageListResponse.self, from: data),
-                          let refreshedMessage = list.messages.first(where: { $0.id == messageID }),
-                          let refreshedURL = MediaURLResolver.resolve(refreshedMessage.mediaUrl)
-                    else {
-                        continue
-                    }
-
-                    let retryCandidates = audioSourceCandidates(from: refreshedURL)
-                    for retryURL in retryCandidates {
-                        if let cached = VoiceMediaDiskCache.shared.data(for: retryURL) {
-                            VoiceMediaDiskCache.shared.store(data: cached, for: url)
-                            return cached
-                        }
-
-                        for retryToken in tokens {
-                            if let downloaded = try? await fetchAudioData(
-                                from: retryURL,
-                                accessToken: retryToken,
-                                allowJSONRedirect: true
-                            ) {
-                                VoiceMediaDiskCache.shared.store(data: downloaded, for: retryURL)
-                                VoiceMediaDiskCache.shared.store(data: downloaded, for: url)
-                                return downloaded
-                            }
-                        }
-                    }
-                } catch {
-                    continue
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private func signedMediaRefreshEndpoints() -> [URL] {
-        guard let encodedConversationID = conversationID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
-            return []
-        }
-
-        var candidates: [URL] = []
-        let configuredBase = (Bundle.main.object(forInfoDictionaryKey: "PINGY_API_BASE_URL") as? String)
-            ?? "https://pingy-backend-production.up.railway.app/api"
-
-        if let configuredURL = URL(string: configuredBase) {
-            candidates.append(contentsOf: messageListEndpointCandidates(baseURL: configuredURL, conversationID: encodedConversationID))
-        }
-
-        if let fallbackURL = URL(string: "https://pingy-backend-production.up.railway.app/api") {
-            candidates.append(contentsOf: messageListEndpointCandidates(baseURL: fallbackURL, conversationID: encodedConversationID))
-        }
-
-        var deduplicated: [URL] = []
-        for candidate in candidates {
-            if deduplicated.contains(where: { $0.absoluteString == candidate.absoluteString }) {
-                continue
-            }
-            deduplicated.append(candidate)
-        }
-        return deduplicated
-    }
-
-    private func messageListEndpointCandidates(baseURL: URL, conversationID: String) -> [URL] {
-        var endpoints: [URL] = []
-        let normalized = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-
-        if normalized.lowercased().hasSuffix("/api") {
-            if let direct = URL(string: "\(normalized)/messages/\(conversationID)?limit=100") {
-                endpoints.append(direct)
-            }
-            let trimmed = String(normalized.dropLast(4))
-            if let fallback = URL(string: "\(trimmed)/messages/\(conversationID)?limit=100") {
-                endpoints.append(fallback)
-            }
-        } else {
-            if let direct = URL(string: "\(normalized)/messages/\(conversationID)?limit=100") {
-                endpoints.append(direct)
-            }
-            if let fallback = URL(string: "\(normalized)/api/messages/\(conversationID)?limit=100") {
-                endpoints.append(fallback)
-            }
-        }
-
-        return endpoints
-    }
-
-    private func audioSourceCandidates(from sourceURL: URL) -> [URL] {
-        var candidates: [URL] = [sourceURL]
-
-        if sourceURL.isFileURL {
-            return candidates
-        }
-
-        if let components = URLComponents(url: sourceURL, resolvingAgainstBaseURL: false) {
-            if components.path.hasPrefix("/uploads/"), components.queryItems?.isEmpty == false {
-                var stripped = components
-                stripped.queryItems = nil
-                if let strippedURL = stripped.url {
-                    candidates.append(strippedURL)
-                }
-            }
-
-            if components.path.hasSuffix("/api/media/access"),
-               let mediaToken = components.queryItems?.first(where: { $0.name == "m" })?.value,
-               let decoded = decodeMediaTokenURL(mediaToken)
-            {
-                candidates.append(decoded)
-            }
-        }
-
-        var seen = Set<String>()
-        return candidates.filter { candidate in
-            let key = candidate.absoluteString
-            if seen.contains(key) { return false }
-            seen.insert(key)
-            return true
-        }
-    }
-
-    private func decodeMediaTokenURL(_ token: String) -> URL? {
-        let normalized = token
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = normalized.count % 4
-        let padded = remainder == 0 ? normalized : normalized + String(repeating: "=", count: 4 - remainder)
-
-        guard let data = Data(base64Encoded: padded),
-              let raw = String(data: data, encoding: .utf8),
-              let decodedURL = URL(string: raw),
-              decodedURL.scheme?.hasPrefix("http") == true
-        else {
-            return nil
-        }
-        return decodedURL
-    }
-
-    private func fetchAudioData(from sourceURL: URL, accessToken: String?, allowJSONRedirect: Bool) async throws -> Data {
-        var request = URLRequest(url: sourceURL)
-        request.cachePolicy = .returnCacheDataElseLoad
-        request.timeoutInterval = 30
-        request.setValue("audio/*,application/octet-stream;q=0.9,*/*;q=0.1", forHTTPHeaderField: "Accept")
-        if let accessToken, !accessToken.isEmpty {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        if let http = response as? HTTPURLResponse, !(200 ... 299).contains(http.statusCode) {
-            throw APIError.server(statusCode: http.statusCode, message: "Voice media unavailable")
-        }
-
-        if let http = response as? HTTPURLResponse,
-           let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
-        {
-            if contentType.contains("application/json"),
-               allowJSONRedirect,
-               let redirected = extractMediaURL(fromJSON: data, relativeTo: sourceURL)
-            {
-                let redirectedData = try await fetchAudioData(
-                    from: redirected,
-                    accessToken: nil,
-                    allowJSONRedirect: false
-                )
-                VoiceMediaDiskCache.shared.store(data: redirectedData, for: sourceURL)
-                return redirectedData
-            }
-
-            if contentType.contains("text/html") || contentType.contains("application/xhtml+xml") {
-                throw APIError.server(statusCode: http.statusCode, message: "Voice media returned invalid payload")
-            }
-        }
-
-        guard !data.isEmpty else {
-            throw APIError.server(statusCode: 500, message: "Voice media response is empty")
-        }
-
-        VoiceMediaDiskCache.shared.store(data: data, for: sourceURL)
-        return data
-    }
-
-    private func extractMediaURL(fromJSON data: Data, relativeTo sourceURL: URL) -> URL? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-
-        let keys = ["url", "mediaUrl", "signedUrl", "downloadUrl", "href"]
-        for key in keys {
-            guard let raw = object[key] as? String, !raw.isEmpty else { continue }
-            if let absolute = URL(string: raw), absolute.scheme != nil {
-                return absolute
-            }
-            if let relative = URL(string: raw, relativeTo: sourceURL)?.absoluteURL {
-                return relative
-            }
-        }
-        return nil
-    }
-
-    private func currentAccessToken() -> String? {
-        let defaultsToken = UserDefaults.standard.string(forKey: "pingy.session.accessToken.fallback")
-        if let defaultsToken, !defaultsToken.isEmpty {
-            return defaultsToken
-        }
-
-        if let keychainToken = try? KeychainStore.shared.string(for: "pingy.session.accessToken"),
-           !keychainToken.isEmpty
-        {
-            return keychainToken
-        }
-
-        return nil
-    }
-
-    private var playbackErrorPresented: Binding<Bool> {
-        Binding(
-            get: { playbackErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    playbackErrorMessage = nil
-                }
-            }
-        )
     }
 }
 

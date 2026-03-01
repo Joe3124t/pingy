@@ -24,6 +24,15 @@ final class VoiceMediaDiskCache {
 
     func data(for url: URL, allowExpired: Bool = false) -> Data? {
         let key = cacheKey(for: url)
+        return data(forCacheKey: key, allowExpired: allowExpired)
+    }
+
+    func data(forMessageID messageID: String, allowExpired: Bool = false) -> Data? {
+        let key = cacheKey(forRawString: "voice-message::\(messageID)")
+        return data(forCacheKey: key, allowExpired: allowExpired)
+    }
+
+    func data(forCacheKey key: String, allowExpired: Bool = false) -> Data? {
         if let cached = memory.object(forKey: key as NSString) {
             return cached as Data
         }
@@ -51,6 +60,17 @@ final class VoiceMediaDiskCache {
     func store(data: Data, for url: URL) {
         guard !data.isEmpty else { return }
         let key = cacheKey(for: url)
+        store(data: data, forCacheKey: key)
+    }
+
+    func store(data: Data, forMessageID messageID: String) {
+        guard !data.isEmpty else { return }
+        let key = cacheKey(forRawString: "voice-message::\(messageID)")
+        store(data: data, forCacheKey: key)
+    }
+
+    func store(data: Data, forCacheKey key: String) {
+        guard !data.isEmpty else { return }
         memory.setObject(data as NSData, forKey: key as NSString, cost: data.count)
         let target = fileURL(forKey: key)
 
@@ -68,7 +88,11 @@ final class VoiceMediaDiskCache {
     }
 
     private func cacheKey(for url: URL) -> String {
-        let input = Data(url.absoluteString.utf8)
+        cacheKey(forRawString: url.absoluteString)
+    }
+
+    private func cacheKey(forRawString raw: String) -> String {
+        let input = Data(raw.utf8)
         let digest = SHA256.hash(data: input)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
